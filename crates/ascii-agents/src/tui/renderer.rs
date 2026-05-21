@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use anyhow::Result;
 use ascii_agents_core::sprite::animator::frame_index_at;
-use ascii_agents_core::sprite::blit::{blit_frame, draw_line, half_block_cells, HalfCell};
+use ascii_agents_core::sprite::blit::{
+    blit_frame, blit_frame_outlined, draw_line, half_block_cells, HalfCell,
+};
 use ascii_agents_core::sprite::format::Pack;
 use ascii_agents_core::sprite::{Frame, Palette, Pixel, Rgb, RgbBuffer};
 use ascii_agents_core::state::ActivityState;
@@ -47,6 +49,7 @@ const WINDOW_FRAME: Rgb = Rgb(24, 24, 32);
 const WINDOW_LIGHT: Rgb = Rgb(120, 160, 200);
 const WINDOW_LIGHT_2: Rgb = Rgb(160, 190, 220);
 const PARTITION: Rgb = Rgb(60, 56, 50);
+const OUTLINE: Rgb = Rgb(14, 16, 22);
 const FLOOR_A: Rgb = Rgb(96, 70, 44);
 const FLOOR_B: Rgb = Rgb(78, 56, 34);
 
@@ -146,7 +149,7 @@ fn blit_monitor_state(
             }
         }
     }
-    blit_frame(&out, dx, dy, buf);
+    blit_frame_outlined(&out, dx, dy, buf, OUTLINE);
 }
 
 fn agent_hair(seed: u64) -> Rgb {
@@ -350,10 +353,17 @@ pub fn draw_scene<B: Backend>(
         }
 
         // Helper to safely blit a pack animation's first frame.
-        let blit_static = |buf: &mut RgbBuffer, name: &str, dx: u16, dy: u16| {
+        // `outlined`: paint a 1-px dark halo around the silhouette (good for
+        // furniture against the busy floor pattern; bad for small accents
+        // like the chair which then looks like horns above the character).
+        let blit_static = |buf: &mut RgbBuffer, name: &str, dx: u16, dy: u16, outlined: bool| {
             if let Some(anim) = pack.animation(name) {
                 if let Some(frame) = anim.frames.first() {
-                    blit_frame(frame, dx, dy, buf);
+                    if outlined {
+                        blit_frame_outlined(frame, dx, dy, buf, OUTLINE);
+                    } else {
+                        blit_frame(frame, dx, dy, buf);
+                    }
                 }
             }
         };
@@ -376,8 +386,10 @@ pub fn draw_scene<B: Backend>(
             let shirt = agent_shirt(slot.agent_id.raw());
             let hair = agent_hair(slot.agent_id.raw());
 
-            // 1. Chair (8 wide), centered behind character.
-            blit_static(&mut buf, "chair", slot_x + 4, stack_top);
+            // (Chair sprite removed in v0.1.2 — the dark-brown backrest above
+            // the character read as awkward "hat" pixels at this scale.
+            // Chair is now implied; future revival should use a lighter office
+            // chair color and a thinner backrest.)
 
             // 2. Character animation with positional wander.
             // After a task finishes the character takes a break: walks to a
@@ -421,13 +433,13 @@ pub fn draw_scene<B: Backend>(
 
                 let char_x = (base_x + offset_x).max(0) as u16;
                 let char_y = (base_y + offset_y).max(0) as u16;
-                blit_frame(&frame_rc, char_x, char_y, &mut buf);
+                blit_frame_outlined(&frame_rc, char_x, char_y, &mut buf, OUTLINE);
             }
 
             // 3. Desk in front of character (16 wide, 6 tall, slightly oversized
             //    so it occludes the character's lower body / hands).
             let desk_y = stack_top + 4 + 12;
-            blit_static(&mut buf, "desk", slot_x, desk_y);
+            blit_static(&mut buf, "desk", slot_x, desk_y, true);
 
             // 4. Monitor sitting on desk — color reflects current activity state.
             let monitor_y = desk_y + 1;
@@ -443,8 +455,8 @@ pub fn draw_scene<B: Backend>(
             }
             let (slot_x, slot_y) = slot_origin(i);
             // Plant sits on a desk surface — same desk row as a normal slot.
-            blit_static(&mut buf, "desk", slot_x, slot_y + 4 + 12);
-            blit_static(&mut buf, "plant", slot_x + 5, slot_y + 4 + 8);
+            blit_static(&mut buf, "desk", slot_x, slot_y + 4 + 12, true);
+            blit_static(&mut buf, "plant", slot_x + 5, slot_y + 4 + 8, true);
         }
 
         // --- Overflow indicator if there are more agents than visible slots ---

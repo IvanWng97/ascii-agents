@@ -1,5 +1,54 @@
 use crate::sprite::{Frame, Rgb, RgbBuffer};
 
+/// Blit a sprite frame with a 1-pixel outline painted around its silhouette.
+/// For each opaque pixel in the frame whose 4-neighborhood (up/down/left/right)
+/// in the frame contains at least one transparent (or out-of-frame) pixel,
+/// the destination buffer gets an `outline` pixel painted at the corresponding
+/// neighbor position *before* the actual sprite pixels are blitted on top.
+///
+/// Result: a clean 1-pixel halo around the sprite silhouette, useful for
+/// making solid-color shapes (desks, plants) pop against the floor pattern.
+pub fn blit_frame_outlined(
+    frame: &Frame,
+    dst_x: u16,
+    dst_y: u16,
+    dst: &mut RgbBuffer,
+    outline: Rgb,
+) {
+    let w = frame.width as i32;
+    let h = frame.height as i32;
+    let is_opaque = |fx: i32, fy: i32| -> bool {
+        if fx < 0 || fy < 0 || fx >= w || fy >= h {
+            return false;
+        }
+        let i = (fy as usize) * (frame.width as usize) + (fx as usize);
+        frame.pixels[i].is_some()
+    };
+
+    for fy in 0..h {
+        for fx in 0..w {
+            if is_opaque(fx, fy) {
+                continue;
+            }
+            // Transparent (or boundary) cell — does any opaque neighbor exist?
+            let has_opaque_neighbor =
+                is_opaque(fx - 1, fy)
+                    || is_opaque(fx + 1, fy)
+                    || is_opaque(fx, fy - 1)
+                    || is_opaque(fx, fy + 1);
+            if !has_opaque_neighbor {
+                continue;
+            }
+            let x = dst_x.saturating_add(fx as u16);
+            let y = dst_y.saturating_add(fy as u16);
+            if x < dst.width && y < dst.height {
+                dst.put(x, y, outline);
+            }
+        }
+    }
+    blit_frame(frame, dst_x, dst_y, dst);
+}
+
 /// Bresenham line drawing into an RgbBuffer. Coordinates are signed so callers
 /// can pass off-buffer endpoints (clipping is implicit — pixels outside the
 /// buffer are silently skipped).

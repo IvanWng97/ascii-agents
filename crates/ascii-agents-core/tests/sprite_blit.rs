@@ -1,5 +1,5 @@
 use ascii_agents_core::sprite::blit::{
-    blit_frame, draw_dotted_hline, draw_line, half_block_cells, HalfCell,
+    blit_frame, blit_frame_outlined, draw_dotted_hline, draw_line, half_block_cells, HalfCell,
 };
 use ascii_agents_core::sprite::{Frame, Pixel, Rgb, RgbBuffer};
 
@@ -86,6 +86,57 @@ fn half_block_cells_pairs_rows() {
             bg: Rgb(8, 0, 0)
         }
     );
+}
+
+#[test]
+fn outlined_blit_paints_halo_around_silhouette() {
+    // A simple 3x3 sprite that's opaque only in the center pixel.
+    // Outline should be painted at all 4 cardinal neighbors of the center.
+    let frame = Frame {
+        width: 3,
+        height: 3,
+        pixels: vec![
+            t(), t(), t(),
+            t(), px(200, 0, 0), t(),
+            t(), t(), t(),
+        ],
+    };
+    let mut buf = RgbBuffer::filled(5, 5, Rgb(0, 0, 0));
+    blit_frame_outlined(&frame, 1, 1, &mut buf, Rgb(50, 50, 50));
+
+    // Center has the sprite pixel.
+    assert_eq!(buf.get(2, 2), Rgb(200, 0, 0));
+    // 4 cardinal neighbors got the outline color.
+    assert_eq!(buf.get(1, 2), Rgb(50, 50, 50));
+    assert_eq!(buf.get(3, 2), Rgb(50, 50, 50));
+    assert_eq!(buf.get(2, 1), Rgb(50, 50, 50));
+    assert_eq!(buf.get(2, 3), Rgb(50, 50, 50));
+    // Diagonals unchanged.
+    assert_eq!(buf.get(1, 1), Rgb(0, 0, 0));
+    assert_eq!(buf.get(3, 3), Rgb(0, 0, 0));
+}
+
+#[test]
+fn outlined_blit_does_not_outline_interior_opaque_pixels() {
+    // Fully-opaque 2x2 sprite — no transparent pixels, so no internal outline.
+    let frame = Frame {
+        width: 2,
+        height: 2,
+        pixels: vec![
+            px(100, 0, 0), px(100, 0, 0),
+            px(100, 0, 0), px(100, 0, 0),
+        ],
+    };
+    let mut buf = RgbBuffer::filled(4, 4, Rgb(0, 0, 0));
+    blit_frame_outlined(&frame, 1, 1, &mut buf, Rgb(50, 50, 50));
+
+    // Sprite blitted intact.
+    assert_eq!(buf.get(1, 1), Rgb(100, 0, 0));
+    assert_eq!(buf.get(2, 2), Rgb(100, 0, 0));
+    // No outline pixels painted around the sprite — `blit_frame_outlined`
+    // only paints outline at transparent positions within the frame bounds.
+    assert_eq!(buf.get(0, 1), Rgb(0, 0, 0));
+    assert_eq!(buf.get(3, 3), Rgb(0, 0, 0));
 }
 
 #[test]
