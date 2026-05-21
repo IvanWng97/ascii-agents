@@ -29,26 +29,43 @@ pub const DESK_W: u16 = 12;
 pub const DESK_H: u16 = 6;
 pub const DESK_GAP_X: u16 = 4;
 pub const DESK_GAP_Y: u16 = 2;
+/// Vertical reserve above the cubicle band, in buf pixels. The renderer paints
+/// the top wall band into this region; without it the desks butt right up
+/// against the wall trim and the seated character heads disappear into it.
+/// Sized to accommodate a standing character (12 px) without clipping the wall.
+pub const TOP_MARGIN_PX: u16 = 22;
 
 impl Layout {
     /// Returns `None` if the buffer is too small for even one cubicle and the
     /// fixed lounge area. Caller should paint a "terminal too small" message.
     pub fn compute(buf_w: u16, buf_h: u16, num_agents: usize) -> Option<Self> {
         const MIN_W: u16 = DESK_W + DESK_GAP_X * 2;
-        const MIN_H: u16 = 40;
+        const MIN_H: u16 = 40 + TOP_MARGIN_PX;
         if buf_w < MIN_W || buf_h < MIN_H {
             return None;
         }
 
-        // Vertical split: 50% cubicle band, 15% walkway, 35% lounge.
-        let cubicle_h = buf_h * 50 / 100;
-        let walkway_h = buf_h * 15 / 100;
-        let lounge_h = buf_h - cubicle_h - walkway_h;
-        let cubicle_band = Rect { x: 0, y: 0, width: buf_w, height: cubicle_h };
-        let walkway = Rect { x: 0, y: cubicle_h, width: buf_w, height: walkway_h };
+        // Vertical split: TOP_MARGIN_PX reserved for the wall band, then the
+        // remaining height splits 50/15/35 between cubicles / walkway / lounge.
+        let usable_h = buf_h - TOP_MARGIN_PX;
+        let cubicle_h = usable_h * 50 / 100;
+        let walkway_h = usable_h * 15 / 100;
+        let lounge_h = usable_h - cubicle_h - walkway_h;
+        let cubicle_band = Rect {
+            x: 0,
+            y: TOP_MARGIN_PX,
+            width: buf_w,
+            height: cubicle_h,
+        };
+        let walkway = Rect {
+            x: 0,
+            y: TOP_MARGIN_PX + cubicle_h,
+            width: buf_w,
+            height: walkway_h,
+        };
         let lounge_band = Rect {
             x: 0,
-            y: cubicle_h + walkway_h,
+            y: TOP_MARGIN_PX + cubicle_h + walkway_h,
             width: buf_w,
             height: lounge_h,
         };
