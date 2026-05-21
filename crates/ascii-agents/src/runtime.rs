@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use ascii_agents_core::source::claude_code::ClaudeCodeSource;
@@ -57,7 +57,7 @@ async fn run_async(
 async fn reducer_task(mut rx: TaggedReceiver, scene: Arc<RwLock<SceneState>>) {
     let mut reducer = Reducer::new();
     while let Some((transport, ev)) = rx.recv().await {
-        let now = Instant::now();
+        let now = SystemTime::now();
         tracing::info!(?transport, ?ev, "event");
         let mut s = scene.write().await;
         reducer.apply(&mut s, ev, now, transport);

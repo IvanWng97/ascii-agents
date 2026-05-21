@@ -1,10 +1,10 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use ascii_agents_core::sprite::animator::frame_index_at;
 
 #[test]
 fn frame_index_advances_with_time() {
-    let start = Instant::now();
+    let start = SystemTime::now();
     let frame_ms: u32 = 100;
     let n_frames: usize = 3;
 
@@ -29,6 +29,6 @@ fn frame_index_advances_with_time() {
 
 #[test]
 fn single_frame_always_returns_zero() {
-    let start = Instant::now();
+    let start = SystemTime::now();
     assert_eq!(frame_index_at(start, start + Duration::from_secs(60), 50, 1), 0);
 }

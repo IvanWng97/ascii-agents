@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use ascii_agents_core::source::{Activity, AgentEvent};
 use ascii_agents_core::state::reducer::{Reducer, Transport};
@@ -15,7 +15,7 @@ fn start(reducer: &mut Reducer, scene: &mut SceneState, id: AgentId) {
             session_id: "abc".into(),
             cwd: PathBuf::from("/"),
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 }
@@ -34,7 +34,7 @@ fn session_start_creates_idle_slot_at_first_free_desk() {
             session_id: "abc".into(),
             cwd: PathBuf::from("/repo"),
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 
@@ -59,7 +59,7 @@ fn activity_start_sets_state_active() {
             tool_use_id: Some("t1".into()),
             detail: Some("Edit: foo.rs".into()),
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 
@@ -87,7 +87,7 @@ fn activity_end_returns_to_idle() {
             tool_use_id: Some("t1".into()),
             detail: None,
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
     r.apply(
@@ -96,7 +96,7 @@ fn activity_end_returns_to_idle() {
             agent_id: id,
             tool_use_id: Some("t1".into()),
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 
@@ -116,7 +116,7 @@ fn waiting_sets_state_with_reason() {
             agent_id: id,
             reason: "Bash: rm -rf?".into(),
         },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 
@@ -138,7 +138,7 @@ fn session_end_removes_slot_and_frees_desk() {
     r.apply(
         &mut scene,
         AgentEvent::SessionEnd { agent_id: a },
-        Instant::now(),
+        SystemTime::now(),
         Transport::Hook,
     );
 
@@ -153,7 +153,7 @@ fn jsonl_duplicate_of_recent_hook_is_dropped() {
     let id = AgentId::from_transcript_path("/p/a.jsonl");
     start(&mut r, &mut scene, id);
 
-    let t0 = Instant::now();
+    let t0 = SystemTime::now();
     r.apply(
         &mut scene,
         AgentEvent::ActivityStart {
@@ -198,7 +198,7 @@ fn jsonl_event_after_dedup_window_is_applied() {
     let id = AgentId::from_transcript_path("/p/a.jsonl");
     start(&mut r, &mut scene, id);
 
-    let t0 = Instant::now();
+    let t0 = SystemTime::now();
     r.apply(
         &mut scene,
         AgentEvent::ActivityStart {

@@ -137,7 +137,7 @@ pub fn half_block_cells(buf: &RgbBuffer) -> Vec<Vec<HalfCell>> {
     if h == 0 || w == 0 {
         return Vec::new();
     }
-    let cell_rows = (h + 1) / 2;
+    let cell_rows = h.div_ceil(2);
     let mut out: Vec<Vec<HalfCell>> = Vec::with_capacity(cell_rows);
     for cy in 0..cell_rows {
         let py_top = cy * 2;

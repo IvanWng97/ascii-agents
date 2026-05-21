@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use crate::source::AgentEvent;
 use crate::state::{ActivityState, AgentSlot, SceneState};
@@ -18,7 +18,7 @@ pub const HOOK_WINS_WINDOW: Duration = Duration::from_millis(500);
 #[derive(Debug, Default)]
 pub struct Reducer {
     /// Track recent hook-derived events so JSONL duplicates can be dropped.
-    recent_hook_tool_uses: HashMap<(AgentId, String), Instant>,
+    recent_hook_tool_uses: HashMap<(AgentId, String), SystemTime>,
     /// Monotonic counter for human-readable labels (cc#1, cc#2, ...).
     next_label_n: u32,
 }
@@ -32,7 +32,7 @@ impl Reducer {
         &mut self,
         scene: &mut SceneState,
         event: AgentEvent,
-        now: Instant,
+        now: SystemTime,
         from: Transport,
     ) {
         self.gc(now);
@@ -122,9 +122,13 @@ impl Reducer {
         }
     }
 
-    fn gc(&mut self, now: Instant) {
-        self.recent_hook_tool_uses
-            .retain(|_, ts| now.duration_since(*ts) < HOOK_WINS_WINDOW);
+    fn gc(&mut self, now: SystemTime) {
+        // SystemTime::duration_since returns Err when `ts` is in the future
+        // (clock went backwards). Drop those — stale entries either way.
+        self.recent_hook_tool_uses.retain(|_, ts| {
+            now.duration_since(*ts)
+                .is_ok_and(|d| d < HOOK_WINS_WINDOW)
+        });
     }
 }
 

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::SystemTime;
 
 use crate::id::AgentId;
 use crate::source::Activity;
@@ -28,7 +28,7 @@ pub struct AgentSlot {
     pub cwd: PathBuf,
     pub label: String,
     pub state: ActivityState,
-    pub state_started_at: Instant,
+    pub state_started_at: SystemTime,
     pub desk_index: usize,
 }
 
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn next_free_desk_returns_none_when_full() {
         let mut s = SceneState::new(2);
-        let now = Instant::now();
+        let now = SystemTime::now();
         for i in 0..2 {
             let id = AgentId::from_transcript_path(&format!("p{i}"));
             s.agents.insert(

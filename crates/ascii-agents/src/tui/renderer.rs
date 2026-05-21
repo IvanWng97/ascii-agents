@@ -1,5 +1,5 @@
 use std::io::{stdout, Stdout};
-use std::time::Instant;
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use ascii_agents_core::sprite::animator::frame_index_at;
@@ -83,13 +83,14 @@ const WANDER_TOTAL_MS: u64 = WANDER_WALK_OUT_MS + WANDER_IDLE_MS + WANDER_WALK_B
 /// Only fires when the slot has been Idle for less than WANDER_TOTAL_MS.
 fn wander_offset(
     slot: &ascii_agents_core::state::AgentSlot,
-    now: std::time::Instant,
+    now: SystemTime,
 ) -> (i32, i32, bool, bool) {
     if !matches!(slot.state, ActivityState::Idle) {
         return (0, 0, false, false);
     }
     let elapsed_ms = now
-        .saturating_duration_since(slot.state_started_at)
+        .duration_since(slot.state_started_at)
+        .unwrap_or(Duration::ZERO)
         .as_millis() as u64;
     if elapsed_ms >= WANDER_TOTAL_MS {
         return (0, 0, false, false);
@@ -249,8 +250,8 @@ pub fn draw_scene<B: Backend>(
     term: &mut Terminal<B>,
     scene: &SceneState,
     pack: &Pack,
-    now: Instant,
-    mut buf: &mut RgbBuffer,
+    now: SystemTime,
+    buf: &mut RgbBuffer,
     cache: &mut FrameCache,
 ) -> Result<()> {
     let agents: Vec<_> = scene.agents.values().cloned().collect();
@@ -369,7 +370,7 @@ pub fn draw_scene<B: Backend>(
                 if poster_x + 6 < buf_w {
                     if let Some(anim) = pack.animation("poster") {
                         if let Some(frame) = anim.frames.first() {
-                            blit_frame(frame, poster_x, poster_y, &mut buf);
+                            blit_frame(frame, poster_x, poster_y, buf);
                         }
                     }
                 }
@@ -398,7 +399,7 @@ pub fn draw_scene<B: Backend>(
                 for col in 1..cols_per_row {
                     let px = slot_left_padding + col * slot_w - 1;
                     draw_line(
-                        &mut buf,
+                        buf,
                         px as i32,
                         y_top.saturating_sub(1) as i32,
                         px as i32,
@@ -493,12 +494,12 @@ pub fn draw_scene<B: Backend>(
             // 3. Desk in front of character (16 wide, 6 tall, slightly oversized
             //    so it occludes the character's lower body / hands).
             let desk_y = stack_top + 4 + 12;
-            blit_static(&mut buf, "desk", slot_x, desk_y, true);
+            blit_static(buf, "desk", slot_x, desk_y, true);
 
             // 4. Monitor sitting on desk — color reflects current activity state.
             let monitor_y = desk_y + 1;
             let monitor_x = slot_x + 5;
-            blit_monitor_state(&pack, &slot.state, monitor_x, monitor_y, &mut buf);
+            blit_monitor_state(pack, &slot.state, monitor_x, monitor_y, buf);
         }
 
         // --- Decorative plant in each empty visible slot ---
@@ -509,8 +510,8 @@ pub fn draw_scene<B: Backend>(
             }
             let (slot_x, slot_y) = layout.slot_origin(i);
             // Plant sits on a desk surface — same desk row as a normal slot.
-            blit_static(&mut buf, "desk", slot_x, slot_y + 4 + 12, true);
-            blit_static(&mut buf, "plant", slot_x + 5, slot_y + 4 + 8, true);
+            blit_static(buf, "desk", slot_x, slot_y + 4 + 12, true);
+            blit_static(buf, "plant", slot_x + 5, slot_y + 4 + 8, true);
         }
 
         // --- Overflow indicator if there are more agents than visible slots ---
@@ -561,7 +562,7 @@ pub fn draw_scene<B: Backend>(
             let slot_x = scene_rect.x + sx;
             // Label sits just below the desk row of this slot, in cell coords
             // (each cell = 2 px, so divide by 2).
-            let label_y = scene_rect.y + (sy + stack_h + 1) / 2;
+            let label_y = scene_rect.y + (sy + stack_h).div_ceil(2);
             let style = Style::default().fg(Color::White);
             let label = Paragraph::new(Line::from(vec![Span::styled(
                 format!("{} {}", slot.label, summarize_state(&slot.state)),

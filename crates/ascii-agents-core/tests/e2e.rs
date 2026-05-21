@@ -1,7 +1,7 @@
 #![cfg(feature = "test-renderer")]
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use ascii_agents_core::render::test_renderer::TestRenderer;
 use ascii_agents_core::source::Activity;
@@ -15,7 +15,7 @@ fn scripted_timeline_drives_scene_through_states() {
     let mut renderer = TestRenderer::new();
     let id = AgentId::from_transcript_path("/p/a.jsonl");
 
-    let mut now = Instant::now();
+    let mut now = SystemTime::now();
     let mut step =
         |events: Vec<AgentEvent>,
          dt_ms: u64,
@@ -97,5 +97,5 @@ fn scripted_timeline_drives_scene_through_states() {
         snaps[3].agents.get(&id).unwrap().state,
         ActivityState::Waiting { .. }
     ));
-    assert!(snaps[4].agents.get(&id).is_none());
+    assert!(!snaps[4].agents.contains_key(&id));
 }

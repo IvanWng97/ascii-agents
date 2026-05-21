@@ -127,10 +127,12 @@ async fn watcher_does_not_consume_partial_trailing_line() {
     let mut seen_tool_use_ids: Vec<String> = Vec::new();
     while let Ok(Some((_t, ev))) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await
     {
-        if let AgentEvent::ActivityStart { tool_use_id, .. } = ev {
-            if let Some(id) = tool_use_id {
-                seen_tool_use_ids.push(id);
-            }
+        if let AgentEvent::ActivityStart {
+            tool_use_id: Some(id),
+            ..
+        } = ev
+        {
+            seen_tool_use_ids.push(id);
         }
     }
     assert!(

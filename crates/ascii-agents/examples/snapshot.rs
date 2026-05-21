@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use ascii_agents::tui::embedded_pack::load_default_pack;
@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     let args = SnapshotArgs::parse();
 
     let pack = load_default_pack()?;
-    let now = Instant::now();
+    let now = SystemTime::now();
 
     let scene = if args.live {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -109,7 +109,7 @@ async fn capture_live_scene(projects_root: &str, listen_secs: u64) -> Result<Sce
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         match tokio::time::timeout(remaining, rx.recv()).await {
             Ok(Some((transport, ev))) => {
-                let now = Instant::now();
+                let now = SystemTime::now();
                 let mut s = scene.write().await;
                 reducer.apply(&mut s, ev, now, transport);
                 event_count += 1;
@@ -136,7 +136,7 @@ async fn capture_live_scene(projects_root: &str, listen_secs: u64) -> Result<Sce
     Ok(snapshot)
 }
 
-fn sample_scene(now: Instant) -> SceneState {
+fn sample_scene(now: SystemTime) -> SceneState {
     let mut s = SceneState::new(12);
     let agents = [
         // 'state_started_at' is set to `now - offset` so we can place each

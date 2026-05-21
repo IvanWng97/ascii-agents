@@ -3,7 +3,7 @@ pub mod frame_cache;
 pub mod renderer;
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use ascii_agents_core::sprite::{Rgb, RgbBuffer};
@@ -24,7 +24,7 @@ pub async fn run_tui(scene: Arc<RwLock<SceneState>>) -> Result<()> {
     let tick = Duration::from_millis(33); // ~30 fps
     let result: Result<()> = (async {
         loop {
-            let now = Instant::now();
+            let now = SystemTime::now();
             let snapshot = { scene.read().await.clone() };
             cache.evict_missing(&snapshot);
             draw_scene(&mut term, &snapshot, &pack, now, &mut rgb_buf, &mut cache)?;

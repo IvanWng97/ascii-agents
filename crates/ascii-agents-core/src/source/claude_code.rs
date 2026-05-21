@@ -39,10 +39,24 @@ impl Source for ClaudeCodeSource {
         let hook_task = tokio::spawn(async move { socket.run(tx_hook).await });
         let jsonl_task = tokio::spawn(async move { watcher.run(tx_jsonl).await });
 
-        tokio::select! {
-            r = hook_task  => r??,
-            r = jsonl_task => r??,
-        }
-        Ok(())
+        // When either sub-task ends, explicitly abort the other so it doesn't
+        // keep running orphaned in the tokio runtime. Surface whichever inner
+        // error (if any) triggered the early exit.
+        let hook_abort = hook_task.abort_handle();
+        let jsonl_abort = jsonl_task.abort_handle();
+
+        let inner: Result<()> = tokio::select! {
+            r = hook_task => {
+                tracing::warn!("hook listener exited first; aborting jsonl watcher");
+                jsonl_abort.abort();
+                r?
+            }
+            r = jsonl_task => {
+                tracing::warn!("jsonl watcher exited first; aborting hook listener");
+                hook_abort.abort();
+                r?
+            }
+        };
+        inner
     }
 }
