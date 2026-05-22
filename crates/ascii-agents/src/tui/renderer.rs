@@ -173,37 +173,37 @@ fn paint_floor_and_walls(buf: &mut RgbBuffer, buf_w: u16, buf_h: u16, now: Syste
         }
     }
 
-    // Floor-to-ceiling windows: spans almost the entire wall band, with
-    // the city view painted inside the glass.
-    const WINDOW_W: u16 = 12;
+    // Floor-to-ceiling windows: 落地窗 — wide AND tall. Each panel spans
+    // most of the wall band height and is wider than the cubicle pitch
+    // so the wall reads as glass-dominated, not brick-dominated.
+    const WINDOW_W: u16 = 22;
     const WINDOW_H: u16 = 12;
     const WINDOW_Y: u16 = 1;
-    let mut x = 4u16;
+    const WINDOW_GAP: u16 = 3;
+    let mut x = 3u16;
     let mut idx: u32 = 0;
     while x + WINDOW_W + 2 <= buf_w {
-        if idx % 4 != 3 {
-            paint_floor_to_ceiling_window(
+        paint_floor_to_ceiling_window(
+            buf,
+            x,
+            WINDOW_Y,
+            WINDOW_W,
+            WINDOW_H,
+            WINDOW_FRAME,
+            &look,
+            idx as u16,
+        );
+        if look.spill_strength > 0.0 {
+            paint_window_light_spill(
                 buf,
                 x,
-                WINDOW_Y,
                 WINDOW_W,
-                WINDOW_H,
-                WINDOW_FRAME,
-                &look,
-                idx as u16,
+                TOP_WALL_H,
+                look.spill_strength,
+                look.spill_slant,
             );
-            if look.spill_strength > 0.0 {
-                paint_window_light_spill(
-                    buf,
-                    x,
-                    WINDOW_W,
-                    TOP_WALL_H,
-                    look.spill_strength,
-                    look.spill_slant,
-                );
-            }
         }
-        x += WINDOW_W + 6;
+        x += WINDOW_W + WINDOW_GAP;
         idx += 1;
     }
 
