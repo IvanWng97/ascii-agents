@@ -65,6 +65,8 @@ fn load_embedded_pack() -> Result<Pack> {
     let standing = include_str!("../../../../assets/sprites/default/standing.sprite");
     let walking_0 = include_str!("../../../../assets/sprites/default/walking_0.sprite");
     let walking_1 = include_str!("../../../../assets/sprites/default/walking_1.sprite");
+    let walking_back_0 = include_str!("../../../../assets/sprites/default/walking_back_0.sprite");
+    let walking_back_1 = include_str!("../../../../assets/sprites/default/walking_back_1.sprite");
     let desk = include_str!("../../../../assets/sprites/default/desk.sprite");
     let plant = include_str!("../../../../assets/sprites/default/plant.sprite");
     let plant_tall = include_str!("../../../../assets/sprites/default/plant_tall.sprite");
@@ -101,6 +103,8 @@ fn load_embedded_pack() -> Result<Pack> {
             ("standing.sprite", standing),
             ("walking_0.sprite", walking_0),
             ("walking_1.sprite", walking_1),
+            ("walking_back_0.sprite", walking_back_0),
+            ("walking_back_1.sprite", walking_back_1),
             ("desk.sprite", desk),
             ("plant.sprite", plant),
             ("plant_tall.sprite", plant_tall),

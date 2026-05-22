@@ -217,7 +217,24 @@ pub fn derive_with_routing(
     else {
         return Some(pose);
     };
-    let path = router.route(&layout.walkable, overlay, from, to);
+    // Per-agent path personality: perturb the routing destination by a
+    // few pixels hashed from the agent_id. Different agents heading
+    // between the same two waypoints get different cache keys and (in
+    // most cases) visibly different polylines — breaks the "ant trail"
+    // effect when multiple agents converge on the same place. The last
+    // polyline point is then restored to the true `to` so the walker
+    // ends at the canonical destination, not the jittered approximation.
+    let h = slot.agent_id.raw();
+    let jx = ((h % 9) as i32 - 4) as i16;
+    let jy = (((h >> 16) % 9) as i32 - 4) as i16;
+    let to_jittered = Point {
+        x: to.x.saturating_add_signed(jx),
+        y: to.y.saturating_add_signed(jy),
+    };
+    let mut path = router.route(&layout.walkable, overlay, from, to_jittered);
+    if let Some(last) = path.last_mut() {
+        *last = to;
+    }
     if path.len() <= 2 {
         return Some(pose);
     }

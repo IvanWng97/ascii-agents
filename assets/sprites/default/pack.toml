@@ -49,6 +49,10 @@ frame_ms = 600
 frames   = ["walking_0.sprite", "walking_1.sprite"]
 frame_ms = 220
 
+[animations.walking_back]
+frames   = ["walking_back_0.sprite", "walking_back_1.sprite"]
+frame_ms = 220
+
 [animations.desk]
 frames   = ["desk.sprite"]
 frame_ms = 600

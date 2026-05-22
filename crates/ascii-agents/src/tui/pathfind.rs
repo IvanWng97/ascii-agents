@@ -17,7 +17,7 @@ use std::collections::{BinaryHeap, HashMap};
 
 use ascii_agents_core::walkable::{OccupancyOverlay, WalkableMask};
 
-use crate::tui::layout::Point;
+use crate::tui::layout::{Bounds, Point};
 
 /// Cell size in pixels. Smaller = more accurate paths, more work per query.
 /// 4 px gives a ~40×60 grid on a typical 160×240 buffer — A* finishes in
@@ -48,6 +48,15 @@ pub trait Router {
     /// Drop any cached state — call when the static mask is replaced
     /// (terminal resize, layout shape change).
     fn invalidate(&mut self);
+
+    /// Optional: bias the cost function toward a preferred zone (e.g. the
+    /// office corridor). Cells inside `zone` get a small cost discount so
+    /// paths naturally hug the hallway instead of cutting diagonally
+    /// across the cubicle floor. Default impl is a no-op so a Router
+    /// that doesn't care about zones can skip it.
+    fn set_preferred_zone(&mut self, zone: Option<Bounds>) {
+        let _ = zone;
+    }
 }
 
 /// A* router with internal path cache. Cache invalidates on overlay
@@ -57,6 +66,10 @@ pub trait Router {
 pub struct AStarRouter {
     paths: HashMap<(Point, Point), Vec<Point>>,
     last_overlay_sig: u64,
+    /// Cells inside this zone get a cost discount during A*. When `None`,
+    /// every cell has uniform cost. Changing this drops the cached paths
+    /// (different zone = different optimal route).
+    preferred_zone: Option<Bounds>,
 }
 
 impl AStarRouter {
@@ -93,13 +106,24 @@ impl Router for AStarRouter {
         if let Some(p) = self.paths.get(&(from, to)) {
             return p.clone();
         }
-        let path = find_path(mask, overlay, from, to).unwrap_or_else(|| vec![from, to]);
+        let path = find_path(mask, overlay, self.preferred_zone, from, to)
+            .unwrap_or_else(|| vec![from, to]);
         self.paths.insert((from, to), path.clone());
         path
     }
 
     fn invalidate(&mut self) {
         self.paths.clear();
+    }
+
+    fn set_preferred_zone(&mut self, zone: Option<Bounds>) {
+        // Different zone produces different optimal paths — invalidate the
+        // cache. Cheap to do unconditionally; the layout's corridor only
+        // changes on terminal resize so this fires rarely.
+        if self.preferred_zone != zone {
+            self.paths.clear();
+            self.preferred_zone = zone;
+        }
     }
 }
 
@@ -163,6 +187,17 @@ fn heuristic(a: (u16, u16), b: (u16, u16)) -> u32 {
     let dx = (a.0 as i32 - b.0 as i32).unsigned_abs();
     let dy = (a.1 as i32 - b.1 as i32).unsigned_abs();
     14 * dx.min(dy) + 10 * (dx.max(dy) - dx.min(dy))
+}
+
+/// Is the center of cell `(cx, cy)` inside `zone`? Used by the preferred-
+/// zone discount: cells whose center lands in the corridor get a cheaper
+/// step cost so A* hugs the hallway.
+fn cell_in_zone(zone: Option<Bounds>, cx: u16, cy: u16) -> bool {
+    let Some(z) = zone else {
+        return false;
+    };
+    let cp = cell_center(cx, cy);
+    cp.x >= z.x && cp.x < z.x + z.width && cp.y >= z.y && cp.y < z.y + z.height
 }
 
 fn cell_walkable(mask: &WalkableMask, overlay: &OccupancyOverlay, cx: u16, cy: u16) -> bool {
@@ -229,11 +264,15 @@ fn snap_to_walkable(
     None
 }
 
-/// Run A* on the layout's walkability mask + per-frame occupancy. Returns
-/// `None` when the goal is unreachable; otherwise the polyline (≥2 pts).
+/// Run A* on the layout's walkability mask + per-frame occupancy. When
+/// `preferred` is `Some(rect)`, cells whose center falls inside the rect
+/// get a 30% step-cost discount — paths naturally hug that zone (e.g.
+/// the office corridor) when an off-zone diagonal cut would otherwise
+/// be slightly shorter.
 pub fn find_path(
     mask: &WalkableMask,
     overlay: &OccupancyOverlay,
+    preferred: Option<Bounds>,
     from: Point,
     to: Point,
 ) -> Option<Vec<Point>> {
@@ -280,7 +319,12 @@ pub fn find_path(
             if !cell_walkable(mask, overlay, nx, ny) {
                 continue;
             }
-            let step = if dx.abs() + dy.abs() == 2 { 14 } else { 10 };
+            let base_step = if dx.abs() + dy.abs() == 2 { 14 } else { 10 };
+            let step = if cell_in_zone(preferred, nx, ny) {
+                base_step * 7 / 10
+            } else {
+                base_step
+            };
             let tentative = current.g + step;
             if tentative < *g_score.get(&(nx, ny)).unwrap_or(&u32::MAX) {
                 came_from.insert((nx, ny), current.cell);
@@ -362,7 +406,7 @@ mod tests {
             x: l.corridor.unwrap().x + 60,
             y: l.corridor.unwrap().y + 2,
         };
-        let path = find_path(&l.walkable, &overlay, from, to).expect("path");
+        let path = find_path(&l.walkable, &overlay, None, from, to).expect("path");
         assert!(path.len() >= 2);
         assert_eq!(path[0], from);
         assert_eq!(*path.last().unwrap(), to);
@@ -392,7 +436,7 @@ mod tests {
             .find(|w| w.kind == crate::tui::layout::WaypointKind::Pantry)
             .expect("pantry wp")
             .pos;
-        let path = find_path(&l.walkable, &overlay, from, pantry).expect("path");
+        let path = find_path(&l.walkable, &overlay, None, from, pantry).expect("path");
         assert!(path.len() >= 3, "expected routed path, got {path:?}");
     }
 
@@ -422,11 +466,11 @@ mod tests {
         let mut overlay = OccupancyOverlay::new();
         let from = Point { x: 10, y: 50 };
         let to = Point { x: 90, y: 50 };
-        let baseline = find_path(&mask, &overlay, from, to).expect("baseline");
+        let baseline = find_path(&mask, &overlay, None, from, to).expect("baseline");
         assert_eq!(baseline.len(), 2, "open mask should yield straight line");
 
         overlay.add(40, 40, 20, 20);
-        let detour = find_path(&mask, &overlay, from, to).expect("detour");
+        let detour = find_path(&mask, &overlay, None, from, to).expect("detour");
         assert!(
             detour.len() > 2,
             "detour must add at least one corner around the dynamic block, got {detour:?}"

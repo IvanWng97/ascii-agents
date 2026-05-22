@@ -664,46 +664,6 @@ fn octant_offset(turn: f32) -> (i32, i32) {
 }
 
 fn paint_lounge_decor(buf: &mut RgbBuffer, layout: &Layout, pack: &Pack, now: SystemTime) {
-    use crate::tui::layout::WaypointKind;
-
-    // The viewing-couch position (top of cubicles, against the windows)
-    // doesn't get a lounge rug — it lives in the cubicle area, not the
-    // lounge proper. Rug intentionally omitted.
-
-    // Waypoint furniture (the wander destinations) painted centered on each
-    // waypoint position. The lounge couch is mirror_vertical'd so its back
-    // is at the BOTTOM (facing the viewer) and the seat is at the top —
-    // the sitter "faces" up toward the city-view windows.
-    for wp in &layout.waypoints {
-        let anim_name = match wp.kind {
-            WaypointKind::Couch => "couch",
-            WaypointKind::Pantry => "pantry",
-        };
-        if let Some(f) = pack.animation(anim_name).and_then(|a| a.frames.first()) {
-            let cx = wp.pos.x.saturating_sub(f.width / 2);
-            let cy = wp.pos.y.saturating_sub(f.height / 2);
-            if wp.kind == WaypointKind::Couch {
-                let flipped = f.mirror_vertical();
-                blit_frame(&flipped, cx, cy, buf);
-            } else {
-                blit_frame(f, cx, cy, buf);
-            }
-        }
-        // Pantry sprite has the coffee machine on its counter — emit the
-        // steam wisps over that machine so a visiting agent reads as
-        // "getting coffee" without a separate waypoint.
-        if wp.kind == WaypointKind::Pantry {
-            paint_coffee_steam(
-                buf,
-                Point {
-                    x: wp.pos.x + 4,
-                    y: wp.pos.y.saturating_sub(2),
-                },
-                now,
-            );
-        }
-    }
-
     // Plants — pure decor, scattered around the lounge. Each plant picks
     // a sprite per kind so the lounge has variety instead of one repeated
     // ficus.
@@ -735,6 +695,45 @@ fn paint_lounge_decor(buf: &mut RgbBuffer, layout: &Layout, pack: &Pack, now: Sy
     // the lounge band on a 30 s cycle, with brief pauses at each end.
     // Pure whimsy, fills floor space.
     paint_wandering_cat(buf, layout, pack, now);
+}
+
+/// Waypoint furniture (couch + pantry counter) painted AFTER characters in
+/// Pass 1 — so a visitor seated on the couch or standing at the counter
+/// has their lower body occluded by the furniture sprite. Top-down 3/4
+/// semantics: head + shoulders visible above the back rest / counter
+/// edge, body hidden behind it. Same trick as desks, but in a separate
+/// pass because the couch / counter need to occlude waypoint VISITORS,
+/// not desk-seated workers.
+fn paint_waypoint_furniture(buf: &mut RgbBuffer, layout: &Layout, pack: &Pack, now: SystemTime) {
+    use crate::tui::layout::WaypointKind;
+    for wp in &layout.waypoints {
+        let anim_name = match wp.kind {
+            WaypointKind::Couch => "couch",
+            WaypointKind::Pantry => "pantry",
+        };
+        if let Some(f) = pack.animation(anim_name).and_then(|a| a.frames.first()) {
+            let cx = wp.pos.x.saturating_sub(f.width / 2);
+            let cy = wp.pos.y.saturating_sub(f.height / 2);
+            if wp.kind == WaypointKind::Couch {
+                let flipped = f.mirror_vertical();
+                blit_frame(&flipped, cx, cy, buf);
+            } else {
+                blit_frame(f, cx, cy, buf);
+            }
+        }
+        // Coffee steam wisps emit OVER the counter — paint them last so
+        // the animation reads as steam rising up from the machine.
+        if wp.kind == WaypointKind::Pantry {
+            paint_coffee_steam(
+                buf,
+                Point {
+                    x: wp.pos.x + 4,
+                    y: wp.pos.y.saturating_sub(2),
+                },
+                now,
+            );
+        }
+    }
 }
 
 /// Office cat that paces between the lounge band's left and right edges
@@ -1383,6 +1382,12 @@ pub fn draw_scene<B: Backend>(
         return Ok(());
     };
 
+    // Bias the router toward the corridor (the office "main aisle") so
+    // walkers naturally use the hallway instead of cutting diagonally
+    // across the cubicle floor. Cheap call — invalidates the cache only
+    // when the zone actually changes (layout resize).
+    router.set_preferred_zone(layout.corridor);
+
     // Pure pixel pass — no ratatui types touched.
     render_to_rgb_buffer(scene, &layout, pack, now, buf, cache, router, overlay);
 
@@ -1756,12 +1761,25 @@ pub fn render_to_rgb_buffer(
                 frame,
             } => {
                 let pos = walking_position(from, to, t_x1000);
-                let flip = to.x < from.x;
                 let walker_anchor = walking_anchor(pos);
                 paint_walking_dust(buf, walker_anchor, frame);
+                // Direction-aware sprite: when the walker is moving UP
+                // more than horizontally (|dy| > |dx| and dy < 0), use
+                // the back-view sprite so the viewer sees the back of
+                // the head as they walk toward the windows. Otherwise
+                // use the front-view sprite with horizontal flip to
+                // face the direction of motion. Diagonals fall back on
+                // whichever axis dominates.
+                let dx = to.x as i32 - from.x as i32;
+                let dy = to.y as i32 - from.y as i32;
+                let (anim_name, flip) = if dy.unsigned_abs() > dx.unsigned_abs() && dy < 0 {
+                    ("walking_back", to.x < from.x)
+                } else {
+                    ("walking", to.x < from.x)
+                };
                 paint_character_at(
                     buf,
-                    "walking",
+                    anim_name,
                     frame,
                     walker_anchor,
                     agent,
@@ -1772,6 +1790,11 @@ pub fn render_to_rgb_buffer(
             }
         }
     }
+
+    // Pass 1.5: waypoint furniture (couch + pantry counter). Painted
+    // AFTER characters so a visitor at a waypoint has their lower body
+    // occluded by the furniture — same top-down trick as desks.
+    paint_waypoint_furniture(buf, layout, pack, now);
 
     // Pass 2: desks (+ trash bin + screen glow). Painted AFTER the
     // character so the desk occludes the character's lower body — top-

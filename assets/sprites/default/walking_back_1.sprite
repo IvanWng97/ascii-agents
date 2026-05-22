@@ -1,0 +1,14 @@
+# 8x12 walking back-view, right foot forward.
+@frame 0
+. n H H H H n .
+n H H H H H H n
+H H H H H H H H
+H H H H H H H H
+. H H H H H H .
+. n H H H H n .
+. B B B B B B .
+B B B B B B B B
+B B B B B B B B
+. B B B B B B .
+. S B B B B S .
+. S . . . . S S

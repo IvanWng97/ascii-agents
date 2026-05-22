@@ -1,0 +1,16 @@
+# 8x12 walking back-view, left foot forward.
+# Hair covers the face area entirely — character is walking away from
+# the viewer, so no eyes/mouth visible. Same step rhythm as walking_0.
+@frame 0
+. n H H H H n .
+n H H H H H H n
+H H H H H H H H
+H H H H H H H H
+. H H H H H H .
+. n H H H H n .
+. B B B B B B .
+B B B B B B B B
+B B B B B B B B
+. B B B B B B .
+. S B B B B S .
+S S . . . . S .

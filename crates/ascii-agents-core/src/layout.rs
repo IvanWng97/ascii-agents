@@ -517,13 +517,14 @@ fn build_walkable_mask(
     }
 
     for desk in home_desks {
-        mask.mark_blocked(
-            desk.x,
-            desk.y.saturating_sub(8),
-            DESK_W + 2,
-            DESK_H + 8,
-            OBSTACLE_PAD_PX,
-        );
+        // Block ONLY the desk surface — not the 8-px-above seated-character
+        // zone. In a top-down 3/4 view a walker passing "behind" a desk row
+        // is fine: the seated character paints in Pass 1, the walker also
+        // paints in Pass 1 (occasional sprite overlap is acceptable), and
+        // the desk paints in Pass 2 on top of both. Routes become much
+        // shorter — walkers can cut diagonally between desk rows instead
+        // of weaving around each one.
+        mask.mark_blocked(desk.x, desk.y, DESK_W + 2, DESK_H, OBSTACLE_PAD_PX);
     }
 
     for sofa in meeting_sofas {
@@ -570,12 +571,16 @@ fn build_walkable_mask(
             WaypointKind::Couch => (14, 6),
             WaypointKind::Pantry => (14, 7),
         };
+        // Pad=1 (not OBSTACLE_PAD_PX=2) — waypoint furniture paints in
+        // Pass 1.5 (after characters) so a visitor's body is occluded
+        // by the sprite. We don't need extra clearance around the
+        // sprite footprint; the render order handles overlap correctly.
         mask.mark_blocked(
             wp.pos.x.saturating_sub(w / 2),
             wp.pos.y.saturating_sub(h / 2),
             w,
             h,
-            OBSTACLE_PAD_PX,
+            1,
         );
     }
 
@@ -680,5 +685,87 @@ mod tests {
     fn compute_truncates_home_desks_when_more_agents_than_fit() {
         let l = SceneLayout::compute(50, 80, 20).expect("fits");
         assert!(l.home_desks.len() < 20);
+    }
+
+    /// Pixel-level BFS from `door_threshold` must reach every walkable
+    /// pixel across a range of buffer sizes. If this regresses, any
+    /// agent stranded in an unreachable pocket will see A* return its
+    /// straight-line fallback and visibly teleport across walls ("闪现").
+    ///
+    /// The probed sizes span small (typical 80-col terminal) through
+    /// large (4K-cell terminal). Each pair is also probed with a high
+    /// agent count to exercise the overflow seat placement.
+    #[test]
+    fn walkable_mask_is_fully_connected_across_buffer_sizes() {
+        use std::collections::VecDeque;
+
+        // Range covers the realistic terminal sizes — a small 80×35-cell
+        // terminal up to a 4K-cell rig. Below 96×70 the meeting room
+        // sofas + table + walls degenerate (sofa padding covers the
+        // entire interior) which would be a layout-design problem
+        // rather than a pathfinding regression.
+        let sizes = [
+            (96u16, 70u16, 7usize),
+            (128, 80, 10),
+            (160, 100, 12),
+            (240, 130, 16),
+            (320, 180, 16),
+        ];
+        for (buf_w, buf_h, num_agents) in sizes {
+            let l = SceneLayout::compute(buf_w, buf_h, num_agents)
+                .unwrap_or_else(|| panic!("layout fits at {buf_w}x{buf_h}"));
+            let w = l.buf_w as usize;
+            let h = l.buf_h as usize;
+            let start = l
+                .door_threshold
+                .unwrap_or_else(|| panic!("door_threshold missing at {buf_w}x{buf_h}"));
+            assert!(
+                l.is_walkable(start.x, start.y),
+                "door_threshold {start:?} not walkable at {buf_w}x{buf_h}"
+            );
+
+            // BFS from the threshold.
+            let mut visited = vec![false; w * h];
+            visited[(start.y as usize) * w + (start.x as usize)] = true;
+            let mut queue: VecDeque<(usize, usize)> = VecDeque::new();
+            queue.push_back((start.x as usize, start.y as usize));
+            let mut reachable = 1usize;
+            while let Some((x, y)) = queue.pop_front() {
+                for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    if nx < 0 || ny < 0 {
+                        continue;
+                    }
+                    let (nx, ny) = (nx as usize, ny as usize);
+                    if nx >= w || ny >= h || visited[ny * w + nx] {
+                        continue;
+                    }
+                    if !l.is_walkable(nx as u16, ny as u16) {
+                        continue;
+                    }
+                    visited[ny * w + nx] = true;
+                    reachable += 1;
+                    queue.push_back((nx, ny));
+                }
+            }
+
+            // Total walkable pixels.
+            let mut walkable_total = 0usize;
+            for y in 0..h {
+                for x in 0..w {
+                    if l.is_walkable(x as u16, y as u16) {
+                        walkable_total += 1;
+                    }
+                }
+            }
+            assert_eq!(
+                reachable,
+                walkable_total,
+                "{buf_w}x{buf_h} ({num_agents} agents): {} disconnected pixels — \
+                 some open area is isolated from the door",
+                walkable_total - reachable
+            );
+        }
     }
 }
