@@ -31,6 +31,16 @@ pub enum WallDecor {
     Whiteboard,
 }
 
+/// Variety of potted plants — each renders a different sprite. Spread
+/// these around the lounge so it doesn't feel like one ficus repeated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlantKind {
+    Ficus,
+    Tall,
+    Flower,
+    Succulent,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Waypoint {
     pub pos: Point,
@@ -48,10 +58,12 @@ pub struct Layout {
     pub waypoints: Vec<Waypoint>,
     /// Fixed plant positions in the lounge band. Pure decor, not wander
     /// destinations. Centers (the renderer offsets by half plant size).
-    pub plants: Vec<Point>,
+    pub plants: Vec<(PlantKind, Point)>,
     /// Furniture leaning against the back wall — painted into the top
     /// margin under the window band. Decor only.
     pub wall_decor: Vec<(WallDecor, Point)>,
+    /// Floor lamp position in the lounge corner. Decor only.
+    pub floor_lamp: Option<Point>,
 }
 
 pub const WAYPOINT_COUNT: usize = 3;
@@ -142,12 +154,21 @@ impl Layout {
             })
             .collect();
 
-        // Plants scattered in the lounge (not in a single row).
-        let plants = vec![
-            Point { x: buf_w * 35 / 100, y: lounge_band.y + lounge_band.height * 55 / 100 },
-            Point { x: buf_w * 70 / 100, y: lounge_band.y + lounge_band.height * 60 / 100 },
-            Point { x: buf_w * 95 / 100, y: lounge_band.y + lounge_band.height * 80 / 100 },
+        // Plants scattered in the lounge — mix of types so it doesn't read
+        // as one ficus copy-pasted.
+        let plants: Vec<(PlantKind, Point)> = vec![
+            (PlantKind::Ficus,     Point { x: buf_w * 35 / 100, y: lounge_band.y + lounge_band.height * 55 / 100 }),
+            (PlantKind::Tall,      Point { x: buf_w * 10 / 100, y: lounge_band.y + lounge_band.height * 35 / 100 }),
+            (PlantKind::Flower,    Point { x: buf_w * 70 / 100, y: lounge_band.y + lounge_band.height * 60 / 100 }),
+            (PlantKind::Succulent, Point { x: buf_w * 95 / 100, y: lounge_band.y + lounge_band.height * 80 / 100 }),
         ];
+
+        // Floor lamp in the right side of the lounge — adds a warm bulb
+        // color that breaks up the floor.
+        let floor_lamp = Some(Point {
+            x: buf_w * 92 / 100,
+            y: lounge_band.y + lounge_band.height * 50 / 100,
+        });
 
         // Wall decor — bookshelf + whiteboard *leaning against* the back
         // wall. Top-down view: the back of the furniture is tucked into
@@ -175,6 +196,7 @@ impl Layout {
             waypoints,
             plants,
             wall_decor,
+            floor_lamp,
         })
     }
 }
@@ -248,11 +270,15 @@ mod tests {
     fn compute_places_plants_in_lounge() {
         let l = Layout::compute(120, 96, 1).expect("fits");
         assert!(!l.plants.is_empty(), "expected at least one plant");
-        for p in &l.plants {
+        for (_, p) in &l.plants {
             assert!(p.y >= l.lounge_band.y);
             assert!(p.y < l.lounge_band.y + l.lounge_band.height);
             assert!(p.x < l.buf_w);
         }
+        // Plant variety: more than one kind in the lounge.
+        let kinds: std::collections::HashSet<_> =
+            l.plants.iter().map(|(k, _)| *k).collect();
+        assert!(kinds.len() >= 2, "expected plant variety, got {kinds:?}");
     }
 
     #[test]

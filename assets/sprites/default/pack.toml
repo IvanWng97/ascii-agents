@@ -56,6 +56,26 @@ frame_ms = 600
 frames   = ["plant.sprite"]
 frame_ms = 600
 
+[animations.plant_tall]
+frames   = ["plant_tall.sprite"]
+frame_ms = 600
+
+[animations.plant_flower]
+frames   = ["plant_flower.sprite"]
+frame_ms = 600
+
+[animations.plant_succulent]
+frames   = ["plant_succulent.sprite"]
+frame_ms = 600
+
+[animations.floor_lamp]
+frames   = ["floor_lamp.sprite"]
+frame_ms = 600
+
+[animations.trash_bin]
+frames   = ["trash_bin.sprite"]
+frame_ms = 600
+
 [animations.couch]
 frames   = ["couch.sprite"]
 frame_ms = 600

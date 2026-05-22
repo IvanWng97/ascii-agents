@@ -468,12 +468,30 @@ fn paint_lounge_decor(buf: &mut RgbBuffer, layout: &Layout, pack: &Pack) {
         }
     }
 
-    // Plants — pure decor, scattered around the lounge.
-    if let Some(plant) = pack.animation("plant").and_then(|a| a.frames.first()) {
-        for p in &layout.plants {
-            let px = p.x.saturating_sub(plant.width / 2);
-            let py = p.y.saturating_sub(plant.height / 2);
-            blit_frame(plant, px, py, buf);
+    // Plants — pure decor, scattered around the lounge. Each plant picks
+    // a sprite per kind so the lounge has variety instead of one repeated
+    // ficus.
+    use crate::tui::layout::PlantKind;
+    for (kind, p) in &layout.plants {
+        let anim_name = match kind {
+            PlantKind::Ficus => "plant",
+            PlantKind::Tall => "plant_tall",
+            PlantKind::Flower => "plant_flower",
+            PlantKind::Succulent => "plant_succulent",
+        };
+        if let Some(f) = pack.animation(anim_name).and_then(|a| a.frames.first()) {
+            let px = p.x.saturating_sub(f.width / 2);
+            let py = p.y.saturating_sub(f.height / 2);
+            blit_frame(f, px, py, buf);
+        }
+    }
+
+    // Floor lamp in the lounge corner.
+    if let Some(lamp_pos) = layout.floor_lamp {
+        if let Some(f) = pack.animation("floor_lamp").and_then(|a| a.frames.first()) {
+            let px = lamp_pos.x.saturating_sub(f.width / 2);
+            let py = lamp_pos.y.saturating_sub(f.height / 2);
+            blit_frame(f, px, py, buf);
         }
     }
 }
@@ -828,16 +846,25 @@ pub fn draw_scene<B: Backend>(
             }
         }
 
-        // Pass 2: desks (+ screen glow). Painted AFTER the character so the
-        // desk occludes the character's lower body — top-down POV reads as
-        // "person sitting BEHIND the desk", not "person standing on the
-        // desk top". The screen glow now sits on top of everything, so it's
-        // a fully visible "this workstation is active" cue.
+        // Pass 2: desks (+ trash bin + screen glow). Painted AFTER the
+        // character so the desk occludes the character's lower body — top-
+        // down POV reads as "person sitting BEHIND the desk", not "person
+        // standing on the desk top". The screen glow sits on top of
+        // everything, so it's a fully visible "this workstation is active"
+        // cue. Trash bin tucked next to each desk for cubicle realism.
         let desk_anim = pack.animation("desk");
+        let bin_anim = pack.animation("trash_bin");
         for agent in &agents {
             let Some(desk) = layout.home_desks.get(agent.desk_index) else { continue };
             if let Some(frame) = desk_anim.and_then(|a| a.frames.first()) {
                 blit_frame(frame, desk.x, desk.y, buf);
+            }
+            if let Some(bin) = bin_anim.and_then(|a| a.frames.first()) {
+                let bin_x = desk.x + DESK_W;
+                let bin_y = desk.y + 4;
+                if bin_x + bin.width <= buf_w && bin_y + bin.height <= buf_h {
+                    blit_frame(bin, bin_x, bin_y, buf);
+                }
             }
             if matches!(agent.state, ActivityState::Active { .. }) {
                 paint_screen_glow(buf, desk.x, desk.y);
