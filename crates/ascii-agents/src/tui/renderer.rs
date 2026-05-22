@@ -566,11 +566,10 @@ pub fn draw_scene<B: Backend>(
         paint_wall_decor(buf, &layout, pack);
         paint_lounge_decor(buf, &layout, pack);
 
-        // Pass 1: rugs + desks. Each agent's home desk is at
+        // Pass 1: rugs only. Each agent's home desk is at
         // home_desks[agent.desk_index] — NOT at the agent's BTreeMap position.
         // Iterating by agent (and looking up the desk) keeps rugs, desks,
         // characters, and labels co-located.
-        let desk_anim = pack.animation("desk");
         for agent in &agents {
             let Some(desk) = layout.home_desks.get(agent.desk_index) else { continue };
             let rug = RUG_PALETTE[(agent.agent_id.raw() as usize / 11) % RUG_PALETTE.len()];
@@ -582,15 +581,12 @@ pub fn draw_scene<B: Backend>(
                 DESK_H + 12,
                 rug,
             );
-            if let Some(frame) = desk_anim.and_then(|a| a.frames.first()) {
-                blit_frame(frame, desk.x, desk.y, buf);
-            }
-            if matches!(agent.state, ActivityState::Active { .. }) {
-                paint_screen_glow(buf, desk.x, desk.y);
-            }
         }
 
-        // Pass 2: characters by pose.
+        // Pass 2: characters by pose. Painted BEFORE the desk so the desk
+        // can occlude the character's lower body — from a top-down POV the
+        // viewer sees head + shoulders sticking up above the desk back
+        // edge, and the body is hidden behind the desk.
         //
         // Waypoint de-collision: when multiple Idle agents pick the same
         // wander destination in the same cycle, fan them out spatially so
@@ -645,6 +641,22 @@ pub fn draw_scene<B: Backend>(
                     let flip = to.x < from.x;
                     paint_character_at(buf, "walking", frame, walking_anchor(pos), agent, pack, flip);
                 }
+            }
+        }
+
+        // Pass 3: desks (+ screen glow). Painted AFTER the character so the
+        // desk occludes the character's lower body — top-down POV reads as
+        // "person sitting BEHIND the desk", not "person standing on the
+        // desk top". The screen glow now sits on top of everything, so it's
+        // a fully visible "this workstation is active" cue.
+        let desk_anim = pack.animation("desk");
+        for agent in &agents {
+            let Some(desk) = layout.home_desks.get(agent.desk_index) else { continue };
+            if let Some(frame) = desk_anim.and_then(|a| a.frames.first()) {
+                blit_frame(frame, desk.x, desk.y, buf);
+            }
+            if matches!(agent.state, ActivityState::Active { .. }) {
+                paint_screen_glow(buf, desk.x, desk.y);
             }
         }
 
