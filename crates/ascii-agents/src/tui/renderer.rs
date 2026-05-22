@@ -1399,9 +1399,21 @@ pub fn draw_scene<B: Backend>(
                 std::borrow::Cow::Borrowed(agent.label.as_str())
             };
             let display = truncate_label(&raw, (DESK_W + 4) as usize);
+            // Color the label by activity so the user can scan who's busy
+            // at a glance — green=Active, yellow=Waiting, dim grey=Idle.
+            // Exiting agents fade toward grey-blue so they read as "leaving".
+            let label_color = if agent.exiting_at.is_some() {
+                Color::Rgb(100, 110, 130)
+            } else {
+                match &agent.state {
+                    ActivityState::Active { .. } => Color::Rgb(140, 240, 170),
+                    ActivityState::Waiting { .. } => Color::Rgb(240, 200, 80),
+                    ActivityState::Idle => Color::Rgb(160, 160, 160),
+                }
+            };
             let para = Paragraph::new(Span::styled(
                 display.into_owned(),
-                Style::default().fg(Color::White),
+                Style::default().fg(label_color),
             ));
             f.render_widget(
                 para,
