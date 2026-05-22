@@ -335,19 +335,31 @@ impl SceneLayout {
             y: top_margin + 6,
         });
 
+        // Wall decor anchored to the BOTTOM of the wall band so the sprites
+        // sit "below the windows" no matter how tall the wall band grows.
+        // Hardcoded y=6/8 (like the old code) leaves bookshelf + bulletin
+        // floating in the sky on tall terminals where the window glass
+        // auto-stretches into the wall band.
+        //
+        // Sprite heights:
+        //   bookshelf:      12 px
+        //   bulletin_board: 6 px
+        //   exit_sign:      ~6 px (already used top_margin - 13 — kept)
+        // We position the TOP-LEFT corner of each sprite so its bottom
+        // row lands exactly at `top_margin - 1` (last wall band row).
         let wall_decor = vec![
             (
                 WallDecor::Bookshelf,
                 Point {
                     x: buf_w * 18 / 100,
-                    y: 6,
+                    y: top_margin.saturating_sub(12),
                 },
             ),
             (
                 WallDecor::BulletinBoard,
                 Point {
                     x: buf_w * 42 / 100,
-                    y: 8,
+                    y: top_margin.saturating_sub(6),
                 },
             ),
             (
