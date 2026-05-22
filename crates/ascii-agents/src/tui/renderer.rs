@@ -505,6 +505,33 @@ fn paint_character_at(
     blit_frame(&final_frame, anchor.x, anchor.y, buf);
 }
 
+/// Office chair painted BEHIND the character — a darkened version of the
+/// agent's shirt color, so the character's transparent edge pixels reveal
+/// the chair as a "halo" of upholstery. Brings back the per-agent color
+/// identifier that the removed rug used to provide, in a more naturalistic
+/// way (top-down chair back behind the sitter).
+fn paint_chair_behind(buf: &mut RgbBuffer, anchor: Point, agent: &AgentSlot, pack: &Pack) {
+    let pal = agent_palette(&pack.palette, agent);
+    let Some(shirt) = pal.get('B').flatten() else { return };
+    let chair = Rgb(
+        ((shirt.0 as u16) * 55 / 100) as u8,
+        ((shirt.1 as u16) * 55 / 100) as u8,
+        ((shirt.2 as u16) * 55 / 100) as u8,
+    );
+    // Slightly larger than the 8x10 seated sprite footprint — chair extends
+    // 1 px past the character on each side so the upholstery is visible
+    // even where the character body is fully opaque.
+    for dy in 1..11 {
+        for dx in 0..10 {
+            let px = anchor.x.saturating_sub(1) + dx;
+            let py = anchor.y + dy;
+            if px < buf.width && py < buf.height {
+                buf.put(px, py, chair);
+            }
+        }
+    }
+}
+
 /// "Active" screen glow painted on top of the desk sprite while an agent is
 /// in `ActivityState::Active`. Covers the full monitor footprint (rows 0-3,
 /// cols 3-10 of desk.sprite — frame + screen + stand silhouette) so the
@@ -648,11 +675,13 @@ pub fn draw_scene<B: Backend>(
             match p {
                 Pose::SeatedIdle => {
                     let anchor = with_breath(seated_anchor(desk), agent.agent_id, now);
+                    paint_chair_behind(buf, anchor, agent, pack);
                     // Idle = nobody home, sprite uses closed-eye dashes.
                     paint_character_at(buf, "seated_sleeping", 0, anchor, agent, pack, false);
                 }
                 Pose::SeatedTyping { frame } => {
                     let anchor = with_breath(seated_anchor(desk), agent.agent_id, now);
+                    paint_chair_behind(buf, anchor, agent, pack);
                     paint_character_at(buf, "typing", frame, anchor, agent, pack, false);
                 }
                 Pose::StandingAtDesk => {
