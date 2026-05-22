@@ -141,9 +141,12 @@ impl Layout {
         // cubicle row to reach the back wall.
         let wp_layout: &[(WaypointKind, u16, u16)] = &[
             // (kind, x_frac/100, y_frac/100 inside lounge band)
-            (WaypointKind::Couch,       20, 35),  // center-left
-            (WaypointKind::WaterCooler, 55, 75),  // center-bottom
-            (WaypointKind::Coffee,      85, 30),  // right
+            (WaypointKind::Couch,       20, 60),  // left half
+            // Pantry (formerly "water cooler") leans against the lounge's
+            // back wall — top of the band — so the fridge+counter+coffee
+            // strip reads as a kitchenette.
+            (WaypointKind::WaterCooler, 55, 25),  // center-back
+            (WaypointKind::Coffee,      88, 60),  // right
         ];
         let waypoints: Vec<Waypoint> = wp_layout
             .iter()

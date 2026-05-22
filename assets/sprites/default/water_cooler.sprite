@@ -1,11 +1,11 @@
+# 14x7 pantry: stand-up fridge on the left (with cyan window), a long
+# counter, and a small coffee machine sitting on the counter on the right.
+# Replaces the old standalone water cooler — same waypoint, richer sprite.
 @frame 0
-. K K K K .
-K c c c c K
-K c c c c K
-K c c c c K
-. K K K K .
-K K K K K K
-K . . . . K
-K . . . . K
-K K K K K K
-. . . . . .
+M M M . . . . . . . . . . .
+M c M . d d d d d d d d d .
+M c M . d d d d K K K d d .
+M M M . d d d d K c K d d .
+M M M . d d d d K K K d d .
+n n n . d d d d d d d d d .
+. . . . . . . . . . . . . .
