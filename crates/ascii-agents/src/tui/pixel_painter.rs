@@ -1630,10 +1630,14 @@ pub fn render_to_rgb_buffer(
     // zone and breaks up the empty wood strip there. The door SPRITE
     // itself is now a y-sorted Drawable (so a walker passing south of
     // the doorway can occlude it correctly); only the floor mat stays in
-    // the background pass.
+    // the background pass. Y is anchored to the wall-band bottom + 3
+    // (3 px south of the door's bottom edge, which sits at top_margin+2)
+    // so the mat tracks the top wall on tall terminals — the previous
+    // `let mat_y = 15` was an absolute pixel position that got buried
+    // inside the wall band on anything taller than the minimum buffer.
     if let Some(door_pos) = layout.door {
         let mat_x = door_pos.x.saturating_sub(2);
-        let mat_y = 15;
+        let mat_y = layout.top_margin + 3;
         paint_entry_mat(buf, mat_x, mat_y, 10, 2);
     }
 
