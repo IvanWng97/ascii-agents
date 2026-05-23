@@ -784,7 +784,12 @@ pub fn render_to_rgb_buffer(
                     // laptop to show. Keep the static back_couch sprite.
                     ("back_couch", sofa.y.saturating_sub(7), 9u16, 0)
                 } else if is_active {
-                    ("working_couch", sofa.y.saturating_sub(2), 12u16, pulse_frame)
+                    (
+                        "working_couch",
+                        sofa.y.saturating_sub(2),
+                        12u16,
+                        pulse_frame,
+                    )
                 } else {
                     ("sitting_couch_sleeping", sofa.y.saturating_sub(2), 12u16, 0)
                 };
