@@ -1,25 +1,28 @@
 # ascii-agents
 
-A terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each running session of [Claude Code](https://claude.com/claude-code) appears as an animated half-block sprite in a top-down ASCII office — sitting at a desk with a monitor that lights up green while typing, yellow when waiting for permission, dim cyan when idle.
+[![CI](https://github.com/IvanWng97/ascii-agents/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanWng97/ascii-agents/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust 1.78+](https://img.shields.io/badge/Rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
 
-![Top-down view of a pixel-art office with four characters at desks and one decorative plant](docs/images/screenshot.png)
+A terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each running [Claude Code](https://claude.com/claude-code) session appears as an animated character in a top-down coworking office — typing at desks, wandering to the pantry for coffee, lounging on the couch, or walking through the corridor. All rendered with half-block pixel art at 24-bit color, right in your terminal.
+
+![Top-down pixel-art coworking office with agents at desks, meeting room, pantry, and elevator](docs/images/screenshot.png)
 
 > Inspired by [`pablodelucca/pixel-agents`](https://github.com/pablodelucca/pixel-agents) (VS Code webview) and [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) (desktop pet). Different niche: pure terminal, no Electron, no browser, runs over SSH.
 
-## Status
+## Features
 
-**v0.1 (alpha) — pipeline works end-to-end against real Claude Code transcripts.**
-
-| Working | Pending |
-|---|---|
-| Claude Code source (hook socket + JSONL fallback) | Codex / Cursor / Gemini source adapters (v2) |
-| Multi-agent ASCII office, auto-assigned desks | Walking + BFS pathfinding (v2) |
-| Idle / typing / waiting animation states | Reading / thinking states (v2) |
-| Half-block pixel-art sprite rendering, 24-bit color | Daemon split / detachable viewer (v2) |
-| Per-agent shirt + hair recolor by session-id hash | Office layout editor (v2) |
-| `install-hooks` / `uninstall-hooks` (stow-symlink safe) | Web / GIF / OBS renderers (v2) |
-| `--headless` mode for CI / scripting | |
-| 46 tests + PNG snapshot of rendered TUI | |
+- **Multi-agent coworking office** — each CC session gets a desk; overflow agents work from meeting-room sofas and floor seats with laptops
+- **Animated characters** — typing, waiting, idle, walking between waypoints with A*-routed pathfinding
+- **Coworking-lounge layout** — city-view windows, meeting room with sofas, pantry with coffee machine, cubicle pods with aisle decor, elevator door animation
+- **Per-agent identity** — deterministic shirt/hair/skin palette from session hash, Wes Anderson + Studio Ghibli outfit presets
+- **Per-tool monitor glow** — Edit = blue, Bash = orange, Read = cyan, Agent/Task = purple (scannable at a glance)
+- **Status-bar footer** — agent count + state breakdown + active tool tally, adapts to terminal width
+- **Hover tooltips** — mouse over a character to see agent details (cwd, tool, session ID)
+- **Wander state machine** — idle agents leave desks, walk to the couch / pantry / standing desk / phone booth, return via snap-back animation
+- **Dual event sources** — hook socket (real-time) + JSONL transcript watching (fallback), transport-tagged dedup
+- **Hook-safe** — the shim always exits 0 with a 200ms timeout; a stuck visualizer can never block Claude Code
+- **147+ tests** — TDD-shaped, including walkable-mask BFS connectivity across 5 terminal sizes
 
 ## Install
 
@@ -29,26 +32,15 @@ A terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each r
 brew install IvanWng97/ascii-agents/ascii-agents
 ```
 
-### Debian / Ubuntu
-
-Download the `.deb` packages from the [latest release](https://github.com/IvanWng97/ascii-agents/releases/latest):
-
-```bash
-curl -LO https://github.com/IvanWng97/ascii-agents/releases/latest/download/ascii-agents_0.1.0-1_amd64.deb
-curl -LO https://github.com/IvanWng97/ascii-agents/releases/latest/download/ascii-agents-hook_0.1.0-1_amd64.deb
-sudo dpkg -i ascii-agents_0.1.0-1_amd64.deb ascii-agents-hook_0.1.0-1_amd64.deb
-```
-
 ### Pre-built binaries
 
-Download the tarball for your platform from [GitHub Releases](https://github.com/IvanWng97/ascii-agents/releases/latest), extract, and add both binaries to your `$PATH`:
+Download from [GitHub Releases](https://github.com/IvanWng97/ascii-agents/releases/latest):
 
 | Platform | Tarball |
 |---|---|
 | macOS (Apple Silicon) | `ascii-agents-v*-aarch64-apple-darwin.tar.gz` |
 | macOS (Intel) | `ascii-agents-v*-x86_64-apple-darwin.tar.gz` |
 | Linux (x86_64, glibc) | `ascii-agents-v*-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux (x86_64, musl) | `ascii-agents-v*-x86_64-unknown-linux-musl.tar.gz` |
 | Linux (ARM64) | `ascii-agents-v*-aarch64-unknown-linux-gnu.tar.gz` |
 
 ### From source
@@ -61,111 +53,59 @@ cd ascii-agents
 cargo build --release
 ```
 
-This produces two binaries in `target/release/`:
-- `ascii-agents` — the TUI
-- `ascii-agents-hook` — the tiny shim CC invokes from its hooks
+Two binaries in `target/release/`: `ascii-agents` (TUI) and `ascii-agents-hook` (shim).
 
 ## Quick start
 
-In one terminal:
-
 ```bash
-# Wire Claude Code's hooks to our shim (writes to ~/.claude/settings.json
-# atomically, with a one-time backup, and preserves a stow symlink if you use one).
+# Wire Claude Code's hooks (one-time, survives TUI restarts).
 ascii-agents install-hooks
 
-# Start the TUI.
+# Start the office.
 ascii-agents
 ```
 
-In another terminal:
+In another terminal, start a Claude Code session (`claude`). A character walks in from the elevator within a second.
 
-```bash
-# Start a Claude Code session in any project.
-claude
-```
-
-A character should appear at desk 0 within a second. When CC starts a tool call, the character switches to the typing animation. When it asks for permission, a yellow `┌─?─┐` speech bubble appears.
-
-**`q` / Esc / Ctrl-C quits the TUI.**
-
-Hooks stay installed across TUI sessions — you only run `install-hooks` once. When the TUI isn't running, the shim's socket connect fails silently and CC continues normally (zero overhead, the shim always exits 0). Run `ascii-agents` again any time you want to watch.
-
-Only run `uninstall-hooks` if you want to **permanently remove** the integration from `~/.claude/settings.json`:
-
-```bash
-ascii-agents uninstall-hooks
-```
+**`q` / Esc / Ctrl-C** quits the TUI. Hooks stay installed — the shim silently no-ops when the TUI isn't running.
 
 ### Headless / scripting
 
 ```bash
-ascii-agents run --headless \
-    --projects-root ~/.claude/projects --max-desks 12
+ascii-agents run --headless --projects-root ~/.claude/projects --max-desks 16
 ```
 
-Prints a one-line JSON-ish summary of scene state every time it changes. Useful for CI and for observing transcripts you're not actively viewing.
-
-### CLI
-
-```
-ascii-agents [OPTIONS] [COMMAND]
-
-Commands:
-  run              Run the TUI (default if no subcommand given)
-    --socket          override hook socket path (default /tmp/ascii-agents.sock)
-    --projects-root   override CC transcript root (default ~/.claude/projects)
-    --max-desks       desks per office (default 8)
-    --headless        skip TUI; print scene state on changes
-  install-hooks       merge our hooks into ~/.claude/settings.json
-    --hook-path       path to ascii-agents-hook binary (else auto-detect)
-    --settings        override settings.json path (defaults to ~/.claude/settings.json)
-  uninstall-hooks     remove our hooks from settings.json
-  help                Print help
-
-Options:
-  --log-level <LEVEL>    tracing filter (default: info)
-```
+Prints a one-line summary every time the scene changes. Useful for CI and observability.
 
 ## How it works
 
 ```
 CC tool call ──► CC fires hook ──► ascii-agents-hook (shim)
-                                         │ JSON line over Unix socket
+                                         │ JSON over Unix socket
                                          ▼
                                   /tmp/ascii-agents.sock
                                          │
-                       HookSocketListener (core) ─────► ┐
-                                                        │  (Transport, AgentEvent)
-                       JsonlWatcher    (core) ─────► ───┤  on a shared mpsc channel
-                                                        ▼
-                       Reducer applies → Arc<RwLock<SceneState>>
-                                                        │
-                                                        ▼
-                       TUI render loop @ ~30fps
-                       (sprite frame → RgbBuffer → half-block cells → ratatui)
+                       HookSocketListener ─────► ┐
+                                                 │ (Transport, AgentEvent)
+                       JsonlWatcher       ─────► ┤ shared mpsc channel
+                                                 ▼
+                       Reducer ──► SceneState (watch channel)
+                                         │
+                       TuiRenderer ──► draw_scene @ ~30fps
+                       (pose → pixel_painter → RgbBuffer → half-block → ratatui)
 ```
-
-Hooks are primary (low latency, real-time permission events). JSONL transcript watching is the fallback for sessions where hooks aren't installed.
 
 Three Rust crates:
 
-- **`ascii-agents-core`** — headless library, no terminal dependencies. Owns the `Source` trait (for plugging in Codex / Cursor / Gemini later), the `Renderer` trait, the reducer, the sprite engine.
-- **`ascii-agents`** — TUI binary built on ratatui + crossterm + tokio.
-- **`ascii-agents-hook`** — tiny ~40-line shim CC invokes from its hooks. Forwards stdin JSON to the Unix socket with a 200 ms write timeout so a stuck daemon can never block CC.
+| Crate | Role |
+|---|---|
+| **ascii-agents-core** | Headless library — no terminal deps. Owns `Source` trait, `Renderer` trait, reducer, pose derivation, layout geometry, sprite engine. |
+| **ascii-agents** | TUI binary — ratatui + crossterm + tokio. `TuiRenderer` wires the `Renderer` trait to half-block rendering. |
+| **ascii-agents-hook** | Tiny shim CC invokes from hooks. Forwards JSON to the socket with 200ms timeout. Always exits 0. |
 
-## Verify visually
+## Extending (multi-CLI)
 
-Build and render a snapshot without needing a real terminal:
-
-```bash
-cargo run --release --example snapshot -- /tmp/snap.png
-open /tmp/snap.png      # macOS
-```
-
-## Multi-agent / extending
-
-`Source` (in `crates/ascii-agents-core/src/source/mod.rs`) is the only abstraction required to add a new agent CLI:
+`Source` is the only abstraction for adding a new agent CLI:
 
 ```rust
 #[async_trait]
@@ -175,25 +115,28 @@ pub trait Source: Send + 'static {
 }
 ```
 
-A v2 `CodexSource` / `CursorSource` / `GeminiSource` plugs in by implementing the trait and writing tagged events onto the channel.
+A future `CodexSource` / `CursorSource` / `GeminiSource` implements the trait, writes tagged events onto the channel, and `SourceManager::with_source()` plugs it in.
 
-## Design + plan
+## Verify visually
 
-- Spec: [`docs/superpowers/specs/2026-05-20-ascii-agents-design.md`](docs/superpowers/specs/2026-05-20-ascii-agents-design.md)
-- Implementation plan (28 TDD-shaped tasks): [`docs/superpowers/plans/2026-05-20-ascii-agents-v1.md`](docs/superpowers/plans/2026-05-20-ascii-agents-v1.md)
+```bash
+cargo run --release --example snapshot -- /tmp/snap.png
+open /tmp/snap.png
+```
 
-## Known sharp edges
+For quadrant crops during sprite iteration:
 
-- **Hook payloads from CC don't include `tool_use_id`.** The reducer's hook-wins dedup window therefore rarely fires for the common case. Hooks always arrive ~ms before JSONL, so duplicate state transitions are benign in practice (state is re-set to the same value). A coarser per-session dedup is a candidate refinement.
-- **The `Renderer` trait isn't on the TUI's live path yet** — `draw_scene` is generic over `Backend` (so `TestBackend` works for the snapshot example), but the production binary calls it as a free function rather than via a `Renderer` impl. Tracked for v2 daemon split.
-- **`AgentSlot.state_started_at` is `std::time::Instant`** — process-local, not serializable. Will need to swap to `SystemTime` (or epoch-ms `u64`) before the daemon split.
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python3 scripts/crop-snapshot.py /tmp/snap.png --scale 3
+```
 
 ## Acknowledgments
 
-- [`pablodelucca/pixel-agents`](https://github.com/pablodelucca/pixel-agents) — the inspiration. Same concept, VS Code webview instead of terminal.
+- [`pablodelucca/pixel-agents`](https://github.com/pablodelucca/pixel-agents) — the inspiration. Same concept, VS Code webview.
 - [`rullerzhou-afk/clawd-on-desk`](https://github.com/rullerzhou-afk/clawd-on-desk) — multi-agent hook-based pattern, desktop-pet form factor.
-- Claude Code's built-in [Buddy](https://dev.to/picklepixel/how-i-reverse-engineered-claude-codes-hidden-pet-system-8l7) ASCII pet — proves a single-character terminal pet idea is delightful; this project extends it to multi-agent + zoomed-out scene.
+- Claude Code's built-in [Buddy](https://dev.to/picklepixel/how-i-reverse-engineered-claude-codes-hidden-pet-system-8l7) ASCII pet — proves a single-character terminal pet is delightful; this extends it to multi-agent + zoomed-out scene.
 
 ## License
 
-MIT.
+[MIT](LICENSE)
