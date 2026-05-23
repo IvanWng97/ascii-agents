@@ -23,8 +23,7 @@ use ascii_agents_core::sprite::{Rgb, RgbBuffer};
 use ascii_agents_core::AgentSlot;
 
 use super::effects::{
-    paint_chair_behind, paint_coffee_steam, paint_screen_glow, paint_sleep_z, paint_waiting_bubble,
-    paint_walking_dust,
+    paint_coffee_steam, paint_screen_glow, paint_sleep_z, paint_waiting_bubble, paint_walking_dust,
 };
 use super::{paint_character_at, paint_coffee_table, paint_pantry_chair, paint_pantry_table};
 use crate::tui::frame_cache::FrameCache;
@@ -52,7 +51,10 @@ pub(super) enum DrawableKind<'a> {
         frame_idx: usize,
         anchor: Point,
         flip_x: bool,
-        chair_behind: bool,
+        /// True when the character is at a lit monitor (currently only
+        /// the SeatedTyping pose). Skin tints toward green to read as
+        /// "monitor light on the face". Off for every other pose.
+        face_lit: bool,
         sleep_z_seed: Option<u64>,
         waiting_bubble: bool,
         walking_dust_frame: Option<usize>,
@@ -195,19 +197,16 @@ pub(super) fn paint_drawable(
             frame_idx,
             anchor,
             flip_x,
-            chair_behind,
+            face_lit,
             sleep_z_seed,
             waiting_bubble,
             walking_dust_frame,
         } => {
-            if *chair_behind {
-                paint_chair_behind(buf, *anchor, agent, pack);
-            }
             if let Some(dust_frame) = walking_dust_frame {
                 paint_walking_dust(buf, *anchor, *dust_frame);
             }
             paint_character_at(
-                buf, anim_name, *frame_idx, *anchor, agent, pack, *flip_x, cache,
+                buf, anim_name, *frame_idx, *anchor, agent, pack, *flip_x, *face_lit, cache,
             );
             if let Some(seed) = sleep_z_seed {
                 paint_sleep_z(buf, *anchor, now, *seed);

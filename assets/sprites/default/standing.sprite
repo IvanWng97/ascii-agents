@@ -1,4 +1,6 @@
-# 8x12 standing pose. Wider so face has room for two separated eyes.
+# 8x12 standing pose. Shirt (B) on top, pants (P) below the waist, hands (S)
+# at sides for arm definition. Two-tone body breaks the previously-monotone
+# silhouette.
 @frame 0
 . n H H H H n .
 n H H H H H H n
@@ -9,6 +11,6 @@ H S e S S e S H
 . B B B B B B .
 B B B B B B B B
 B B B B B B B B
-. B B B B B B .
-. S B B B B S .
-. S . . . . S .
+. P P P P P P .
+. S P P P P S .
+. P . . . . P .

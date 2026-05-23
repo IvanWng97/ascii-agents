@@ -1,5 +1,5 @@
-//! Per-character / per-desk overlay effects: chair-behind, screen glow,
-//! sleep z, coffee steam, walker dust, waiting bubble.
+//! Per-character / per-desk overlay effects: screen glow, sleep z,
+//! coffee steam, walker dust, waiting bubble.
 //!
 //! These all paint relative to an anchor (character feet / desk corner /
 //! pantry counter) and read state from the agent + clock. They're called
@@ -8,41 +8,10 @@
 
 use std::time::SystemTime;
 
-use ascii_agents_core::sprite::format::Pack;
 use ascii_agents_core::sprite::{Rgb, RgbBuffer};
-use ascii_agents_core::AgentSlot;
 
 use super::palette::blend;
 use crate::tui::layout::Point;
-
-/// Office chair painted BEHIND the character — flat charcoal grey,
-/// independent of the agent. Used to read as a top-down chair from
-/// behind the sitter. (Was previously tinted by shirt color, which
-/// looked like a colored background rather than a chair.)
-///
-/// `_pack` and `_agent` are intentionally unused now but kept in the
-/// signature so the drawable dispatch site doesn't need to change if
-/// we later want per-agent chair variants (e.g. exec chair vs stool).
-pub(super) fn paint_chair_behind(
-    buf: &mut RgbBuffer,
-    anchor: Point,
-    _agent: &AgentSlot,
-    _pack: &Pack,
-) {
-    const CHAIR: Rgb = Rgb(56, 58, 66);
-    // Slightly larger than the 8x10 seated sprite footprint — chair extends
-    // 1 px past the character on each side so the upholstery is visible
-    // even where the character body is fully opaque.
-    for dy in 1..11 {
-        for dx in 0..10 {
-            let px = anchor.x.saturating_sub(1) + dx;
-            let py = anchor.y + dy;
-            if px < buf.width && py < buf.height {
-                buf.put(px, py, CHAIR);
-            }
-        }
-    }
-}
 
 /// "Active" screen glow painted on top of the desk sprite while an agent is
 /// in `ActivityState::Active`. Covers the full monitor footprint (rows 0-3,

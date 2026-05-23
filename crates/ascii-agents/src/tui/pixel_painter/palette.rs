@@ -8,35 +8,111 @@
 //! shared with background/effects.
 
 use ascii_agents_core::sprite::{Frame, Palette, Pixel, Rgb};
-use ascii_agents_core::state::ActivityState;
 use ascii_agents_core::AgentSlot;
 
 use crate::tui::pose;
 
-/// Warm / extroverted shirt palette — agents with higher trip_chance_pct
-/// pick from here. Expanded from 4 → 8 colors so a crowded office of
-/// 16 agents has visibly distinct silhouettes.
-const SHIRT_PRESETS_WARM: &[Rgb] = &[
-    Rgb(0x9c, 0x27, 0x27), // crimson
-    Rgb(0xc6, 0x6a, 0x1e), // burnt orange
-    Rgb(0xb0, 0x32, 0xa8), // magenta
-    Rgb(0xd0, 0x9c, 0x32), // mustard
-    Rgb(0xe0, 0x46, 0x46), // tomato
-    Rgb(0xa8, 0x4e, 0x9c), // rose violet
-    Rgb(0xcf, 0x7b, 0x2c), // pumpkin
-    Rgb(0xc4, 0x39, 0x6f), // raspberry
+/// A complete shirt + pants combo. We pick *outfits* per agent rather
+/// than independent shirt and pants colors so the result is always a
+/// harmonious pairing (designed together by someone who knows color)
+/// instead of a random clash. Sources: Wes Anderson stills, Studio
+/// Ghibli character art, modern office capsule-wardrobe palettes.
+#[derive(Clone, Copy)]
+struct Outfit {
+    shirt: Rgb,
+    pants: Rgb,
+}
+
+/// Warm / extroverted outfits — earthy reds, ochres, terracottas paired
+/// with deep neutrals. Used for agents with higher trip_chance_pct.
+const OUTFITS_WARM: &[Outfit] = &[
+    // Wes Anderson — Grand Budapest concierge (cream + plum)
+    Outfit {
+        shirt: Rgb(0xee, 0xe1, 0xc6),
+        pants: Rgb(0x4a, 0x2b, 0x3d),
+    },
+    // Ghibli earthy — terracotta + sand
+    Outfit {
+        shirt: Rgb(0xc9, 0x7b, 0x5e),
+        pants: Rgb(0x6b, 0x57, 0x3d),
+    },
+    // 70s academic — mustard + olive
+    Outfit {
+        shirt: Rgb(0xc9, 0xa2, 0x4b),
+        pants: Rgb(0x4a, 0x52, 0x34),
+    },
+    // Burgundy + warm stone (moody academic)
+    Outfit {
+        shirt: Rgb(0x8a, 0x2c, 0x36),
+        pants: Rgb(0x5a, 0x4e, 0x42),
+    },
+    // Mediterranean — coral + dark navy
+    Outfit {
+        shirt: Rgb(0xd7, 0x7a, 0x61),
+        pants: Rgb(0x27, 0x33, 0x4a),
+    },
+    // Camel + chocolate (luxury minimal)
+    Outfit {
+        shirt: Rgb(0xb8, 0x99, 0x68),
+        pants: Rgb(0x3d, 0x2a, 0x1f),
+    },
+    // Rust + cream (autumn)
+    Outfit {
+        shirt: Rgb(0xa5, 0x4f, 0x2c),
+        pants: Rgb(0xcd, 0xc0, 0xa3),
+    },
+    // Salmon + warm charcoal
+    Outfit {
+        shirt: Rgb(0xe0, 0x90, 0x7c),
+        pants: Rgb(0x3a, 0x32, 0x2e),
+    },
 ];
-/// Cool / homebody shirt palette — used for lower-trip-chance agents.
-const SHIRT_PRESETS_COOL: &[Rgb] = &[
-    Rgb(0x2e, 0x62, 0xcf), // royal blue
-    Rgb(0x16, 0xa0, 0x6e), // forest green
-    Rgb(0x32, 0x82, 0x9b), // teal
-    Rgb(0x6c, 0x4f, 0x9e), // violet
-    Rgb(0x4a, 0x7a, 0xb8), // steel blue
-    Rgb(0x2e, 0x8a, 0x84), // pine
-    Rgb(0x3e, 0x52, 0x9c), // indigo
-    Rgb(0x5c, 0x8a, 0x32), // moss green
+
+/// Cool / homebody outfits — sages, slates, indigos paired with deeper
+/// neutrals. Used for agents with lower trip_chance_pct.
+const OUTFITS_COOL: &[Outfit] = &[
+    // Modern minimal — sage + charcoal
+    Outfit {
+        shirt: Rgb(0xa4, 0xb5, 0x95),
+        pants: Rgb(0x33, 0x36, 0x3d),
+    },
+    // Professional — pale blue + slate
+    Outfit {
+        shirt: Rgb(0x9b, 0xb5, 0xc8),
+        pants: Rgb(0x3c, 0x44, 0x52),
+    },
+    // Soft moody — lavender + espresso
+    Outfit {
+        shirt: Rgb(0xa2, 0x90, 0xb0),
+        pants: Rgb(0x3c, 0x2a, 0x1e),
+    },
+    // Outdoorsy — forest green + khaki
+    Outfit {
+        shirt: Rgb(0x3f, 0x61, 0x4c),
+        pants: Rgb(0x7a, 0x67, 0x48),
+    },
+    // Confident — teal + cream
+    Outfit {
+        shirt: Rgb(0x3e, 0x7a, 0x85),
+        pants: Rgb(0xc7, 0xb6, 0x96),
+    },
+    // Preppy — indigo + warm grey
+    Outfit {
+        shirt: Rgb(0x3f, 0x4a, 0x75),
+        pants: Rgb(0x8a, 0x84, 0x7a),
+    },
+    // Nordic — dusty blue + navy
+    Outfit {
+        shirt: Rgb(0x6b, 0x84, 0xa0),
+        pants: Rgb(0x2a, 0x33, 0x4a),
+    },
+    // Mossy — pine + bone
+    Outfit {
+        shirt: Rgb(0x47, 0x69, 0x5a),
+        pants: Rgb(0xb8, 0xae, 0x95),
+    },
 ];
+
 /// 8 hair colors — was 5. Added silver/grey for older-coded agents,
 /// ginger / strawberry blonde / jet black for more silhouette variety.
 const HAIR_PRESETS: &[Rgb] = &[
@@ -57,23 +133,30 @@ const SKIN_PRESETS: &[Rgb] = &[
     Rgb(0xc8, 0x9a, 0x64), // warm tan
 ];
 
-pub(super) fn agent_palette(base: &Palette, agent: &AgentSlot) -> Palette {
+/// Build the per-agent palette. `face_lit` is true only when the agent
+/// is in a pose where a lit monitor is reflecting on their face —
+/// currently SeatedTyping (the only Active-at-desk pose). In that case
+/// the skin tints 18% toward GLOW_TINT (warm-green monitor light) so
+/// the eye reads "the monitor is lighting them up". For every other
+/// pose (Idle, Standing, Walking, AtWaypoint, AimlessAt, overflow),
+/// skin stays at its natural tone — avoids the previous bug where
+/// every Active agent looked perpetually green-skinned, because the
+/// debounce keeps state == Active even for agents wandering away from
+/// their desk.
+pub(super) fn agent_palette(base: &Palette, agent: &AgentSlot, face_lit: bool) -> Palette {
     let seed = agent.agent_id.raw() as usize;
     // Personality nudges aesthetic choice: extroverted (high trip_chance)
-    // agents pick from the warm shirt palette, homebodies from cool.
+    // agents pick from the warm outfit pool, homebodies from cool.
     let p = pose::personality_for(agent.agent_id);
-    let shirts = if p.trip_chance_pct >= 30 {
-        SHIRT_PRESETS_WARM
+    let outfits = if p.trip_chance_pct >= 30 {
+        OUTFITS_WARM
     } else {
-        SHIRT_PRESETS_COOL
+        OUTFITS_COOL
     };
-    let shirt = shirts[seed % shirts.len()];
+    let outfit = outfits[seed % outfits.len()];
     let hair = HAIR_PRESETS[(seed / 7) % HAIR_PRESETS.len()];
     let skin = SKIN_PRESETS[(seed / 13) % SKIN_PRESETS.len()];
-    // Active = monitor is lit, light reflects on the user's face. Tint the
-    // skin slightly toward the glow color so the eye reads "the monitor is
-    // actually lighting them up", not just "there's a green dot below".
-    let final_skin = if matches!(agent.state, ActivityState::Active { .. }) {
+    let final_skin = if face_lit {
         const GLOW_TINT: Rgb = Rgb(140, 240, 170);
         Rgb(
             blend(skin.0, GLOW_TINT.0, 0.18),
@@ -83,18 +166,21 @@ pub(super) fn agent_palette(base: &Palette, agent: &AgentSlot) -> Palette {
     } else {
         skin
     };
-    base.with_override('B', Some(shirt))
+    base.with_override('B', Some(outfit.shirt))
         .with_override('H', Some(hair))
         .with_override('S', Some(final_skin))
+        .with_override('P', Some(outfit.pants))
 }
 
 pub(super) fn recolor_frame(frame: &Frame, pal: &Palette, base_pal: &Palette) -> Frame {
     let base_shirt = base_pal.get('B').flatten();
     let base_hair = base_pal.get('H').flatten();
     let base_skin = base_pal.get('S').flatten();
+    let base_pants = base_pal.get('P').flatten();
     let agent_shirt = pal.get('B').flatten();
     let agent_hair = pal.get('H').flatten();
     let agent_skin = pal.get('S').flatten();
+    let agent_pants = pal.get('P').flatten();
     let pixels: Vec<Pixel> = frame
         .pixels
         .iter()
@@ -102,6 +188,7 @@ pub(super) fn recolor_frame(frame: &Frame, pal: &Palette, base_pal: &Palette) ->
             Some(rgb) if Some(*rgb) == base_shirt => agent_shirt,
             Some(rgb) if Some(*rgb) == base_hair => agent_hair,
             Some(rgb) if Some(*rgb) == base_skin => agent_skin,
+            Some(rgb) if Some(*rgb) == base_pants => agent_pants,
             other => *other,
         })
         .collect();
