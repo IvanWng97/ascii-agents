@@ -128,7 +128,7 @@ pub fn draw_scene<B: Backend>(
         height: full_rect.height.saturating_sub(1),
     };
     if scene_rect.width < 20 || scene_rect.height < 12 {
-        term.draw(|f| paint_footer(f, full_rect))?;
+        term.draw(|f| paint_footer(f, scene, full_rect))?;
         return Ok(());
     }
 
@@ -136,7 +136,7 @@ pub fn draw_scene<B: Backend>(
     let buf_h = scene_rect.height * 2;
     buf.ensure_size(buf_w, buf_h, BG);
     let Some(layout) = Layout::compute(buf_w, buf_h, scene.max_desks) else {
-        term.draw(|f| paint_footer(f, full_rect))?;
+        term.draw(|f| paint_footer(f, scene, full_rect))?;
         return Ok(());
     };
 
@@ -162,7 +162,7 @@ pub fn draw_scene<B: Backend>(
 
     // Terminal-flush pass — half-block + widgets, inside ratatui's draw.
     term.draw(|f| {
-        paint_footer(f, full_rect);
+        paint_footer(f, scene, full_rect);
         flush_buffer_to_term(f, buf, scene_rect);
         paint_label_widgets(
             f, scene, &layout, now, router, overlay, history, scene_rect, hovered,
@@ -175,9 +175,9 @@ pub fn draw_scene<B: Backend>(
     Ok(())
 }
 
-fn paint_footer(f: &mut ratatui::Frame<'_>, full_rect: Rect) {
-    let footer =
-        Paragraph::new(Span::raw(" [q] quit ")).style(Style::default().fg(Color::DarkGray));
+fn paint_footer(f: &mut ratatui::Frame<'_>, scene: &SceneState, full_rect: Rect) {
+    let summary = build_status_summary(scene, full_rect.width);
+    let footer = Paragraph::new(Span::raw(summary)).style(Style::default().fg(Color::DarkGray));
     f.render_widget(
         footer,
         Rect {
@@ -187,6 +187,89 @@ fn paint_footer(f: &mut ratatui::Frame<'_>, full_rect: Rect) {
             height: 1,
         },
     );
+}
+
+/// Compose the footer's single-line summary, picking the widest variant
+/// (full / medium / minimal) that fits inside `term_width` alongside the
+/// fixed-right `[q] quit` suffix. Pure function — drives `paint_footer`
+/// and is unit-tested directly.
+///
+/// Tier breakdown:
+///   * **full** (~50+ cells) — total count, per-state counts, top tool
+///     names with usage tallies, e.g. `12 agents · 3 active · 2 waiting
+///     · 7 idle · Edit×2 Bash×1`.
+///   * **medium** (~30+ cells) — compact letters, e.g. `12a · 3A · 2W · 7I`.
+///   * **minimal** — just the total, e.g. `12a`.
+///   * **fallback** — only the quit hint (any narrower terminal will
+///     truncate this naturally).
+pub(super) fn build_status_summary(scene: &SceneState, term_width: u16) -> String {
+    let n = scene.agents.len();
+    let mut active = 0usize;
+    let mut waiting = 0usize;
+    let mut idle = 0usize;
+    let mut tool_counts: HashMap<&str, usize> = HashMap::new();
+    for slot in scene.agents.values() {
+        match &slot.state {
+            ActivityState::Idle => idle += 1,
+            ActivityState::Waiting { .. } => waiting += 1,
+            ActivityState::Active { detail, .. } => {
+                active += 1;
+                if let Some(d) = detail.as_deref() {
+                    // Take the leading alphanumeric token as the tool
+                    // name — Generic tools format as "Edit src/x.rs",
+                    // "Bash: ls"; Task tool shows "Delegating".
+                    let token = d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("");
+                    if !token.is_empty() {
+                        *tool_counts.entry(token).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    const QUIT: &str = " [q] quit ";
+    let tools_str = {
+        // Sort by count desc, then name asc for stable output. Top 4
+        // keeps the line bounded — beyond that the listing crowds out
+        // the state counts on medium-width terminals.
+        let mut tools: Vec<(&&str, &usize)> = tool_counts.iter().collect();
+        tools.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        tools
+            .iter()
+            .take(4)
+            .map(|(name, count)| format!("{name}×{count}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let stats_full = if n == 0 {
+        " 0 agents ".to_string()
+    } else {
+        let mut s = format!(" {n} agents · {active} active · {waiting} waiting · {idle} idle");
+        if !tools_str.is_empty() {
+            s.push_str(" · ");
+            s.push_str(&tools_str);
+        }
+        s.push(' ');
+        s
+    };
+    let stats_medium = format!(" {n}a · {active}A · {waiting}W · {idle}I ");
+    let stats_min = format!(" {n}a ");
+
+    let w = term_width as usize;
+    let q = QUIT.len();
+    for stats in [&stats_full, &stats_medium, &stats_min] {
+        if stats.len() + q <= w {
+            let pad = w.saturating_sub(stats.len() + q);
+            let mut out = String::with_capacity(w);
+            out.push_str(stats);
+            for _ in 0..pad {
+                out.push(' ');
+            }
+            out.push_str(QUIT);
+            return out;
+        }
+    }
+    QUIT.to_string()
 }
 
 fn flush_buffer_to_term(f: &mut ratatui::Frame<'_>, buf: &RgbBuffer, scene_rect: Rect) {
@@ -504,5 +587,149 @@ mod tests {
     fn truncate_label_falls_back_to_plain_truncate_when_no_separator() {
         let out = truncate_label("a-very-long-project-name", 8);
         assert_eq!(out, "a-very-l");
+    }
+
+    // --- build_status_summary ---------------------------------------------
+
+    use ascii_agents_core::source::Activity;
+    use ascii_agents_core::{AgentId, AgentSlot};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn slot_with(state: ActivityState, label: &str) -> AgentSlot {
+        AgentSlot {
+            agent_id: AgentId::from_transcript_path(&format!("/p/{label}.jsonl")),
+            source: Arc::from("claude-code"),
+            session_id: Arc::from("s"),
+            cwd: Arc::from(PathBuf::from("/p").as_path()),
+            label: Arc::from(label),
+            state,
+            state_started_at: SystemTime::UNIX_EPOCH,
+            created_at: SystemTime::UNIX_EPOCH,
+            exiting_at: None,
+            pending_idle_at: None,
+            desk_index: 0,
+        }
+    }
+    fn active_with(detail: &str, label: &str) -> AgentSlot {
+        slot_with(
+            ActivityState::Active {
+                activity: Activity::Typing,
+                tool_use_id: Some(Arc::from("t")),
+                detail: Some(Arc::from(detail)),
+            },
+            label,
+        )
+    }
+    fn waiting(label: &str) -> AgentSlot {
+        slot_with(
+            ActivityState::Waiting {
+                reason: Arc::from("perm"),
+            },
+            label,
+        )
+    }
+    fn idle(label: &str) -> AgentSlot {
+        slot_with(ActivityState::Idle, label)
+    }
+    fn scene_of(slots: Vec<AgentSlot>) -> SceneState {
+        let mut s = SceneState::new(16);
+        for slot in slots {
+            s.agents.insert(slot.agent_id, slot);
+        }
+        s
+    }
+
+    #[test]
+    fn footer_zero_agents_shows_zero_count_and_quit() {
+        let s = scene_of(vec![]);
+        let line = build_status_summary(&s, 80);
+        assert!(line.contains("0 agents"), "missing zero count: {line:?}");
+        assert!(
+            line.ends_with(" [q] quit "),
+            "missing quit suffix: {line:?}"
+        );
+        assert_eq!(line.len(), 80, "should pad to full width: {line:?}");
+    }
+
+    #[test]
+    fn footer_full_width_shows_state_breakdown_and_tools() {
+        let s = scene_of(vec![
+            active_with("Edit src/a.rs", "a"),
+            active_with("Edit src/b.rs", "b"),
+            active_with("Bash: ls", "c"),
+            waiting("d"),
+            waiting("e"),
+            idle("f"),
+            idle("g"),
+            idle("h"),
+        ]);
+        let line = build_status_summary(&s, 120);
+        // Per-state counts present.
+        assert!(line.contains("8 agents"), "{line:?}");
+        assert!(line.contains("3 active"), "{line:?}");
+        assert!(line.contains("2 waiting"), "{line:?}");
+        assert!(line.contains("3 idle"), "{line:?}");
+        // Top tools by count, ordered desc: Edit×2 should come before Bash×1.
+        let edit_pos = line.find("Edit×2").expect("Edit×2 present");
+        let bash_pos = line.find("Bash×1").expect("Bash×1 present");
+        assert!(
+            edit_pos < bash_pos,
+            "tools should sort by count desc: {line:?}"
+        );
+    }
+
+    #[test]
+    fn footer_medium_width_drops_to_compact_letters() {
+        let s = scene_of(vec![
+            active_with("Edit src/a.rs", "a"),
+            waiting("b"),
+            idle("c"),
+        ]);
+        // 36 cells is too narrow for the full version but fits medium.
+        let line = build_status_summary(&s, 36);
+        assert!(
+            line.contains("3a") && line.contains("1A"),
+            "expected medium tier letters: {line:?}"
+        );
+        assert!(
+            !line.contains("3 agents · "),
+            "full tier should not fit at width 36: {line:?}"
+        );
+        assert!(line.ends_with(" [q] quit "), "{line:?}");
+    }
+
+    #[test]
+    fn footer_minimal_width_keeps_total_and_quit_only() {
+        let s = scene_of(vec![idle("a"), idle("b")]);
+        // Just wide enough for " 2a " (4) + " [q] quit " (10) = 14.
+        let line = build_status_summary(&s, 16);
+        assert!(line.contains("2a"), "expected minimal tier: {line:?}");
+        assert!(line.ends_with(" [q] quit "), "{line:?}");
+        assert_eq!(line.len(), 16);
+    }
+
+    #[test]
+    fn footer_collapses_to_quit_only_below_minimal_threshold() {
+        let s = scene_of(vec![idle("a")]);
+        // Width 10 fits exactly " [q] quit " — no stats at all.
+        let line = build_status_summary(&s, 10);
+        assert_eq!(line, " [q] quit ");
+    }
+
+    #[test]
+    fn footer_caps_tool_breakdown_at_four_entries() {
+        let s = scene_of(vec![
+            active_with("Edit x", "a"),
+            active_with("Bash x", "b"),
+            active_with("Read x", "c"),
+            active_with("Write x", "d"),
+            active_with("Grep x", "e"),
+            active_with("Glob x", "f"),
+        ]);
+        let line = build_status_summary(&s, 200);
+        // Six distinct tools, but only 4 should appear. Count `×` markers.
+        let crosses = line.matches('×').count();
+        assert_eq!(crosses, 4, "expected ≤4 tools in breakdown: {line:?}");
     }
 }
