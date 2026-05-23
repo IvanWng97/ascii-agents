@@ -15,21 +15,35 @@ v1 plan (28 TDD-shaped tasks): [`docs/superpowers/plans/2026-05-20-ascii-agents-
 ```
 crates/
 ├── ascii-agents-core/      headless lib — no terminal deps (ratatui/crossterm forbidden here)
-│   ├── source/             Source trait, hook+jsonl decoders, listeners
-│   ├── state/              SceneState + Reducer (with Transport-tagged dedup)
+│   ├── source/             Source trait, hook+jsonl decoders, listeners, SourceManager
+│   ├── state/              SceneState + Reducer (with Transport-tagged dedup + Active→Idle debounce)
 │   ├── sprite/             .sprite parser, pack.toml loader, half-block blitter, animator
 │   ├── render/             Renderer trait + TestRenderer (feature = "test-renderer")
+│   ├── layout/             zone-based office geometry (terminal-agnostic):
+│   │                       mod.rs (SceneLayout::compute, Bounds, Point, constants),
+│   │                       decor.rs (WaypointKind, WallDecor, PlantKind, PodDecor),
+│   │                       mask.rs (build_walkable_mask — obstacle stamping for A*)
+│   ├── pose.rs             pure state→pose derivation + wander state machine (no terminal deps)
+│   ├── walkable.rs         WalkableMask (static bool grid) + OccupancyOverlay (dynamic per-frame)
 │   └── tests/              one integration test per concern
 ├── ascii-agents/           binary — ratatui + crossterm + tokio + clap
 │   ├── cli.rs              clap subcommands (run / install-hooks / uninstall-hooks)
 │   ├── runtime.rs          tokio task wiring (source ── (Transport, AgentEvent) ──► reducer ──► renderer)
 │   ├── install/            settings.json merge, atomic write, advisory lock, stow-symlink safe
-│   └── tui/                ratatui App + draw_scene (generic over Backend)
+│   └── tui/                ratatui App + TuiRenderer (Renderer trait impl)
+│       ├── renderer.rs     draw_scene orchestrator, half-block flush, label/tooltip widgets, footer
+│       ├── tui_renderer.rs Renderer trait impl — owns cross-frame state (RgbBuffer, FrameCache, Router, PoseHistory)
+│       ├── pose.rs         routed pose layer (PoseHistory, derive_with_routing, snap-back) — re-exports core::pose
+│       ├── pathfind.rs     Router trait + AStarRouter with selective cache invalidation
 │       └── pixel_painter/  pure-pixel pass — split into focused child modules:
 │                           mod.rs (orchestrator), background.rs, drawable.rs
-│                           (y-sort), effects.rs, palette.rs, anchors.rs
+│                           (y-sort), effects.rs, palette.rs (tool_glow_tint), anchors.rs
 └── ascii-agents-hook/      tiny shim CC invokes — stdin JSON → Unix socket, 200ms write timeout
-assets/sprites/default/     coworking-lounge pack (seated, typing x2, standing, walking x2, desk, plant, couch, coffee) at 8×10 + 6×12
+assets/sprites/default/     coworking-lounge pack: seated, typing ×2, standing, walking ×2,
+                            walking_back ×2, working_couch ×2, working_floor ×2, sitting_couch,
+                            back_couch, seated_floor, sleeping variants, desk, plant ×4, couch,
+                            pantry, door ×3, meeting_sofa, bookshelf, whiteboard, tv_stand, etc.
+scripts/                    preflight.sh (CI mirror), crop-snapshot.py (visual verification)
 ```
 
 ## Build & test
@@ -37,12 +51,24 @@ assets/sprites/default/     coworking-lounge pack (seated, typing x2, standing, 
 ```
 cargo build --workspace                                              # debug build
 cargo build --release --workspace                                    # release build
-cargo test --workspace --features ascii-agents-core/test-renderer    # all tests (64+)
+cargo test --workspace --features ascii-agents-core/test-renderer    # all tests (147+)
 cargo run --release --example snapshot -- /tmp/snap.png              # render TUI to PNG
 ./target/release/ascii-agents run --headless --projects-root ~/.claude/projects   # live test against real CC
 ```
 
 The `test-renderer` feature is needed for the `e2e.rs` integration test. The dev workspace test alias is just `cargo test`.
+
+### Visual verification (Python venv)
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+cargo build --release --example snapshot
+./target/release/examples/snapshot --cols 192 --rows 64 /tmp/snap.png
+.venv/bin/python3 scripts/crop-snapshot.py /tmp/snap.png --scale 3
+```
+
+See `.claude/skills/beautify-decoration/SKILL.md` for the full iteration loop, self-critique checklist, and sprite-format pitfalls.
 
 ### Pre-push preflight
 
@@ -68,6 +94,7 @@ Bypass in an emergency with `git push --no-verify` or `SKIP_PREFLIGHT=1 git push
 - **No `unwrap()` in non-test code.** Tests can unwrap freely.
 - **Match the surrounding shell:** scripts in this repo target zsh (interactive) or POSIX sh. `shellcheck` any `.sh` you touch.
 - **macOS first.** BSD-flavored CLI, brew, launchd for daemons. The hook shim is Unix-socket specific (`std::os::unix::net::UnixStream`).
+- **Keep docs current.** When a change alters module structure, architecture, developer workflow, or the public API surface, update CLAUDE.md and README.md in the same commit. Stale docs cost more than the 5 minutes to update them.
 
 ## Architecture invariants
 
@@ -87,7 +114,7 @@ These are load-bearing; don't break them without updating the spec.
 - **Subagent display names come from `attributionAgent` in JSONL.** The decoder strips the plugin prefix (`feature-dev:code-explorer` → `code-explorer`) and emits `AgentEvent::Rename` so labels read meaningfully. Parents get their `cwd` basename instead.
 - **`AgentSlot.state_started_at` is `std::time::SystemTime`** — process-local in practice (no wall-clock anchoring), but the type is already serializable, so the v2 daemon split won't need a type swap. The pose system computes elapsed time relative to it for animation timing.
 - **`ActivityState::Active` ≠ "tool is currently executing".** CC fires PreToolUse → PostToolUse around every individual tool call, so without debouncing the slot flickers Active/Idle on every tool. The reducer treats `ActivityEnd` as "arm pending idle" (`AgentSlot.pending_idle_at`) instead of an immediate flip; the actual transition to `Idle` is realized by `reducer::tick` after `ACTIVE_GRACE_WINDOW = 1500 ms`. Any `ActivityStart` inside the window cancels the pending idle. Net: the slot reads as continuously Active for chained tool work, and visible Idle lags real Idle by up to 1.5 s + the 1 s sweep interval (≈ 2.5 s worst case). Don't add code that depends on `Active → Idle` being instant.
-- **`draw_scene` is a free function on the binary side**, not a `Renderer` impl. The trait exists in `core`, but the production runtime calls `draw_scene` directly. Wire through the trait when the daemon split lands.
+- **`draw_scene` is called through `TuiRenderer`** (the `Renderer` trait impl), which owns the cross-frame state (`RgbBuffer`, `FrameCache`, `AStarRouter`, `OccupancyOverlay`, `PoseHistory`). The trait signature is `render(&mut self, scene, pack, now)` — no `layout` param; the TUI recomputes layout per frame from terminal size.
 - **`recolor_frame` substitutes by RGB equality.** Works because each palette key in the default pack maps to a unique RGB. If you add a sprite pack where two keys share a color, swap to a palette-key-indexed approach instead.
 - **Terminal cell aspect drives sprite design.** The half-block ▀ technique assumes ~1:2 cell aspect. Sprites larger than ~16×16 px break on terminals with taller cells (Ghostty default, large Fira Code). The bundled 12×14 pack is the safe ceiling. A PNG-loader experiment hit this wall and was deleted in favor of hand-drawn `.sprite` art.
 
@@ -103,8 +130,9 @@ These are load-bearing; don't break them without updating the spec.
 
 ## Where to look
 
-- "How does a CC tool call become a moving sprite?" → trace `runtime::run_async` → `ClaudeCodeSource::run` → `HookSocketListener::run` → `decoder::decode_hook_payload` → `reducer::Reducer::apply` → `tui::renderer::draw_scene` (top-down, cubicle grid).
-- "How is the office laid out?" → `core::layout::SceneLayout::compute` for zone math (cubicle band / walkway / meeting / pantry) + home-desk + waypoint placement (re-exported as `tui::layout::Layout`); `tui::pose::derive` for state→pose mapping including the Idle wander state machine (`WANDER_CYCLE_BASE_MS=7000` + per-agent jitter); `tui::renderer::draw_scene` for the terminal-flush pass (half-block + widgets) → `tui::pixel_painter::render_to_rgb_buffer` for the pure-pixel pass. The pixel pass is split: `pixel_painter/background.rs` (floor/walls/windows/clock/corridor/entry mat/lighting/shadow), `pixel_painter/drawable.rs` (y-sort `Drawable` enum + dispatch), `pixel_painter/effects.rs` (chair-behind/screen glow/sleep z/steam/dust/bubble), `pixel_painter/palette.rs` (agent palette + recolor + color math), `pixel_painter/anchors.rs` (per-pose sprite anchors + breath + walking_position).
+- "How does a CC tool call become a moving sprite?" → trace `runtime::run_async` → `SourceManager::spawn` → `ClaudeCodeSource::run` → `HookSocketListener::run` → `decoder::decode_hook_payload` → `reducer::Reducer::apply` → `TuiRenderer::render` → `draw_scene` (top-down, cubicle grid).
+- "How is the office laid out?" → `core::layout::SceneLayout::compute` for zone math (cubicle band / walkway / meeting / pantry) + home-desk + waypoint placement (re-exported as `tui::layout::Layout`); `core::pose::derive` for pure state→pose mapping including the Idle wander state machine (`WANDER_CYCLE_BASE_MS=7000` + per-agent jitter); `tui::pose::derive_with_routing` for the routed variant (A*-routed polylines + snap-back walks); `tui::renderer::draw_scene` for the terminal-flush pass (half-block + widgets + status footer) → `tui::pixel_painter::render_to_rgb_buffer` for the pure-pixel pass. The pixel pass is split: `pixel_painter/background.rs` (floor/walls/windows/clock/corridor/entry mat/lighting/shadow), `pixel_painter/drawable.rs` (y-sort `Drawable` enum + dispatch), `pixel_painter/effects.rs` (chair-behind/screen glow/sleep z/steam/dust/bubble), `pixel_painter/palette.rs` (agent palette + recolor + `tool_glow_tint` for per-tool monitor color), `pixel_painter/anchors.rs` (per-pose sprite anchors + breath + walking_position).
+- "How do overflow agents (past max home desks) get rendered?" → `pixel_painter/mod.rs` overflow branch: first 2 → meeting_sofas (`working_couch` if Active, `sitting_couch_sleeping` if Idle, `back_couch` for mirrored second sofa), remaining → `floor_seats` (`working_floor` if Active, `seated_floor_sleeping` if Idle). 400 ms screen-pulse animation via wallclock-derived `pulse_frame`.
 - "Why is the subagent's sprite the right one and not the parent?" → `reducer::Reducer::apply` does subagent-leak suppression via `active_tasks` before applying. `decoder::decode_jsonl_line` emits `AgentEvent::Rename` from `attributionAgent`.
 - "Why don't old idle sessions show on startup?" → `source::jsonl::initial_seed_root`. mtime > `DEFAULT_INITIAL_WINDOW` (10 min) → cursor seeded at EOF, no `SessionStart`.
 - "How does the default character pack get into the binary?" → `tui::embedded_pack` does the `include_str!` at compile time; `sprite::format::load_pack_from_strings` parses it.
