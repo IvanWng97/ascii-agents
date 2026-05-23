@@ -801,6 +801,7 @@ pub fn render_to_rgb_buffer(
                     agent.agent_id,
                     now,
                 );
+                let sleeping = !is_active && !is_mirrored_sofa;
                 drawables.push(Drawable {
                     anchor_y: anchor.y + sprite_h,
                     kind: DrawableKind::Character {
@@ -810,7 +811,11 @@ pub fn render_to_rgb_buffer(
                         anchor,
                         flip_x: false,
                         glow_tint: None,
-                        sleep_z_seed: None,
+                        sleep_z_seed: if sleeping {
+                            Some(agent.agent_id.raw())
+                        } else {
+                            None
+                        },
                         waiting_bubble: false,
                         walking_dust_frame: None,
                     },

@@ -1,8 +1,10 @@
-# Typing frame 1: hands swap — right hand higher now.
+# Typing frame 1: head dipped 1px (looking at keyboard), right hand
+# forward. The empty top row + dropped forehead create a visible "bob"
+# at half-block scale — the character pulses gently while typing.
 @frame 0
+. . . . . . . .
 . n H H H H n .
 n H H H H H H n
-H S S S S S S H
 H S e S S e S H
 . S S S m S S .
 . n S S S S n .

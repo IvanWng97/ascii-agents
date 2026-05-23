@@ -1,4 +1,4 @@
-# Typing frame 0: hands forward on keyboard (left hand higher).
+# Typing frame 0: head up (glancing at screen), left hand forward.
 @frame 0
 . n H H H H n .
 n H H H H H H n
