@@ -389,15 +389,15 @@ fn paint_floor_to_ceiling_window(
 ) {
     let building_dark = theme.office.building_dark;
     let building_light = theme.office.building_light;
-    let lit_window = theme.office.city_lit_window;
-    let lit_window_alt = theme.office.city_lit_window_alt;
-    let lit_window_alt2 = theme.office.city_lit_window_alt2;
+    let cw = theme.office.city_lit_windows;
     let dark_window = theme.office.city_dark_window;
 
     let lit_strength = look.darkness.clamp(0.0, 1.0);
-    let lit_color = lerp_rgb(dark_window, lit_window, lit_strength);
-    let lit_color_alt = lerp_rgb(dark_window, lit_window_alt, lit_strength);
-    let lit_color_alt2 = lerp_rgb(dark_window, lit_window_alt2, lit_strength);
+    let lit_colors: [Rgb; 3] = [
+        lerp_rgb(dark_window, cw[0], lit_strength),
+        lerp_rgb(dark_window, cw[1], lit_strength),
+        lerp_rgb(dark_window, cw[2], lit_strength),
+    ];
     let building = lerp_rgb(building_light, building_dark, look.darkness);
 
     // Skyline silhouette as a 0..15 PATTERN; the actual pixel height is
@@ -450,9 +450,9 @@ fn paint_floor_to_ceiling_window(
                 let lit_base = on_grid && city_dot_lit(window_idx, glass_dx, bldg_y);
                 if lit_base && city_dot_twinkle(window_idx, glass_dx, bldg_y, now) {
                     let dot_color = match (glass_dx.wrapping_add(bldg_y)) % 5 {
-                        0 => lit_color_alt,
-                        1 => lit_color_alt2,
-                        _ => lit_color,
+                        0 => lit_colors[1],
+                        1 => lit_colors[2],
+                        _ => lit_colors[0],
                     };
                     buf.put(px, py, dot_color);
                 } else {
@@ -485,10 +485,11 @@ pub(super) fn paint_neon_panel(
     let panel_bg = theme.office.neon_panel_bg;
     let base = theme.office.neon_frame_base;
 
+    let clamp = |v: f32| v.clamp(0.0, 255.0) as u8;
     let frame_color = Rgb(
-        (base.0 as f32 + 25.0 * pulse) as u8,
-        (base.1 as f32 + 50.0 * pulse) as u8,
-        (base.2 as f32 + 50.0 * pulse) as u8,
+        clamp(base.0 as f32 + 25.0 * pulse),
+        clamp(base.1 as f32 + 50.0 * pulse),
+        clamp(base.2 as f32 + 50.0 * pulse),
     );
 
     for dy in 0..h {

@@ -71,6 +71,7 @@ impl<B: Backend> TuiRenderer<B> {
 
     pub fn set_theme(&mut self, theme: &'static crate::tui::theme::Theme) {
         self.theme = theme;
+        self.cache = FrameCache::new();
     }
 
     /// Drop the cached frame entries for agents no longer in `scene`.

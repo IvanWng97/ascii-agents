@@ -199,6 +199,9 @@ pub async fn run_tui(
                 polled = event::poll(Duration::from_millis(0))?;
             }
             if quit {
+                if theme_picker.is_some() {
+                    renderer.set_theme(theme::ALL_THEMES[saved_theme_idx]);
+                }
                 break;
             }
             let elapsed = start.elapsed();
