@@ -26,13 +26,16 @@ pub fn run(
     pack_dir: Option<PathBuf>,
     max_desks: usize,
     headless: bool,
+    theme_name: String,
 ) -> Result<()> {
+    let theme = crate::tui::theme::theme_by_name(&theme_name)
+        .ok_or_else(|| anyhow::anyhow!("unknown theme: {theme_name}"))?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(
-        async move { run_async(socket, projects_root, pack_dir, max_desks, headless).await },
-    )
+    rt.block_on(async move {
+        run_async(socket, projects_root, pack_dir, max_desks, headless, theme).await
+    })
 }
 
 async fn run_async(
@@ -41,6 +44,7 @@ async fn run_async(
     pack_dir: Option<PathBuf>,
     max_desks: usize,
     headless: bool,
+    theme: &'static crate::tui::theme::Theme,
 ) -> Result<()> {
     let mut src = ClaudeCodeSource::default_paths();
     if let Some(s) = socket {
@@ -62,7 +66,7 @@ async fn run_async(
     if headless {
         headless_loop(scene_rx).await
     } else {
-        crate::tui::run_tui(scene_rx, pack_dir, max_desks_shared).await
+        crate::tui::run_tui(scene_rx, pack_dir, max_desks_shared, theme).await
     }
 }
 

@@ -68,7 +68,8 @@ fn main() -> Result<()> {
             pack_dir,
             max_desks,
             headless,
-        } => runtime::run(socket, projects_root, pack_dir, max_desks, headless),
+            theme,
+        } => runtime::run(socket, projects_root, pack_dir, max_desks, headless, theme),
         Cmd::InstallHooks {
             hook_path,
             settings,

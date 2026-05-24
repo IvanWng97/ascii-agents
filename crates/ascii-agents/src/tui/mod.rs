@@ -5,6 +5,7 @@ pub mod pathfind;
 pub mod pixel_painter;
 pub mod pose;
 pub mod renderer;
+pub mod theme;
 pub mod tui_renderer;
 
 use std::sync::Arc;
@@ -23,6 +24,7 @@ pub async fn run_tui(
     mut scene_rx: SceneRx,
     pack_dir: Option<std::path::PathBuf>,
     max_desks: Arc<std::sync::atomic::AtomicUsize>,
+    _theme: &'static theme::Theme,
 ) -> Result<()> {
     let pack = embedded_pack::load_sprite_pack(pack_dir)?;
     let term = setup_terminal()?;

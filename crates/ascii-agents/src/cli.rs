@@ -36,6 +36,9 @@ pub enum Cmd {
         /// Prints a JSON snapshot of SceneState every 200ms when it changes.
         #[arg(long, default_value_t = false)]
         headless: bool,
+        /// Color theme: "normal" (default) or "cyberpunk".
+        #[arg(long, default_value = "normal")]
+        theme: String,
     },
     /// Install Claude Code hooks into ~/.claude/settings.json.
     InstallHooks {
@@ -60,6 +63,7 @@ impl Cli {
             pack_dir: None,
             max_desks: 16,
             headless: false,
+            theme: "normal".to_string(),
         });
         (level, cmd)
     }
