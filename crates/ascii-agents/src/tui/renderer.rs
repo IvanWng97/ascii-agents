@@ -367,6 +367,7 @@ pub(super) fn build_status_summary(scene: &SceneState, term_width: u16) -> Strin
     }
 
     const QUIT: &str = " [p]ause [t]heme [+/-]desks [q]uit ";
+    const BMC: &str = "☕ buymeacoffee.com/IvanWng97";
     let tools_str = {
         // Sort by count desc, then name asc for stable output. Top 4
         // keeps the line bounded — beyond that the listing crowds out
@@ -396,13 +397,27 @@ pub(super) fn build_status_summary(scene: &SceneState, term_width: u16) -> Strin
 
     let w = term_width as usize;
     let q = QUIT.len();
+    let bmc_len = BMC.len();
     for stats in [&stats_full, &stats_medium, &stats_min] {
-        if stats.len() + q <= w {
-            let pad = w.saturating_sub(stats.len() + q);
+        let s_len = stats.len();
+        if s_len + q <= w {
+            let gap = w.saturating_sub(s_len + q);
             let mut out = String::with_capacity(w);
             out.push_str(stats);
-            for _ in 0..pad {
-                out.push(' ');
+            if gap >= bmc_len + 4 {
+                let left = (gap - bmc_len) / 2;
+                let right = gap - bmc_len - left;
+                for _ in 0..left {
+                    out.push(' ');
+                }
+                out.push_str(BMC);
+                for _ in 0..right {
+                    out.push(' ');
+                }
+            } else {
+                for _ in 0..gap {
+                    out.push(' ');
+                }
             }
             out.push_str(QUIT);
             return out;
