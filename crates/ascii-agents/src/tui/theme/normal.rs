@@ -28,6 +28,7 @@ pub static NORMAL: Theme = Theme {
         building_light: Rgb(60, 65, 82),
         city_lit_window: Rgb(252, 215, 110),
         city_lit_window_alt: Rgb(252, 215, 110),
+        city_lit_window_alt2: Rgb(252, 215, 110),
         city_dark_window: Rgb(30, 32, 44),
         clock_rim: Rgb(200, 200, 210),
         clock_face: Rgb(240, 240, 240),

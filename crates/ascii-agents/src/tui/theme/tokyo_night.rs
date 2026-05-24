@@ -28,6 +28,7 @@ pub static TOKYO_NIGHT: Theme = Theme {
         building_light: Rgb(36, 40, 59),
         city_lit_window: Rgb(180, 200, 255),
         city_lit_window_alt: Rgb(224, 175, 104),
+        city_lit_window_alt2: Rgb(158, 206, 106),
         city_dark_window: Rgb(22, 24, 36),
         clock_rim: Rgb(169, 177, 214),
         clock_face: Rgb(192, 202, 230),

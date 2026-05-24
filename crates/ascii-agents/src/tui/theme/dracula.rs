@@ -28,6 +28,7 @@ pub static DRACULA: Theme = Theme {
         building_light: Rgb(50, 52, 68),
         city_lit_window: Rgb(255, 184, 108),
         city_lit_window_alt: Rgb(80, 250, 123),
+        city_lit_window_alt2: Rgb(189, 147, 249),
         city_dark_window: Rgb(30, 31, 40),
         clock_rim: Rgb(189, 147, 249),
         clock_face: Rgb(248, 248, 242),
