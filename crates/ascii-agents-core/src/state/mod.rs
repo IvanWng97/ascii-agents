@@ -56,6 +56,8 @@ pub struct AgentSlot {
     /// PreToolUse → PostToolUse chains produce in CC.
     pub pending_idle_at: Option<SystemTime>,
     pub desk_index: usize,
+    pub tool_call_count: u32,
+    pub active_ms: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -111,6 +113,8 @@ mod tests {
                     exiting_at: None,
                     pending_idle_at: None,
                     desk_index: i,
+                    tool_call_count: 0,
+                    active_ms: 0,
                 },
             );
         }

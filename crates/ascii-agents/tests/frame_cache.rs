@@ -36,6 +36,8 @@ fn make_slot(id: AgentId) -> AgentSlot {
         exiting_at: None,
         pending_idle_at: None,
         desk_index: 0,
+        tool_call_count: 0,
+        active_ms: 0,
     }
 }
 

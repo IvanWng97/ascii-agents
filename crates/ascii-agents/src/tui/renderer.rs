@@ -244,7 +244,7 @@ pub fn draw_scene<B: Backend>(
         paint_wall_display(f, scene, &layout, scene_rect, now, ticker, theme);
         let tooltip_agent = hovered.or(pinned_agent);
         if let (Some(agent_id), Some((mx, my))) = (tooltip_agent, mouse_pos) {
-            paint_hover_tooltip(f, scene, agent_id, mx, my, scene_rect, theme);
+            paint_hover_tooltip(f, scene, agent_id, mx, my, scene_rect, now, theme);
         } else if let Some(agent_id) = pinned_agent {
             paint_hover_tooltip(
                 f,
@@ -253,6 +253,7 @@ pub fn draw_scene<B: Backend>(
                 scene_rect.width / 2,
                 scene_rect.height / 2,
                 scene_rect,
+                now,
                 theme,
             );
         }
@@ -667,6 +668,7 @@ pub fn hit_test_coffee_machine(buf: &RgbBuffer, max_desks: usize, mx: u16, my: u
 /// Floating detail panel painted near the cursor when an agent is hovered.
 /// Shows the label, source, state, current tool detail, cwd, and session
 /// id. Positioned to avoid the cursor itself and the screen edges.
+#[allow(clippy::too_many_arguments)]
 fn paint_hover_tooltip(
     f: &mut ratatui::Frame<'_>,
     scene: &SceneState,
@@ -674,6 +676,7 @@ fn paint_hover_tooltip(
     mx: u16,
     my: u16,
     scene_rect: Rect,
+    now: SystemTime,
     theme: &crate::tui::theme::Theme,
 ) {
     let Some(agent) = scene.agents.get(&agent_id) else {
@@ -699,10 +702,27 @@ fn paint_hover_tooltip(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("(unknown)");
-    let session_short = if agent.session_id.len() >= 8 {
-        &agent.session_id[..8]
+
+    let session_secs = now
+        .duration_since(agent.created_at)
+        .unwrap_or_default()
+        .as_secs();
+    let duration_str = if session_secs >= 3600 {
+        format!("{}h{}m", session_secs / 3600, (session_secs % 3600) / 60)
+    } else if session_secs >= 60 {
+        format!("{}m", session_secs / 60)
     } else {
-        &agent.session_id
+        "<1m".to_string()
+    };
+    let active_str = if session_secs >= 5 {
+        let pct = (agent.active_ms / 1000)
+            .checked_mul(100)
+            .and_then(|n| n.checked_div(session_secs))
+            .map(|p| p.min(100))
+            .unwrap_or(0);
+        format!("{pct}%")
+    } else {
+        "--%".to_string()
     };
 
     let mut lines: Vec<ratatui::text::Line> = Vec::new();
@@ -717,7 +737,6 @@ fn paint_hover_tooltip(
         Span::styled(state_label, Style::default().fg(state_color)),
     ]));
     if !state_detail.is_empty() {
-        // Truncate long tool detail (e.g. full file paths) to keep tooltip narrow.
         let trimmed: String = state_detail.chars().take(34).collect();
         lines.push(ratatui::text::Line::from(Span::styled(
             format!("    {}", trimmed),
@@ -729,7 +748,10 @@ fn paint_hover_tooltip(
         Style::default().fg(to_color(theme.ui.tooltip_text)),
     )));
     lines.push(ratatui::text::Line::from(Span::styled(
-        format!(" ⌗ {} · {}", session_short, agent.source),
+        format!(
+            " ⏱ {} · {} calls · {}% active",
+            duration_str, agent.tool_call_count, active_str
+        ),
         Style::default().fg(to_color(theme.ui.tooltip_dim)),
     )));
 
@@ -1009,6 +1031,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         }
     }
     fn active_with(detail: &str, label: &str) -> AgentSlot {

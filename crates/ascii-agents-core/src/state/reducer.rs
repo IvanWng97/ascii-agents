@@ -221,6 +221,8 @@ impl Reducer {
                         exiting_at: None,
                         pending_idle_at: None,
                         desk_index,
+                        tool_call_count: 0,
+                        active_ms: 0,
                     },
                 );
             }
@@ -231,6 +233,16 @@ impl Reducer {
                 detail,
             } => {
                 if let Some(slot) = scene.agents.get_mut(&agent_id) {
+                    if !detail.as_ref().is_some_and(|d| d.is_task()) {
+                        slot.tool_call_count += 1;
+                    }
+                    if matches!(slot.state, ActivityState::Active { .. }) {
+                        let elapsed = now
+                            .duration_since(slot.state_started_at)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        slot.active_ms += elapsed;
+                    }
                     slot.state = ActivityState::Active {
                         activity,
                         tool_use_id: tool_use_id.map(|s| Arc::<str>::from(s.as_str())),
@@ -303,6 +315,11 @@ impl Reducer {
                 .is_ok_and(|d| d >= ACTIVE_GRACE_WINDOW)
             {
                 if matches!(slot.state, ActivityState::Active { .. }) {
+                    let elapsed = pending
+                        .duration_since(slot.state_started_at)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    slot.active_ms += elapsed;
                     slot.state = ActivityState::Idle;
                     slot.state_started_at = now;
                 }

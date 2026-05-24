@@ -585,6 +585,15 @@ pub fn render_to_rgb_buffer(
     // glow). Sprite is 16×8, so the actual bottom edge is desk.y + 8 —
     // just past the seated character's feet (desk.y + 4), which keeps
     // the seated worker visually behind the desk like it always was.
+    let seated_agents: HashMap<usize, bool> = agents
+        .iter()
+        .filter(|a| a.desk_index < layout.home_desks.len() && a.exiting_at.is_none())
+        .map(|a| {
+            let p = pose::derive_with_routing(a, now, layout, router, overlay, history);
+            let seated = matches!(p, Some(Pose::SeatedTyping { .. } | Pose::SeatedThinking));
+            (a.desk_index, seated)
+        })
+        .collect();
     for (i, &desk) in layout.home_desks.iter().enumerate() {
         let is_last_col =
             desk.x + DESK_W + 2 + DESK_W >= layout.cubicle_band.x + layout.cubicle_band.width;
@@ -592,7 +601,7 @@ pub fn render_to_rgb_buffer(
             .iter()
             .find(|a| a.desk_index == i && a.exiting_at.is_none());
         let screen_glow = occupant
-            .filter(|a| matches!(a.state, ActivityState::Active { .. }))
+            .filter(|_| seated_agents.get(&i).copied().unwrap_or(false))
             .and_then(|a| palette::tool_glow_tint(a, &theme.tool_glow));
         let session_age_secs = occupant
             .and_then(|a| now.duration_since(a.created_at).ok())
@@ -1209,6 +1218,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         }
     }
 

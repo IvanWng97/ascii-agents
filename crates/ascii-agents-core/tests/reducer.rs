@@ -811,3 +811,144 @@ fn unknown_cwd_agent_reaps_faster() {
         "unknown-cwd agent should reap after STALE_UNKNOWN_CWD_TIMEOUT"
     );
 }
+
+#[test]
+fn tool_call_count_increments_on_activity_start() {
+    let mut scene = SceneState::new(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/stats.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    start(&mut r, &mut scene, id);
+
+    assert_eq!(scene.agents.get(&id).unwrap().tool_call_count, 0);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t1".into()),
+            detail: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    assert_eq!(scene.agents.get(&id).unwrap().tool_call_count, 1);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        t0 + Duration::from_millis(500),
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t2".into()),
+            detail: None,
+        },
+        t0 + Duration::from_millis(600),
+        Transport::Hook,
+    );
+    assert_eq!(scene.agents.get(&id).unwrap().tool_call_count, 2);
+}
+
+#[test]
+fn active_ms_accumulates_on_state_transitions() {
+    let mut scene = SceneState::new(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/active.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    start(&mut r, &mut scene, id);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t1".into()),
+            detail: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    assert_eq!(scene.agents.get(&id).unwrap().active_ms, 0);
+
+    // End after 1 second, then tick past grace window to flush to Idle
+    let t1 = t0 + Duration::from_secs(1);
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        t1,
+        Transport::Hook,
+    );
+    // active_ms not yet accumulated (happens on next ActivityStart or expire)
+    r.tick(&mut scene, t1 + Duration::from_secs(3));
+    let slot = scene.agents.get(&id).unwrap();
+    assert!(
+        slot.active_ms >= 1000,
+        "expected >= 1000ms active, got {}",
+        slot.active_ms
+    );
+}
+
+#[test]
+fn active_ms_does_not_double_count_on_duplicate_activity_end() {
+    let mut scene = SceneState::new(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/dedup.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    start(&mut r, &mut scene, id);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t1".into()),
+            detail: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+
+    let t1 = t0 + Duration::from_secs(2);
+    // First ActivityEnd (hook)
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        t1,
+        Transport::Hook,
+    );
+    // Second ActivityEnd (late JSONL, past dedup window)
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        t1 + Duration::from_millis(600),
+        Transport::Jsonl,
+    );
+
+    // Flush to idle
+    r.tick(&mut scene, t1 + Duration::from_secs(3));
+    let slot = scene.agents.get(&id).unwrap();
+    // Should be ~2-3s, not ~4-6s (double-counted)
+    assert!(
+        slot.active_ms < 5000,
+        "active_ms looks double-counted: {}",
+        slot.active_ms
+    );
+}

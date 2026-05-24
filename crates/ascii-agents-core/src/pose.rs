@@ -385,6 +385,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         };
         (s, now)
     }
@@ -591,6 +593,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         };
         let probe = now0 + Duration::from_millis(1500);
         let l = layout();

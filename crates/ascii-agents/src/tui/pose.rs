@@ -305,6 +305,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         }
     }
 
@@ -462,6 +464,8 @@ mod tests {
             exiting_at: None,
             pending_idle_at: None,
             desk_index: 0,
+            tool_call_count: 0,
+            active_ms: 0,
         };
         let mut history = PoseHistory::new();
         let overlay = ascii_agents_core::walkable::OccupancyOverlay::new();
