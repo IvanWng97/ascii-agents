@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "ascii-agents"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ascii-agents-core",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "ascii-agents-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "ascii-agents-hook"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "libc",
