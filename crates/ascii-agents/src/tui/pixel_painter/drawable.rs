@@ -26,10 +26,10 @@ use super::effects::{
     paint_coffee_steam, paint_screen_glow, paint_sleep_z, paint_thinking_dots,
     paint_waiting_bubble, paint_walking_dust,
 };
-use super::{
-    paint_area_rug, paint_character_at, paint_coffee_table, paint_pantry_chair, paint_pantry_table,
-    paint_side_table,
+use super::furniture::{
+    paint_area_rug, paint_coffee_table, paint_pantry_chair, paint_pantry_table, paint_side_table,
 };
+use super::paint_character_at;
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point, DESK_H, DESK_W};
 

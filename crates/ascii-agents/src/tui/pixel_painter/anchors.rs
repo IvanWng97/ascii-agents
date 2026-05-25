@@ -7,7 +7,12 @@
 
 use std::time::SystemTime;
 
+use ascii_agents_core::walkable::OccupancyOverlay;
+use ascii_agents_core::AgentSlot;
+
 use crate::tui::layout::{Point, WaypointKind, DESK_W};
+use crate::tui::pathfind::Router;
+use crate::tui::pose::{self, Pose};
 
 pub(super) fn seated_anchor(desk: Point) -> Point {
     Point {
@@ -109,4 +114,98 @@ pub(super) fn walking_position(from: Point, to: Point, t_x1000: u16) -> Point {
         x: (from.x as i32 + dx * t / 1000).max(0).min(u16::MAX as i32) as u16,
         y: (from.y as i32 + dy * t / 1000).max(0).min(u16::MAX as i32) as u16,
     }
+}
+
+/// Current rendered position of an agent's character — derived from pose
+/// so labels can follow the character rather than staying anchored at the
+/// desk. Returns the top-left anchor of the character sprite. Uses
+/// `derive_with_routing` so labels track agents along their A* path
+/// instead of jumping the straight-line midpoint.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::tui) fn character_anchor(
+    agent: &AgentSlot,
+    layout: &crate::tui::layout::Layout,
+    now: SystemTime,
+    router: &mut dyn Router,
+    overlay: &OccupancyOverlay,
+    history: &mut pose::PoseHistory,
+) -> Option<Point> {
+    let desk = *layout.home_desks.get(agent.desk_index)?;
+    let pose = pose::derive_with_routing(agent, now, layout, router, overlay, history)?;
+    let anchor = match pose {
+        Pose::SeatedIdle | Pose::SeatedThinking | Pose::SeatedTyping { .. } => seated_anchor(desk),
+        Pose::StandingAtDesk => standing_at_desk_anchor(desk),
+        Pose::AtWaypoint { wp, kind } => {
+            let wp_obj = layout.waypoints.get(wp)?;
+            match kind {
+                WaypointKind::Couch => back_couch_anchor(wp_obj.pos),
+                _ => waypoint_anchor(wp_obj.pos),
+            }
+        }
+        Pose::AimlessAt { dest } => waypoint_anchor(dest),
+        Pose::Walking {
+            from, to, t_x1000, ..
+        } => walking_anchor(walking_position(from, to, t_x1000)),
+    };
+    Some(anchor)
+}
+
+/// How long the elevator's open/close transition takes. Used as both
+/// the opening ramp at the START of an agent's entry/exit window and
+/// the closing ramp at the END. 200 ms feels snappy without being
+/// abrupt — the half-open frame is visible for ~70 ms each way.
+const DOOR_TRANSITION_MS: u64 = 200;
+
+/// Compute the elevator door frame (0=closed, 1=half, 2=open) from
+/// the agents currently in flight. Stateless: each agent contributes
+/// a per-frame value based on how far through their entry/exit window
+/// they are; we take the MAX across all agents so the door is at
+/// least as open as the most-in-progress agent needs.
+pub(super) fn compute_door_frame_idx(agents: &[AgentSlot], now: SystemTime) -> usize {
+    fn frame_for_progress(elapsed_ms: u64, total_ms: u64) -> usize {
+        // 0..200ms: opening (0 → 1 → 2)
+        if elapsed_ms < DOOR_TRANSITION_MS {
+            if elapsed_ms < DOOR_TRANSITION_MS / 2 {
+                1
+            } else {
+                2
+            }
+        } else if elapsed_ms + DOOR_TRANSITION_MS > total_ms {
+            // last 200ms: closing (2 → 1 → 0)
+            let remaining = total_ms.saturating_sub(elapsed_ms);
+            if remaining < DOOR_TRANSITION_MS / 2 {
+                0
+            } else {
+                1
+            }
+        } else {
+            // middle: fully open
+            2
+        }
+    }
+    let mut max_frame: usize = 0;
+    for a in agents {
+        if a.exiting_at.is_none() {
+            if let Ok(d) = now.duration_since(a.created_at) {
+                let ms = d.as_millis() as u64;
+                if ms < pose::ENTRY_ANIMATION_MS {
+                    max_frame = max_frame.max(frame_for_progress(ms, pose::ENTRY_ANIMATION_MS));
+                }
+            }
+        }
+        if let Some(exit_at) = a.exiting_at {
+            if let Ok(d) = now.duration_since(exit_at) {
+                let ms = d.as_millis() as u64;
+                // Use the same window the reducer uses to GC exiting
+                // slots so the door closes right as the agent's slot
+                // disappears.
+                let exit_window_ms =
+                    ascii_agents_core::state::reducer::EXIT_GRACE_WINDOW.as_millis() as u64;
+                if ms < exit_window_ms {
+                    max_frame = max_frame.max(frame_for_progress(ms, exit_window_ms));
+                }
+            }
+        }
+    }
+    max_frame
 }
