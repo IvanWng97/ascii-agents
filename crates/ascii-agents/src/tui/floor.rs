@@ -62,7 +62,7 @@ pub struct FloorTransition {
     pub duration_ms: u64,
 }
 
-const TRANSITION_DURATION_MS: u64 = 500;
+const TRANSITION_DURATION_MS: u64 = 900;
 
 impl FloorTransition {
     pub fn new(from: usize, to: usize, now: SystemTime) -> Self {
@@ -74,13 +74,14 @@ impl FloorTransition {
         }
     }
 
-    /// Progress ratio 0.0 → 1.0, clamped.
+    /// Progress ratio 0.0 → 1.0 with ease-in-out curve.
     pub fn t(&self, now: SystemTime) -> f32 {
         let elapsed = now
             .duration_since(self.started_at)
             .unwrap_or(Duration::ZERO)
             .as_millis() as f32;
-        (elapsed / self.duration_ms as f32).clamp(0.0, 1.0)
+        let linear = (elapsed / self.duration_ms as f32).clamp(0.0, 1.0);
+        ease_out(linear)
     }
 
     pub fn is_done(&self, now: SystemTime) -> bool {
@@ -93,6 +94,11 @@ impl FloorTransition {
 // ---------------------------------------------------------------------------
 
 /// Which floor does `desk_index` belong to?
+/// Quadratic ease-out: fast start, smooth deceleration.
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
 pub fn floor_of(desk_index: usize, desks_per_floor: usize) -> usize {
     if desks_per_floor == 0 {
         return 0;

@@ -252,16 +252,21 @@ impl<B: Backend> Renderer for TuiRenderer<B> {
                 );
             }
 
-            // Compute y-offsets for vertical slide + 1-row black divider.
-            let height = scene_rect.height as f32;
-            let divider_h = 1i32;
+            // Compute y-offsets for vertical slide with divider gap.
+            // t applies to total travel = screen_height + divider_height
+            // so the easing covers the full distance including the gap.
+            let h = scene_rect.height as f32;
+            let divider_h = (scene_rect.height as f32) / 5.0;
+            let total = h + divider_h;
             let (from_offset, to_offset) = if going_down {
-                let from_y = -(t * height) as i32;
-                let to_y = (height - t * height) as i32 + divider_h;
+                // Higher floor: current slides DOWN, new enters from TOP
+                let from_y = (t * total) as i32;
+                let to_y = -(total - t * total) as i32;
                 (from_y, to_y)
             } else {
-                let from_y = (t * height) as i32;
-                let to_y = -((height - t * height) as i32) - divider_h;
+                // Lower floor: current slides UP, new enters from BOTTOM
+                let from_y = -(t * total) as i32;
+                let to_y = (total - t * total) as i32;
                 (from_y, to_y)
             };
 
