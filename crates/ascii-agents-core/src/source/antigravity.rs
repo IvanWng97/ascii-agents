@@ -119,10 +119,6 @@ fn derive_ag_label(path: &Path, _source: &str, cwd: &Path) -> String {
             return format!("ag·{name}");
         }
     }
-    let base = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("ag");
-    format!("ag·{base}")
+
+    "ag".to_string()
 }
