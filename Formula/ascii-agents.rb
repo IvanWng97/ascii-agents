@@ -1,13 +1,14 @@
 class AsciiAgents < Formula
   desc "Terminal pixel-art office for AI coding agents"
   homepage "https://github.com/IvanWng97/ascii-agents"
-  url "https://github.com/IvanWng97/ascii-agents/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "ec274de417fe306c729d4e4d67d1387753a7fe1bfe5d97ee33e28db96fcf8906"
+  url "https://github.com/IvanWng97/ascii-agents/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "8e65856d53d190a0d4a589d40504f884af4c633139f96a007a6c3d138a6b208e"
   license "MIT"
+  head "https://github.com/IvanWng97/ascii-agents.git", branch: "main"
 
   livecheck do
     url :stable
-    regex(/^v?(\d+(?:\.\d+)+)$/i)
+    strategy :github_latest
   end
 
   depends_on "rust" => :build
@@ -29,7 +30,7 @@ class AsciiAgents < Formula
   end
 
   test do
-    assert_match "ascii-agents #{version}", shell_output("#{bin}/ascii-agents --version")
+    assert_match version.to_s, shell_output("#{bin}/ascii-agents --version")
 
     # Hook shim must always exit 0 — it should never block Claude Code.
     pipe_output(bin/"ascii-agents-hook", "{}", 0)
