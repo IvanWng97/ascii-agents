@@ -123,6 +123,7 @@ pub enum Pose {
         to: Point,
         t_x1000: u16,
         frame: usize,
+        carrying_coffee: bool,
     },
     /// Standing at a random walkway point (not at any waypoint). The dest field
     /// is the buf-pixel target the agent walked to. Used by aimless wander.
@@ -166,6 +167,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
                 to: target,
                 t_x1000: t,
                 frame,
+                carrying_coffee: false,
             });
         }
         // Past exit window: nothing to render, slot will be GC'd shortly.
@@ -193,6 +195,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
                 },
                 t_x1000: t,
                 frame,
+                carrying_coffee: false,
             });
         }
     }
@@ -342,6 +345,7 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
             to: dest,
             t_x1000: t,
             frame,
+            carrying_coffee: false,
         }
     } else if phase_t < at_wp_end {
         at_dest_pose
@@ -349,11 +353,14 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
         let span = cycle_ms - at_wp_end;
         let t = ((phase_t - at_wp_end) * 1000 / span) as u16;
         let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+        let carrying_coffee =
+            matches!(at_dest_pose, Pose::AtWaypoint { kind: WaypointKind::Pantry, .. });
         Pose::Walking {
             from: dest,
             to: desk,
             t_x1000: t,
             frame,
+            carrying_coffee,
         }
     }
 }
@@ -694,5 +701,82 @@ mod tests {
         let l = layout();
         let p = derive(&s, now, &l).unwrap();
         assert_ne!(p, Pose::SeatedThinking);
+    }
+
+    /// Find the first cycle where the agent takes a non-aimless trip to
+    /// a specific waypoint kind (by checking the waypoint index).
+    fn first_trip_cycle_to_kind(
+        agent_id: AgentId,
+        layout: &SceneLayout,
+        target_kind: WaypointKind,
+    ) -> Option<u64> {
+        (0u64..2000).find(|n| {
+            takes_trip(agent_id, *n)
+                && !is_aimless_cycle(agent_id, *n)
+                && {
+                    let idx = waypoint_index_for_cycle(agent_id, *n, layout.waypoints.len());
+                    layout.waypoints[idx].kind == target_kind
+                }
+        })
+    }
+
+    #[test]
+    fn walk_back_from_pantry_carries_coffee() {
+        let (test_slot, _) = slot(ActivityState::Idle, 0);
+        let l = layout();
+        let cycle = cycle_ms_for(test_slot.agent_id);
+        let (_, _, at_wp_end, _) = phases(test_slot.agent_id);
+        let trip_n = first_trip_cycle_to_kind(test_slot.agent_id, &l, WaypointKind::Pantry)
+            .expect("agent should visit Pantry within 2000 cycles");
+        // Place time in the walk-back phase (phase 3).
+        let midpoint = trip_n * cycle + at_wp_end + (cycle - at_wp_end) / 2;
+        let (s, now) = slot(ActivityState::Idle, midpoint);
+        match derive(&s, now, &l).expect("pose") {
+            Pose::Walking {
+                carrying_coffee, ..
+            } => {
+                assert!(
+                    carrying_coffee,
+                    "walk-back from Pantry must carry coffee"
+                );
+            }
+            other => panic!("expected Walking, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn walk_back_from_non_pantry_no_coffee() {
+        let (test_slot, _) = slot(ActivityState::Idle, 0);
+        let l = layout();
+        let cycle = cycle_ms_for(test_slot.agent_id);
+        let (_, _, at_wp_end, _) = phases(test_slot.agent_id);
+        // Find a trip cycle to a non-Pantry waypoint.
+        let trip_n = (0u64..2000)
+            .find(|n| {
+                takes_trip(test_slot.agent_id, *n)
+                    && !is_aimless_cycle(test_slot.agent_id, *n)
+                    && {
+                        let idx = waypoint_index_for_cycle(
+                            test_slot.agent_id,
+                            *n,
+                            l.waypoints.len(),
+                        );
+                        l.waypoints[idx].kind != WaypointKind::Pantry
+                    }
+            })
+            .expect("agent should visit a non-Pantry waypoint within 2000 cycles");
+        let midpoint = trip_n * cycle + at_wp_end + (cycle - at_wp_end) / 2;
+        let (s, now) = slot(ActivityState::Idle, midpoint);
+        match derive(&s, now, &l).expect("pose") {
+            Pose::Walking {
+                carrying_coffee, ..
+            } => {
+                assert!(
+                    !carrying_coffee,
+                    "walk-back from non-Pantry must NOT carry coffee"
+                );
+            }
+            other => panic!("expected Walking, got {other:?}"),
+        }
     }
 }

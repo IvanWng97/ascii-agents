@@ -122,6 +122,7 @@ pub fn derive_with_routing(
                     to: snap_target,
                     t_x1000: t,
                     frame,
+                    carrying_coffee: false,
                 }
             } else {
                 raw
@@ -138,6 +139,7 @@ pub fn derive_with_routing(
         to,
         t_x1000,
         frame,
+        carrying_coffee,
     } = pose
     else {
         // Record AtWaypoint / AimlessAt positions too — they're a valid
@@ -205,6 +207,7 @@ pub fn derive_with_routing(
                 to: path[i + 1],
                 t_x1000: seg_t,
                 frame,
+                carrying_coffee,
             });
         }
         acc += leg;
@@ -217,6 +220,7 @@ pub fn derive_with_routing(
         to: path[last],
         t_x1000: 1000,
         frame,
+        carrying_coffee,
     })
 }
 

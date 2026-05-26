@@ -902,15 +902,22 @@ pub fn render_to_rgb_buffer(
                 to,
                 t_x1000,
                 frame,
+                carrying_coffee,
             } => {
                 let pos = walking_position(from, to, t_x1000);
                 let walker_anchor = walking_anchor(pos);
                 let dx = to.x as i32 - from.x as i32;
                 let dy = to.y as i32 - from.y as i32;
-                let (anim_name, flip) = if dy.unsigned_abs() > dx.unsigned_abs() && dy < 0 {
-                    ("walking_back", to.x < from.x)
+                let going_back = dy.unsigned_abs() > dx.unsigned_abs() && dy < 0;
+                let flip = to.x < from.x;
+                let anim_name: &'static str = if carrying_coffee {
+                    if pack.animation("walking_coffee").is_some() {
+                        if going_back { "walking_back" } else { "walking_coffee" }
+                    } else if going_back { "walking_back" } else { "walking" }
+                } else if going_back {
+                    "walking_back"
                 } else {
-                    ("walking", to.x < from.x)
+                    "walking"
                 };
                 drawables.push(Drawable {
                     anchor_y: walker_anchor.y + 12,
