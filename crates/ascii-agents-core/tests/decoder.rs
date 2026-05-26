@@ -261,7 +261,7 @@ fn ag_tool_result_emits_activity_end() {
     assert_eq!(events.len(), 1);
     match &events[0] {
         AgentEvent::ActivityEnd { tool_use_id, .. } => {
-            assert_eq!(tool_use_id.as_deref(), Some("ag-2"));
+            assert_eq!(tool_use_id.as_deref(), Some("ag-2-0"));
         }
         other => panic!("got {other:?}"),
     }

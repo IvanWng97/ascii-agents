@@ -107,9 +107,12 @@ pub fn decode_ag_line(transcript_path: &str, source: &str, v: Value) -> Result<V
             }
         }
     } else if step_type != "USER_INPUT" && step_type != "CONVERSATION_HISTORY" && step_index > 0 {
+        // End the first tool from the previous step. Multi-tool steps have
+        // their remaining starts aged out by the reducer's pending_idle
+        // debounce, but the primary (i=0) start always gets a matching end.
         out.push(AgentEvent::ActivityEnd {
             agent_id,
-            tool_use_id: Some(format!("ag-{}", step_index - 1)),
+            tool_use_id: Some(format!("ag-{}-0", step_index - 1)),
         });
     }
 
