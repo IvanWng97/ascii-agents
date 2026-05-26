@@ -160,6 +160,29 @@ pub async fn run_tui(
                                 renderer::hit_test_coffee_machine(layout, m.column, m.row)
                             }) {
                                 let _ = open::that("https://buymeacoffee.com/IvanWng97");
+                            } else if let Some((cat_pos, anim)) = renderer.cached_cat_pos() {
+                                if renderer.cat_pet().map_or(true, |p| !p.is_active(now))
+                                    && renderer::hit_test_cat(cat_pos, anim, m.column, m.row)
+                                {
+                                    renderer.set_cat_pet(Some(renderer::CatPetState {
+                                        petted_at: now,
+                                        pet_pos: cat_pos,
+                                        pre_pet_anim: anim,
+                                    }));
+                                } else {
+                                    let pinned = renderer.pinned_agent();
+                                    if pinned.is_some() {
+                                        renderer.set_pinned_agent(None);
+                                    } else {
+                                        let snap = scene_rx.borrow().clone();
+                                        let hit = renderer.cached_layout().and_then(|layout| {
+                                            renderer::hit_test_from_tui(
+                                                &snap, layout, m.column, m.row,
+                                            )
+                                        });
+                                        renderer.set_pinned_agent(hit);
+                                    }
+                                }
                             } else {
                                 let pinned = renderer.pinned_agent();
                                 if pinned.is_some() {

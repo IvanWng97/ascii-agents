@@ -700,7 +700,13 @@ pub fn render_to_rgb_buffer(
         let active_pet = cat_pet.filter(|p| p.is_active(now));
         let cat_data = if let Some(pet) = active_pet {
             // Freeze the cat at the pet position with sit sprite.
-            Some((pet.pet_pos, false, "cat_sit", 0usize, Some(pet.elapsed_ms(now))))
+            Some((
+                pet.pet_pos,
+                false,
+                "cat_sit",
+                0usize,
+                Some(pet.elapsed_ms(now)),
+            ))
         } else {
             cat_position(
                 layout,

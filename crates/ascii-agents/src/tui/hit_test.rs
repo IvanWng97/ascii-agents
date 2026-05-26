@@ -288,6 +288,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
 /// `cat_pos` is the cat's center anchor in pixel coordinates.
 /// `anim_name` selects the bounding box size:
 ///   - cat_walk: 8x6, cat_sit: 6x6, cat_sleep: 6x4.
+///
 /// Returns true if `(mx, my)` (terminal cell coords) falls inside
 /// the sprite's footprint.
 pub fn hit_test_cat(cat_pos: crate::tui::layout::Point, anim_name: &str, mx: u16, my: u16) -> bool {
