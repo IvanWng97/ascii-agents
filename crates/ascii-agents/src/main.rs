@@ -49,12 +49,12 @@ fn main() -> Result<()> {
             socket,
             projects_root,
             pack_dir,
-            max_desks: cli_max_desks,
+            max_desks,
             headless,
         } => {
             let cfg_path = config::config_path();
             let cfg = config::load(&cfg_path);
-            let (theme_name, max_desks) = config::resolve(cfg, cli_theme, cli_max_desks);
+            let theme_name = config::resolve_theme(&cfg, cli_theme);
             runtime::run(
                 socket,
                 projects_root,

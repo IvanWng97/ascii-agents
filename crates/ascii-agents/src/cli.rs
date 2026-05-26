@@ -30,12 +30,9 @@ pub enum Cmd {
         projects_root: Option<PathBuf>,
         #[arg(long)]
         pack_dir: Option<PathBuf>,
-        /// Cap on simultaneously-tracked sessions. Bumped from 8 to 16 so
-        /// the initial-seed pass (1-hour window of recent CC transcripts)
-        /// doesn't fill every slot before the user's live session is even
-        /// detected.
-        #[arg(long)]
-        max_desks: Option<usize>,
+        /// Initial desk capacity seed (auto-computed from terminal size).
+        #[arg(long, default_value_t = 16, hide = true)]
+        max_desks: usize,
         /// Skip the TUI entirely — useful for CI / scripting.
         /// Prints a JSON snapshot of SceneState every 200ms when it changes.
         #[arg(long, default_value_t = false)]
@@ -63,7 +60,7 @@ impl Cli {
             socket: None,
             projects_root: None,
             pack_dir: None,
-            max_desks: None,
+            max_desks: 16,
             headless: false,
         });
         (level, theme, cmd)
@@ -88,7 +85,7 @@ mod tests {
             cmd,
             Cmd::Run {
                 headless: false,
-                max_desks: None,
+                max_desks: 16,
                 ..
             }
         ));

@@ -5,8 +5,6 @@ use anyhow::Result;
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
     pub theme: Option<String>,
-    #[serde(rename = "max-desks")]
-    pub max_desks: Option<usize>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -63,24 +61,18 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn resolve(
-    config: AppConfig,
-    cli_theme: Option<String>,
-    cli_max_desks: Option<usize>,
-) -> (String, usize) {
-    let config_theme = config.theme.filter(|t| {
+pub fn resolve_theme(config: &AppConfig, cli_theme: Option<String>) -> String {
+    let config_theme = config.theme.as_deref().and_then(|t| {
         if crate::tui::theme::theme_by_name(t).is_some() {
-            true
+            Some(t.to_string())
         } else {
             tracing::warn!(theme = %t, "unknown theme in config — ignoring");
-            false
+            None
         }
     });
-    let theme = cli_theme
+    cli_theme
         .or(config_theme)
-        .unwrap_or_else(|| "normal".to_string());
-    let max_desks = cli_max_desks.or(config.max_desks).unwrap_or(16);
-    (theme, max_desks)
+        .unwrap_or_else(|| "normal".to_string())
 }
 
 #[cfg(test)]
@@ -91,7 +83,6 @@ mod tests {
     fn load_missing_returns_defaults() {
         let cfg = load(Path::new("/nonexistent/path/config.toml"));
         assert!(cfg.theme.is_none());
-        assert!(cfg.max_desks.is_none());
     }
 
     #[test]
@@ -110,7 +101,15 @@ mod tests {
         std::fs::write(&path, "theme = \"cyberpunk\"\n").unwrap();
         let cfg = load(&path);
         assert_eq!(cfg.theme.as_deref(), Some("cyberpunk"));
-        assert!(cfg.max_desks.is_none());
+    }
+
+    #[test]
+    fn load_ignores_unknown_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "theme = \"normal\"\nfuture-key = 42\n").unwrap();
+        let cfg = load(&path);
+        assert_eq!(cfg.theme.as_deref(), Some("normal"));
     }
 
     #[test]
@@ -123,87 +122,56 @@ mod tests {
     }
 
     #[test]
-    fn save_preserves_max_desks() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, "theme = \"normal\"\nmax-desks = 8\n").unwrap();
-        save(&path, "cyberpunk").unwrap();
-        let cfg = load(&path);
-        assert_eq!(cfg.theme.as_deref(), Some("cyberpunk"));
-        assert_eq!(cfg.max_desks, Some(8));
-    }
-
-    #[test]
     fn resolve_cli_wins_over_config() {
         let cfg = AppConfig {
             theme: Some("normal".into()),
-            max_desks: Some(8),
         };
-        let (theme, desks) = resolve(cfg, Some("dracula".into()), Some(4));
+        let theme = resolve_theme(&cfg, Some("dracula".into()));
         assert_eq!(theme, "dracula");
-        assert_eq!(desks, 4);
     }
 
     #[test]
     fn resolve_config_wins_over_default() {
         let cfg = AppConfig {
             theme: Some("gruvbox".into()),
-            max_desks: Some(12),
         };
-        let (theme, desks) = resolve(cfg, None, None);
+        let theme = resolve_theme(&cfg, None);
         assert_eq!(theme, "gruvbox");
-        assert_eq!(desks, 12);
     }
 
     #[test]
     fn resolve_all_none_uses_default() {
         let cfg = AppConfig::default();
-        let (theme, desks) = resolve(cfg, None, None);
+        let theme = resolve_theme(&cfg, None);
         assert_eq!(theme, "normal");
-        assert_eq!(desks, 16);
     }
 
     #[test]
     fn resolve_invalid_config_theme_falls_back_to_default() {
         let cfg = AppConfig {
             theme: Some("does-not-exist".into()),
-            max_desks: Some(8),
         };
-        let (theme, desks) = resolve(cfg, None, None);
+        let theme = resolve_theme(&cfg, None);
         assert_eq!(theme, "normal");
-        assert_eq!(desks, 8);
     }
 
     #[test]
-    fn resolve_mixed_cli_theme_config_max_desks() {
-        let cfg = AppConfig {
-            theme: Some("gruvbox".into()),
-            max_desks: Some(8),
-        };
-        let (theme, desks) = resolve(cfg, Some("dracula".into()), None);
-        assert_eq!(theme, "dracula");
-        assert_eq!(desks, 8);
-    }
-
-    #[test]
-    fn full_config_flow_file_drives_defaults() {
+    fn full_config_flow_file_drives_theme() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "theme = \"cyberpunk\"\nmax-desks = 8\n").unwrap();
+        std::fs::write(&path, "theme = \"cyberpunk\"\n").unwrap();
         let cfg = load(&path);
-        let (theme, desks) = resolve(cfg, None, None);
+        let theme = resolve_theme(&cfg, None);
         assert_eq!(theme, "cyberpunk");
-        assert_eq!(desks, 8);
     }
 
     #[test]
-    fn full_config_flow_cli_partially_overrides() {
+    fn full_config_flow_cli_overrides_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(&path, "theme = \"cyberpunk\"\nmax-desks = 8\n").unwrap();
+        std::fs::write(&path, "theme = \"cyberpunk\"\n").unwrap();
         let cfg = load(&path);
-        let (theme, desks) = resolve(cfg, Some("dracula".into()), None);
+        let theme = resolve_theme(&cfg, Some("dracula".into()));
         assert_eq!(theme, "dracula");
-        assert_eq!(desks, 8);
     }
 }
