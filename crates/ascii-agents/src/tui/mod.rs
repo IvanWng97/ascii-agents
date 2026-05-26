@@ -84,7 +84,7 @@ pub async fn run_tui(
                     .min()
                     .unwrap_or(MAX_VISIBLE_DESKS);
                 if min_capacity > 0 {
-                    max_desks.store(min_capacity, std::sync::atomic::Ordering::Relaxed);
+                    max_desks.fetch_max(min_capacity, std::sync::atomic::Ordering::Relaxed);
                 }
             }
 
