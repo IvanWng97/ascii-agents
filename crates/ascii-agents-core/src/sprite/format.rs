@@ -205,7 +205,10 @@ fn build_palette(map: &HashMap<String, String>) -> Result<Palette> {
         if k.chars().count() != 1 {
             bail!("palette key {k:?} must be exactly one character");
         }
-        let key = k.chars().next().expect("palette key validated as single char");
+        let key = k
+            .chars()
+            .next()
+            .expect("palette key validated as single char");
         let pixel = parse_palette_value(v).with_context(|| format!("palette key '{k}'"))?;
         palette.insert(key, pixel);
     }
