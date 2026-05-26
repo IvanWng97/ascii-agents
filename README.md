@@ -67,7 +67,7 @@ Running multiple AI agents in the terminal is like managing a sweatshop you can'
 
 ## Themes
 
-Press `t` to switch themes with live preview. 6 built-in:
+Press `t` to switch themes with live preview. Your choice is saved to `~/.config/ascii-agents/config.toml` and persists across sessions. 6 built-in:
 
 <p align="center">
   <img src="docs/images/themes-composite.png" alt="6 themes: Normal, Cyberpunk, Dracula, Tokyo Night, Catppuccin, Gruvbox" width="800" />
