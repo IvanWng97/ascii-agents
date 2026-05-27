@@ -128,7 +128,8 @@ fn install_crash_hook() {
     }));
 }
 
-fn extract_panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
+#[allow(deprecated)]
+fn extract_panic_message(info: &std::panic::PanicInfo<'_>) -> String {
     if let Some(s) = info.payload().downcast_ref::<&str>() {
         return (*s).to_string();
     }
@@ -149,7 +150,8 @@ fn build_issue_url(
     let arch = std::env::consts::ARCH;
 
     let title_msg = if panic_msg.len() > 80 {
-        format!("{}…", &panic_msg[..80])
+        let cut = truncate_to_char_boundary(panic_msg, 80);
+        format!("{}…", &panic_msg[..cut])
     } else {
         panic_msg.to_string()
     };
@@ -158,9 +160,10 @@ fn build_issue_url(
     // Truncate backtrace to keep URL under GitHub's 8191-byte limit.
     const MAX_BT: usize = 1500;
     let bt_body = if backtrace.len() > MAX_BT {
+        let cut = truncate_to_char_boundary(backtrace, MAX_BT);
         format!(
             "{}\n\n... truncated — see {} for full trace",
-            &backtrace[..MAX_BT],
+            &backtrace[..cut],
             crash_path.display()
         )
     } else {
@@ -200,6 +203,17 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    let mut cut = max_bytes;
+    while cut > 0 && !s.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    cut
+}
+
 fn crash_log_path() -> PathBuf {
     if let Ok(state) = std::env::var("XDG_STATE_HOME") {
         return PathBuf::from(format!("{state}/ascii-agents/crash.log"));
@@ -236,5 +250,72 @@ impl std::io::Write for MutexFileWriter {
             .lock()
             .map_err(|_| std::io::Error::other("poisoned"))?
             .flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn truncate_ascii() {
+        assert_eq!(truncate_to_char_boundary("hello world", 5), 5);
+        assert_eq!(
+            &"hello world"[..truncate_to_char_boundary("hello world", 5)],
+            "hello"
+        );
+    }
+
+    #[test]
+    fn truncate_multibyte_boundary() {
+        // "café" is 5 bytes: c(1) a(1) f(1) é(2)
+        let s = "café";
+        assert_eq!(s.len(), 5);
+        // Cutting at byte 4 lands inside the é (2-byte char starting at 3)
+        let cut = truncate_to_char_boundary(s, 4);
+        assert_eq!(cut, 3);
+        assert_eq!(&s[..cut], "caf");
+    }
+
+    #[test]
+    fn truncate_beyond_length() {
+        assert_eq!(truncate_to_char_boundary("short", 100), 5);
+    }
+
+    #[test]
+    fn percent_encode_ascii() {
+        assert_eq!(percent_encode("hello"), "hello");
+        assert_eq!(percent_encode("a b"), "a%20b");
+    }
+
+    #[test]
+    fn percent_encode_special_chars() {
+        assert_eq!(percent_encode("#&="), "%23%26%3D");
+        assert_eq!(percent_encode("a\nb"), "a%0Ab");
+    }
+
+    #[test]
+    fn build_issue_url_starts_with_github() {
+        let url = build_issue_url(
+            "0.3.0",
+            "test panic",
+            "file.rs:1:1",
+            "bt",
+            Path::new("/tmp/x"),
+        );
+        assert!(url.starts_with("https://github.com/IvanWng97/ascii-agents/issues/new?"));
+        assert!(url.contains("labels=crash-report"));
+        assert!(url.contains("title="));
+        assert!(url.contains("body="));
+    }
+
+    #[test]
+    fn build_issue_url_truncates_long_backtrace() {
+        let long_bt = "x".repeat(2000);
+        let url = build_issue_url("0.3.0", "msg", "loc", &long_bt, Path::new("/tmp/x"));
+        // URL should stay under GitHub's 8191 byte limit
+        assert!(url.len() < 8191);
     }
 }

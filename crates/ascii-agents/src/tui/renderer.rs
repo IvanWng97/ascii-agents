@@ -186,7 +186,10 @@ pub fn draw_scene<B: Backend>(
     let floor = ctx.floor;
 
     if scene_rect.width < 20 || scene_rect.height < 12 {
-        term.draw(|f| paint_footer(f, scene, full_rect, theme, floor_info))?;
+        term.draw(|f| {
+            let actual = f.area();
+            paint_footer(f, scene, actual, theme, floor_info);
+        })?;
         return Ok(None);
     }
 
@@ -197,7 +200,10 @@ pub fn draw_scene<B: Backend>(
     // Always compute maximum layout capacity — floor overflow handles the rest.
     let Some(layout) = Layout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, floor.floor_seed)
     else {
-        term.draw(|f| paint_footer(f, scene, full_rect, theme, floor_info))?;
+        term.draw(|f| {
+            let actual = f.area();
+            paint_footer(f, scene, actual, theme, floor_info);
+        })?;
         return Ok(None);
     };
 
@@ -244,8 +250,17 @@ pub fn draw_scene<B: Backend>(
     let theme_picker = ctx.theme_picker;
     let chitchat_bubbles = &ctx.chitchat_bubbles;
     term.draw(|f| {
-        paint_footer(f, scene, full_rect, theme, floor_info);
-        flush_buffer_to_term(f, buf, scene_rect);
+        // Re-derive rects from the actual frame buffer to guard against
+        // terminal resize between term.size() and term.draw().
+        let actual_full = f.area();
+        let actual_scene = Rect {
+            x: 0,
+            y: 0,
+            width: actual_full.width,
+            height: actual_full.height.saturating_sub(1),
+        };
+        paint_footer(f, scene, actual_full, theme, floor_info);
+        flush_buffer_to_term(f, buf, actual_scene);
         paint_label_widgets(
             f,
             scene,
@@ -254,27 +269,27 @@ pub fn draw_scene<B: Backend>(
             ctx.router,
             ctx.overlay,
             ctx.history,
-            scene_rect,
+            actual_scene,
             hovered,
             theme,
         );
-        paint_chitchat_bubbles(f, chitchat_bubbles, scene_rect, theme);
-        paint_wall_display(f, scene, scene_rect, now, ticker, theme, floor_info);
+        paint_chitchat_bubbles(f, chitchat_bubbles, actual_scene, theme);
+        paint_wall_display(f, scene, actual_scene, now, ticker, theme, floor_info);
         if let Some(door) = layout.door {
             let (current, _) = floor_info.unwrap_or((1, 1));
-            paint_elevator_indicator(f, door, current, scene_rect, theme);
+            paint_elevator_indicator(f, door, current, actual_scene, theme);
         }
         let tooltip_agent = hovered.or(pinned_agent);
         if let (Some(agent_id), Some((mx, my))) = (tooltip_agent, mouse_pos) {
-            paint_hover_tooltip(f, scene, agent_id, mx, my, scene_rect, now, theme);
+            paint_hover_tooltip(f, scene, agent_id, mx, my, actual_scene, now, theme);
         } else if let Some(agent_id) = pinned_agent {
             paint_hover_tooltip(
                 f,
                 scene,
                 agent_id,
-                scene_rect.width / 2,
-                scene_rect.height / 2,
-                scene_rect,
+                actual_scene.width / 2,
+                actual_scene.height / 2,
+                actual_scene,
                 now,
                 theme,
             );
@@ -282,21 +297,21 @@ pub fn draw_scene<B: Backend>(
         if tooltip_agent.is_none() && pinned_agent.is_none() {
             if let Some((mx, my)) = mouse_pos {
                 if hit_test_coffee_machine(&layout, mx, my) {
-                    paint_coffee_tooltip(f, mx, my, scene_rect, theme);
+                    paint_coffee_tooltip(f, mx, my, actual_scene, theme);
                 } else if let Some((cat_pos, anim)) = ctx.last_cat_pos {
                     if hit_test_cat(cat_pos, anim, mx, my) {
                         let on_cooldown = ctx.cat_pet.is_some_and(|p| p.is_active(now));
-                        paint_cat_tooltip(f, anim, on_cooldown, mx, my, scene_rect, theme);
+                        paint_cat_tooltip(f, anim, on_cooldown, mx, my, actual_scene, theme);
                     } else if let Some(label) = hit_test_furniture(&layout, mx, my) {
-                        paint_furniture_tooltip(f, label, mx, my, scene_rect, theme);
+                        paint_furniture_tooltip(f, label, mx, my, actual_scene, theme);
                     }
                 } else if let Some(label) = hit_test_furniture(&layout, mx, my) {
-                    paint_furniture_tooltip(f, label, mx, my, scene_rect, theme);
+                    paint_furniture_tooltip(f, label, mx, my, actual_scene, theme);
                 }
             }
         }
         if let Some(idx) = theme_picker {
-            paint_theme_picker(f, idx, full_rect, theme);
+            paint_theme_picker(f, idx, actual_full, theme);
         }
     })?;
     Ok(Some(layout))

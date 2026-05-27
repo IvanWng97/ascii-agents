@@ -349,16 +349,19 @@ impl<B: Backend> Renderer for TuiRenderer<B> {
             let theme_picker = self.theme_picker;
 
             self.terminal.draw(|f| {
-                crate::tui::renderer::paint_footer(f, scene, full_rect, theme, floor_info);
-                flush_buffer_to_term_at_offset(f, from_buf, scene_rect, from_offset);
-                flush_buffer_to_term_at_offset(f, to_buf, scene_rect, to_offset);
-
-                // Text overlays are hidden during transition — they can't
-                // scroll with the pixel buffer in ratatui's coordinate system.
-                // They reappear once the transition completes.
+                let actual_full = f.area();
+                let actual_scene = Rect {
+                    x: 0,
+                    y: 0,
+                    width: actual_full.width,
+                    height: actual_full.height.saturating_sub(1),
+                };
+                crate::tui::renderer::paint_footer(f, scene, actual_full, theme, floor_info);
+                flush_buffer_to_term_at_offset(f, from_buf, actual_scene, from_offset);
+                flush_buffer_to_term_at_offset(f, to_buf, actual_scene, to_offset);
 
                 if let Some(idx) = theme_picker {
-                    crate::tui::renderer::paint_theme_picker(f, idx, full_rect, theme);
+                    crate::tui::renderer::paint_theme_picker(f, idx, actual_full, theme);
                 }
             })?;
 

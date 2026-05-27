@@ -29,7 +29,7 @@ push-remote            = "origin"
 [profile.release]
 lto           = true
 codegen-units = 1
-strip         = true
+strip         = "debuginfo"
 panic         = "abort"
 
 [workspace.dependencies]
