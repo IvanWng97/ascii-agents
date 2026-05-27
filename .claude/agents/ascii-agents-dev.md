@@ -50,6 +50,7 @@ Every feature/fix commit must satisfy ALL of these before marking done:
 5. **Format** — `cargo fmt`
 6. **Build** — `cargo build --release --workspace`
 7. **No stale docs** — grep for moved function names, changed field names
+8. **Code review before merge** — run 2+ review agents (explorer/reviewer/architect), fix all critical/important findings, verify premises before accepting
 
 ## Sprite & Visual Verification
 

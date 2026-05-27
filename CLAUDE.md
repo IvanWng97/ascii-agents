@@ -141,6 +141,8 @@ These are load-bearing; don't break them without updating the spec.
 - Don't add `--no-verify` / hook-skipping flags to any git operations performed in this repo.
 - Don't generate a README / CLAUDE.md / CHANGELOG / docs in PRs unless explicitly asked.
 - Don't `git push` without explicit user confirmation, even after committing.
+- Don't merge a PR without running the code review process (2+ agents: explorer/reviewer/architect). No exceptions — PR #23 was merged without review and had a critical path-traversal vulnerability.
+- Don't blindly accept reviewer findings. Verify the premise before coding a fix — the reviewer may have incomplete context about design intent. Check "Known sharp edges" and existing comments first. If a fix contradicts an earlier design decision, trace the code path manually.
 
 ## Where to look
 
