@@ -604,13 +604,14 @@ mod tests {
 
     #[test]
     fn find_path_returns_none_when_target_completely_surrounded() {
-        let mask = WalkableMask::new_open(100, 100);
+        // 200×200 mask so the wall around (100,100) doesn't saturate to
+        // origin and accidentally cover from=(4,4). This ensures
+        // snap_to_walkable succeeds on `from` but fails on the goal.
+        let mask = WalkableMask::new_open(200, 200);
         let mut overlay = OccupancyOverlay::new();
-        // Wall off a region around the target so snap_to_walkable can't
-        // find any walkable cell within MAX_SNAP_RADIUS.
-        let target = Point { x: 50, y: 50 };
+        let target = Point { x: 100, y: 100 };
         let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
-        let wall_origin = 50u16.saturating_sub(wall_size / 2);
+        let wall_origin = 100u16 - wall_size / 2;
         overlay.add(wall_origin, wall_origin, wall_size, wall_size);
 
         let from = Point { x: 4, y: 4 };
@@ -623,12 +624,12 @@ mod tests {
 
     #[test]
     fn router_falls_back_to_straight_line_when_path_is_none() {
-        let mask = WalkableMask::new_open(100, 100);
+        let mask = WalkableMask::new_open(200, 200);
         let mut overlay = OccupancyOverlay::new();
         let from = Point { x: 4, y: 4 };
-        let to = Point { x: 50, y: 50 };
+        let to = Point { x: 100, y: 100 };
         let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
-        let wall_origin = 50u16.saturating_sub(wall_size / 2);
+        let wall_origin = 100u16 - wall_size / 2;
         overlay.add(wall_origin, wall_origin, wall_size, wall_size);
 
         let mut router = AStarRouter::new();
