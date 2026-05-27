@@ -88,11 +88,22 @@ impl JsonlWatcher {
         )
         .await;
 
+        // Re-scan shortly after startup to catch files that APFS read_dir
+        // missed during the initial seed walk (metadata propagation race).
+        // walk_jsonl is idempotent (cursor == file_len → no-op).
+        let mut rescan_done = false;
+        let rescan_delay = tokio::time::sleep(Duration::from_millis(250));
+        tokio::pin!(rescan_delay);
+
         loop {
             let source_arc = source_arc.clone();
             tokio::select! {
                 Some(path) = notify_rx.recv() => {
                     walk_jsonl(&path, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
+                }
+                _ = &mut rescan_delay, if !rescan_done => {
+                    rescan_done = true;
+                    scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
                     scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
@@ -174,16 +185,20 @@ async fn initial_seed_walk(
     let recent = meta
         .modified()
         .ok()
-        .and_then(|t| t.elapsed().ok())
-        .map(|elapsed| elapsed <= window)
+        .map(|mtime| {
+            // elapsed() returns Err when mtime is in the future (clock jitter
+            // on APFS nanosecond-precision filesystems). A future mtime is
+            // necessarily within any recency window.
+            let elapsed = mtime.elapsed().unwrap_or(Duration::ZERO);
+            elapsed <= window
+        })
         .unwrap_or(false);
 
     if recent {
         let stale_minutes = meta
             .modified()
             .ok()
-            .and_then(|t| t.elapsed().ok())
-            .map(|d| d.as_secs() / 60)
+            .map(|mtime| mtime.elapsed().unwrap_or(Duration::ZERO).as_secs() / 60)
             .unwrap_or(0);
         let ended =
             check_session_ended(path, check_ended).await || stale_minutes >= STARTUP_STALE_MINUTES;

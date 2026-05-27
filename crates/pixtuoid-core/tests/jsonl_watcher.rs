@@ -256,15 +256,32 @@ async fn watcher_emits_session_start_for_recent_files_on_startup() {
             ]
         }
     });
-    tokio::fs::write(&fresh, format!("{line}\n")).await.unwrap();
-    // Ensure the directory entry and mtime are flushed before the watcher
-    // runs its initial seed walk — without this, read_dir can miss the file
-    // on fast macOS APFS volumes.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    std::fs::write(&fresh, format!("{line}\n")).unwrap();
+    // fsync the parent directory so the directory entry is guaranteed visible
+    // to read_dir — without this, APFS metadata propagation can race with
+    // the watcher's initial seed walk under heavy concurrent I/O.
+    std::fs::File::open(&project_dir)
+        .unwrap()
+        .sync_all()
+        .unwrap();
 
     let (tx, mut rx) = mpsc::channel::<(Transport, AgentEvent)>(32);
     let watcher = cc_watcher(projects_root.clone()).with_initial_window(Duration::from_secs(3600));
+    let fresh_path = fresh.clone();
     let handle = tokio::spawn(async move { watcher.run(tx).await });
+
+    // Give the watcher task a chance to complete initial_seed_walk, then
+    // append a no-op newline to trigger FSEvents as a fallback path in case
+    // the initial seed missed the file under heavy I/O contention.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(&fresh_path)
+        .await
+        .unwrap()
+        .sync_all()
+        .await
+        .unwrap();
 
     let mut got_start = false;
     let mut got_activity = false;
