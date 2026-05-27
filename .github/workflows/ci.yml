@@ -72,7 +72,7 @@ jobs:
       - name: Generate coverage + JUnit XML (single test run)
         run: cargo llvm-cov nextest --workspace --features ascii-agents-core/test-renderer --lcov --output-path lcov.info --profile ci
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           flags: unit
@@ -81,7 +81,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload test results to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: target/nextest/ci/junit.xml
           report-type: test_results
