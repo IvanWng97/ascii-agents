@@ -26,7 +26,6 @@ pub struct JsonlWatcher {
 }
 
 const DEFAULT_INITIAL_WINDOW: Duration = Duration::from_secs(3600);
-const STARTUP_STALE_MINUTES: u64 = 5;
 
 impl JsonlWatcher {
     pub fn new(
@@ -195,13 +194,7 @@ async fn initial_seed_walk(
         .unwrap_or(false);
 
     if recent {
-        let stale_minutes = meta
-            .modified()
-            .ok()
-            .map(|mtime| mtime.elapsed().unwrap_or(Duration::ZERO).as_secs() / 60)
-            .unwrap_or(0);
-        let ended =
-            check_session_ended(path, check_ended).await || stale_minutes >= STARTUP_STALE_MINUTES;
+        let ended = check_session_ended(path, check_ended).await;
         if ended {
             cursors.lock().await.insert(path.to_path_buf(), meta.len());
         } else {

@@ -152,7 +152,7 @@ A **robot** pack ships as an example at `sprites/robot/`. See the [sprite format
 CC tool call ──► CC fires hook ──► pixtuoid-hook (shim)
                                          │ JSON over Unix socket
                                          ▼
-                                  /tmp/pixtuoid.sock
+                                  /tmp/pixtuoid-{uid}.sock
                                          │
                        HookSocketListener ─────► ┐
                                                  │ (Transport, AgentEvent)
