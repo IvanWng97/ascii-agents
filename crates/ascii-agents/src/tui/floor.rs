@@ -252,6 +252,45 @@ mod tests {
     }
 
     #[test]
+    fn build_floor_scene_skips_agent_below_grown_offset() {
+        // Agent assigned desk 5 on floor 1 when floor 0 had capacity 4.
+        // Floor 0 later grows to capacity 8. floor_range(1).start = 8,
+        // so desk 5 < 8 and the agent should be invisible on floor 1.
+        let mut s = SceneState::new([4, 4, 0, 0, 0]);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let id = AgentId::from_transcript_path("/p/stale.jsonl");
+        s.agents.insert(
+            id,
+            AgentSlot {
+                agent_id: id,
+                source: Arc::from("cc"),
+                session_id: Arc::from("s"),
+                cwd: Arc::from(Path::new("/repo")),
+                label: Arc::from("stale"),
+                state: ActivityState::Idle,
+                state_started_at: now,
+                created_at: now,
+                last_event_at: now,
+                exiting_at: None,
+                pending_idle_at: None,
+                desk_index: 5,
+                floor_idx: 1,
+                tool_call_count: 0,
+                active_ms: 0,
+                unknown_cwd: false,
+                parent_id: None,
+            },
+        );
+        // Simulate floor 0 capacity growth
+        s.floor_capacities = [8, 4, 0, 0, 0];
+        let floor1 = build_floor_scene(&s, 1);
+        assert!(
+            floor1.is_empty(),
+            "agent below grown offset must be skipped, not mapped to desk 0"
+        );
+    }
+
+    #[test]
     fn num_floors_variable_capacities() {
         // F0: 0..4, F1: 4..12 — 6 agents span 2 floors
         let mut s = SceneState::new([4, 8, 6, 4, 2]);
