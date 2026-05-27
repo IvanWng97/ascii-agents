@@ -111,4 +111,41 @@ mod tests {
         assert!(PetKind::Cat.walk_anim().starts_with("cat_"));
         assert!(PetKind::Dog.walk_anim().starts_with("dog_"));
     }
+
+    #[test]
+    fn dog_anim_methods() {
+        assert_eq!(PetKind::Dog.walk_anim(), "dog_walk");
+        assert_eq!(PetKind::Dog.sit_anim(), "dog_sit");
+        assert_eq!(PetKind::Dog.sleep_anim(), "dog_sleep");
+    }
+
+    #[test]
+    fn dog_does_not_sleep_near_idle() {
+        assert!(!PetKind::Dog.sleeps_near_idle());
+        assert!(PetKind::Cat.sleeps_near_idle());
+    }
+
+    #[test]
+    fn hitbox_walk_larger_than_sit() {
+        for &kind in PetKind::ALL {
+            let (ww, _) = kind.hitbox(kind.walk_anim());
+            let (sw, _) = kind.hitbox(kind.sit_anim());
+            assert!(ww > sw, "{:?} walk should be wider than sit", kind);
+        }
+    }
+
+    #[test]
+    fn hitbox_sleep_shorter_than_sit() {
+        for &kind in PetKind::ALL {
+            let (_, sh) = kind.hitbox(kind.sit_anim());
+            let (_, slh) = kind.hitbox(kind.sleep_anim());
+            assert!(slh < sh, "{:?} sleep should be shorter than sit", kind);
+        }
+    }
+
+    #[test]
+    fn hitbox_unknown_anim_returns_default() {
+        assert_eq!(PetKind::Cat.hitbox("unknown"), (6, 6));
+        assert_eq!(PetKind::Dog.hitbox("unknown"), (6, 6));
+    }
 }

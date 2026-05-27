@@ -396,4 +396,14 @@ mod tests {
             Some(vec!["cat".to_string(), "dog".to_string()])
         );
     }
+
+    #[test]
+    fn enabled_pets_all_unknown_returns_empty() {
+        let cfg = AppConfig {
+            enabled_pets: Some(vec!["hamster".into(), "parrot".into()]),
+            ..AppConfig::default()
+        };
+        let pets = resolve_pets(&cfg);
+        assert!(pets.is_empty());
+    }
 }
