@@ -8,7 +8,7 @@ pub(super) use hud::{
     paint_elevator_indicator, paint_footer, paint_theme_picker, paint_wall_display,
 };
 pub use tooltip::paint_chitchat_bubbles;
-pub(super) use tooltip::{paint_cat_tooltip, paint_coffee_tooltip, paint_furniture_tooltip};
+pub(super) use tooltip::{paint_coffee_tooltip, paint_furniture_tooltip, paint_pet_tooltip};
 pub(crate) use tooltip::{paint_hover_tooltip, paint_label_widgets};
 
 use std::time::SystemTime;

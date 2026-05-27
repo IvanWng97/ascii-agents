@@ -12,6 +12,7 @@ use ratatui::widgets::Paragraph;
 use super::to_color;
 use crate::tui::layout::{Layout, DESK_W};
 use crate::tui::pathfind::Router;
+use crate::tui::pet::PetKind;
 use crate::tui::pixel_painter::character_anchor;
 use crate::tui::pose;
 use crate::tui::renderer::clip_widget_rect;
@@ -290,10 +291,11 @@ pub(crate) fn paint_furniture_tooltip(
     }
 }
 
-/// Cat tooltip — state-dependent text rendered near the cursor.
+/// Pet tooltip — state-dependent text rendered near the cursor.
 /// Same visual style as furniture tooltips (dark bg, light text).
-pub(crate) fn paint_cat_tooltip(
+pub(crate) fn paint_pet_tooltip(
     f: &mut ratatui::Frame<'_>,
+    kind: PetKind,
     anim_name: &str,
     is_on_cooldown: bool,
     mx: u16,
@@ -305,13 +307,16 @@ pub(crate) fn paint_cat_tooltip(
     use ratatui::widgets::Block;
 
     let text = if is_on_cooldown {
-        " purr... "
+        match kind {
+            PetKind::Cat => " purr... ",
+            PetKind::Dog => " woof! ",
+        }
     } else {
-        match anim_name {
-            "cat_sleep" => " Shhh... sleeping ",
-            "cat_sit" => " Pet me! ",
-            "cat_walk" => " Office Cat (walking) ",
-            _ => " Office Cat ",
+        match (kind, anim_name) {
+            (PetKind::Cat, "cat_sleep") | (PetKind::Dog, "dog_sleep") => " Shhh... sleeping ",
+            (PetKind::Cat, "cat_sit") | (PetKind::Dog, "dog_sit") => " Pet me! ",
+            (PetKind::Cat, _) => " Office Cat ",
+            (PetKind::Dog, _) => " Office Dog ",
         }
     };
     let tip_w = text.len() as u16;

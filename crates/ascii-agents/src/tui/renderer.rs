@@ -35,13 +35,13 @@ use crate::tui::pose;
 // Re-exports so tui_renderer.rs and tui/mod.rs import from one place.
 pub(crate) use crate::tui::hit_test::hit_test_agent;
 pub use crate::tui::hit_test::{
-    hit_test_cat, hit_test_coffee_machine, hit_test_from_tui, hit_test_furniture,
+    hit_test_coffee_machine, hit_test_from_tui, hit_test_furniture, hit_test_pet,
 };
 pub(crate) use crate::tui::widgets::paint_hover_tooltip;
 pub use crate::tui::widgets::TickerQueue;
 pub(super) use crate::tui::widgets::{
-    paint_cat_tooltip, paint_chitchat_bubbles, paint_coffee_tooltip, paint_elevator_indicator,
-    paint_footer, paint_furniture_tooltip, paint_label_widgets, paint_theme_picker,
+    paint_chitchat_bubbles, paint_coffee_tooltip, paint_elevator_indicator, paint_footer,
+    paint_furniture_tooltip, paint_label_widgets, paint_pet_tooltip, paint_theme_picker,
     paint_wall_display,
 };
 
@@ -302,10 +302,10 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
             if let Some((mx, my)) = mouse_pos {
                 if hit_test_coffee_machine(&layout, mx, my) {
                     paint_coffee_tooltip(f, mx, my, actual_scene, theme);
-                } else if let Some((pet_pos, anim, _kind)) = ctx.last_pet_pos {
-                    if hit_test_cat(pet_pos, anim, mx, my) {
+                } else if let Some((pet_pos, anim, kind)) = ctx.last_pet_pos {
+                    if hit_test_pet(kind, pet_pos, anim, mx, my) {
                         let on_cooldown = ctx.active_pet.is_some_and(|p| p.is_active(now));
-                        paint_cat_tooltip(f, anim, on_cooldown, mx, my, actual_scene, theme);
+                        paint_pet_tooltip(f, kind, anim, on_cooldown, mx, my, actual_scene, theme);
                     } else if let Some(label) = hit_test_furniture(&layout, mx, my) {
                         paint_furniture_tooltip(f, label, mx, my, actual_scene, theme);
                     }
