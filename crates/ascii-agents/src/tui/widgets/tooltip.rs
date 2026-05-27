@@ -293,6 +293,7 @@ pub(crate) fn paint_furniture_tooltip(
 
 /// Pet tooltip — state-dependent text rendered near the cursor.
 /// Same visual style as furniture tooltips (dark bg, light text).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_pet_tooltip(
     f: &mut ratatui::Frame<'_>,
     kind: PetKind,

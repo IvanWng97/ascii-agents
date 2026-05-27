@@ -27,6 +27,7 @@ pub type SceneRx = watch::Receiver<Arc<SceneState>>;
 /// auto-computes the real per-floor capacity from terminal dimensions.
 const BOOTSTRAP_DESKS: usize = 16;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     socket: Option<PathBuf>,
     projects_root: Option<PathBuf>,
@@ -62,6 +63,7 @@ pub fn run(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_async(
     socket: Option<PathBuf>,
     projects_root: Option<PathBuf>,
