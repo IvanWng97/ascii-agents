@@ -40,6 +40,7 @@ version = "1"
 "q" = "#1a1a1a"   # marker / whiteboard scribble
 "x" = "#c8a060"   # dog tan fur
 "z" = "#7a5030"   # dog dark brown (ears, tail tip, nose)
+"R" = "#c45050"   # dog nose/tongue
 
 [animations.seated]
 frames   = ["seated.sprite"]

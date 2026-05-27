@@ -391,6 +391,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         self.coffee_fetched_at
             .retain(|id, _| scene.agents.contains_key(id));
 
+        let floor_meta = FloorMeta::for_floor(self.current_floor, nf);
         let fctx = &mut self.floor_ctxs[self.current_floor];
         let mut draw_ctx = DrawCtx {
             buf: &mut self.floor_bufs[self.current_floor],
@@ -404,11 +405,11 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             theme: self.theme,
             theme_picker: self.theme_picker,
             floor_info,
-            floor: FloorMeta::for_floor(self.current_floor, nf),
+            floor: floor_meta,
             active_pet: self.active_pet.as_ref(),
             last_pet_pos: None,
             floor_pet_kind: crate::tui::pet::select_pet_for_floor(
-                FloorMeta::for_floor(self.current_floor, nf).floor_seed,
+                floor_meta.floor_seed,
                 &self.enabled_pets,
             ),
             chitchat_state: &mut self.chitchat_state,

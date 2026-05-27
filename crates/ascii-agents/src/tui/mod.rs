@@ -185,6 +185,7 @@ pub async fn run_tui(
                                         petted_at: now,
                                         pet_pos,
                                         kind,
+                                        floor_idx: renderer.current_floor(),
                                     }));
                                 } else {
                                     let pinned = renderer.pinned_agent();

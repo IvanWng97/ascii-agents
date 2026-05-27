@@ -118,16 +118,22 @@ pub fn resolve_theme(config: &AppConfig, cli_theme: Option<String>) -> String {
 pub fn resolve_pets(config: &AppConfig) -> Vec<crate::tui::pet::PetKind> {
     match &config.enabled_pets {
         None => crate::tui::pet::PetKind::ALL.to_vec(),
-        Some(names) => names
-            .iter()
-            .filter_map(|n| {
-                let kind = crate::tui::pet::PetKind::from_config_name(n);
-                if kind.is_none() {
-                    tracing::warn!(pet = %n, "unknown pet in config — skipping");
-                }
-                kind
-            })
-            .collect(),
+        Some(names) => {
+            let pets: Vec<_> = names
+                .iter()
+                .filter_map(|n| {
+                    let kind = crate::tui::pet::PetKind::from_config_name(n);
+                    if kind.is_none() {
+                        tracing::warn!(pet = %n, "unknown pet in config — skipping");
+                    }
+                    kind
+                })
+                .collect();
+            if pets.is_empty() && !names.is_empty() {
+                tracing::warn!("all enabled-pets names were unknown — no pets will appear");
+            }
+            pets
+        }
     }
 }
 

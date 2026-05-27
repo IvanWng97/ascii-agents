@@ -51,14 +51,12 @@ impl PetKind {
     }
 
     pub fn hitbox(self, anim_name: &str) -> (u16, u16) {
-        match (self, anim_name) {
-            (PetKind::Cat, "cat_walk") => (8, 6),
-            (PetKind::Cat, "cat_sit") => (6, 6),
-            (PetKind::Cat, "cat_sleep") => (6, 4),
-            (PetKind::Dog, "dog_walk") => (8, 6),
-            (PetKind::Dog, "dog_sit") => (6, 6),
-            (PetKind::Dog, "dog_sleep") => (6, 4),
-            _ => (6, 6),
+        if anim_name == self.walk_anim() {
+            (8, 6)
+        } else if anim_name == self.sleep_anim() {
+            (6, 4)
+        } else {
+            (6, 6)
         }
     }
 }

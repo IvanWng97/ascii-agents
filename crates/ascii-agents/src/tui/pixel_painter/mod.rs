@@ -762,9 +762,9 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         .all(|a| matches!(a.state, ActivityState::Idle));
 
     if let Some(kind) = ctx.floor_pet_kind {
-        let active_pet = ctx
-            .active_pet
-            .filter(|p| p.is_active(ctx.now) && p.kind == kind);
+        let active_pet = ctx.active_pet.filter(|p| {
+            p.is_active(ctx.now) && p.kind == kind && p.floor_idx == ctx.floor.floor_idx
+        });
         let pet_data = if let Some(pet) = active_pet {
             Some((
                 pet.pet_pos,

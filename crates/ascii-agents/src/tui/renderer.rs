@@ -55,6 +55,7 @@ pub struct PetState {
     pub petted_at: SystemTime,
     pub pet_pos: Point,
     pub kind: PetKind,
+    pub floor_idx: usize,
 }
 
 impl PetState {
