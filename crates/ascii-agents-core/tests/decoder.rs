@@ -376,3 +376,51 @@ fn detect_parent_id_returns_none_for_regular_path() {
         "regular path should not match subagent pattern"
     );
 }
+
+#[test]
+fn decode_hook_payload_missing_session_id_returns_err() {
+    let payload = serde_json::json!({
+        "hook_event_name": "SessionStart",
+        "transcript_path": "/tmp/t.jsonl",
+        "cwd": "/repo"
+    });
+    assert!(
+        decode_hook_payload(payload).is_err(),
+        "missing session_id must return Err"
+    );
+}
+
+#[test]
+fn decode_hook_payload_missing_transcript_path_returns_err() {
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "ses-abc",
+        "cwd": "/repo",
+        "tool_name": "Bash",
+        "tool_input": { "command": "ls" }
+    });
+    assert!(
+        decode_hook_payload(payload).is_err(),
+        "missing transcript_path must return Err"
+    );
+}
+
+#[test]
+fn decode_hook_payload_missing_tool_name_still_succeeds() {
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "ses-abc",
+        "transcript_path": "/tmp/t.jsonl"
+    });
+    let ev = decode_hook_payload(payload).unwrap();
+    match ev {
+        AgentEvent::ActivityStart { detail, .. } => {
+            let d = detail.expect("detail set");
+            assert!(
+                d.display().contains("?"),
+                "missing tool_name should fall back to '?'"
+            );
+        }
+        other => panic!("expected ActivityStart, got {other:?}"),
+    }
+}

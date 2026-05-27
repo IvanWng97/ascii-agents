@@ -146,6 +146,24 @@ mod tests {
     }
 
     #[test]
+    fn compute_returns_none_at_exact_boundary() {
+        let min_w = DESK_W + DESK_GAP_X * 2; // 34
+        let min_h: u16 = 40 + MIN_TOP_MARGIN; // 60
+        assert!(
+            SceneLayout::compute(min_w - 1, min_h, 1).is_none(),
+            "one pixel below MIN_W should return None"
+        );
+        assert!(
+            SceneLayout::compute(min_w, min_h - 1, 1).is_none(),
+            "one pixel below min_h should return None"
+        );
+        assert!(
+            SceneLayout::compute(min_w, min_h, 1).is_some(),
+            "exactly at boundary should return Some"
+        );
+    }
+
+    #[test]
     fn compute_zones_are_ordered_top_to_bottom_and_nonoverlapping() {
         let l = SceneLayout::compute(120, 80, 6).expect("fits");
         assert!(l.cubicle_band.y < l.walkway.y);
