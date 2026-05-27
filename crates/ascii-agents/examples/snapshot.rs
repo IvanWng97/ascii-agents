@@ -55,6 +55,10 @@ struct SnapshotArgs {
     #[arg(long)]
     debug_walkable: bool,
 
+    /// Custom sprite pack directory.
+    #[arg(long)]
+    pack_dir: Option<std::path::PathBuf>,
+
     /// Override the snapshot terminal width (cells). Default 192.
     #[arg(long)]
     cols: Option<u16>,
@@ -120,7 +124,7 @@ fn main() -> Result<()> {
     let backend = TestBackend::new(cols, rows);
     let mut term = Terminal::new(backend)?;
     let mut buf = RgbBuffer::filled(0, 0, Rgb(0, 0, 0));
-    let pack = load_sprite_pack(None)?;
+    let pack = load_sprite_pack(args.pack_dir)?;
     let mut cache = FrameCache::new();
     let mut router = ascii_agents::tui::pathfind::AStarRouter::new();
     let mut overlay = ascii_agents_core::walkable::OccupancyOverlay::new();

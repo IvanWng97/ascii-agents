@@ -1,14 +1,13 @@
-# Robot on couch — back view, relaxed
 @frame 0
-. . . H H . . .
-. . . H H . . .
-. . M M M M . .
-. M D D D D M .
-. M D D D D M .
-. B B B B B B .
-. B B B B B B .
-. B B B B B B .
-. B M B B M B .
-. . P P P P . .
-. . P P P P . .
-. . P . . P . .
+. D D D D D D D D .
+. D M M M M M M D .
+K D D D D D D D D .
+K D D D D D D D D .
+K D D D D D D D D .
+. D M M M M M M D .
+. D D D D D D D D .
+. . M M M M M M . .
+. . D M M M M D . .
+. . . M M M M . . .
+. . . . D D . . . .
+. . . . D D . . . .

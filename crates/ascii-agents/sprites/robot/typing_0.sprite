@@ -1,14 +1,13 @@
-# Robot typing frame 0 — arms forward
 @frame 0
-. . . H H . . .
-. . . H H . . .
-. . M M M M . .
-. M S S S S M .
-. M S W S W M .
-. B B B B B B .
-. B B W B B B .
-M B B B B B B M
-. B M B B M B .
-. . P P P P . .
-. . P P P P . .
-. . P . . P . .
+. D D D D D D D D .
+. D H H H H H H D .
+K D B B B B B B D .
+K D B W B B W B D .
+K D B B B B B B D .
+. D H H H H H H D .
+. D D D D D D D D .
+M . . M M M M . . M
+. . . M W M M . . .
+. . . M M M M . . .
+. . . . D D . . . .
+. . . . D D . . . .

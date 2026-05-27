@@ -129,6 +129,20 @@ impl Pack {
     pub fn animation_names(&self) -> Vec<String> {
         self.animations.keys().cloned().collect()
     }
+
+    /// Merge furniture/environment animations from `base` into self.
+    /// Only fills animations listed in OPTIONAL_FURNITURE_ANIMATIONS —
+    /// character animations are never inherited so a robot pack doesn't
+    /// accidentally show human sprites for missing optional poses.
+    pub fn merge_from(&mut self, base: &Pack) {
+        for &name in OPTIONAL_FURNITURE_ANIMATIONS {
+            if !self.animations.contains_key(name) {
+                if let Some(sprite) = base.animations.get(name) {
+                    self.animations.insert(name.to_string(), sprite.clone());
+                }
+            }
+        }
+    }
 }
 
 pub fn load_pack(dir: &Path) -> Result<Pack> {
