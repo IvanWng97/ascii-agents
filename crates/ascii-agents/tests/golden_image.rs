@@ -110,6 +110,7 @@ fn render_hash(scene: &SceneState, now: SystemTime, t: &theme::Theme, floor_seed
         floor,
         active_pet: None,
         last_pet_pos: None,
+        floor_pet_kind: None,
         chitchat_state: &mut chitchat_state,
         chitchat_bubbles: Vec::new(),
         coffee_holders: &std::collections::HashSet::new(),

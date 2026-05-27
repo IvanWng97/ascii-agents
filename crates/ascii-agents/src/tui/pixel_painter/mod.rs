@@ -23,6 +23,7 @@ use crate::tui::chitchat::{self, ActiveChitchat, ChitchatBubble};
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point, DESK_W};
 use crate::tui::pathfind::Router;
+use crate::tui::pet::PetKind;
 use crate::tui::pose::{self, Pose};
 
 /// Result of the pure-pixel pass — carries the resolved cat position
@@ -30,7 +31,7 @@ use crate::tui::pose::{self, Pose};
 /// and agent ids that were seen carrying coffee this frame (so the
 /// caller can persist them into `coffee_holders`).
 pub struct PixelPassResult {
-    pub cat_pos: Option<(Point, &'static str)>,
+    pub pet_pos: Option<(Point, &'static str, PetKind)>,
     pub chitchat_bubbles: Vec<ChitchatBubble>,
     /// Agent ids observed in `Walking { carrying_coffee: true }` this
     /// frame. The caller inserts them into the persistent
@@ -55,7 +56,7 @@ use background::{
     dim_floor_overlay, paint_ceiling_pool, paint_clock, paint_corridor_runner,
     paint_floor_and_walls, paint_floor_lamp_halo, paint_neon_panel, paint_shadow, time_of_day_look,
 };
-use drawable::{cat_position, paint_drawable, Drawable, DrawableKind};
+use drawable::{paint_drawable, pet_position, Drawable, DrawableKind};
 use palette::{agent_palette, recolor_frame};
 
 const COFFEE_STEAM_WINDOW_SECS: u64 = 120;
@@ -75,7 +76,8 @@ pub struct PixelCtx<'a> {
     pub history: &'a mut pose::PoseHistory,
     pub theme: &'a crate::tui::theme::Theme,
     pub floor: crate::tui::floor::FloorMeta,
-    pub cat_pet: Option<&'a crate::tui::renderer::PetState>,
+    pub active_pet: Option<&'a crate::tui::renderer::PetState>,
+    pub floor_pet_kind: Option<PetKind>,
     pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<ascii_agents_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<ascii_agents_core::AgentId, SystemTime>,
@@ -127,7 +129,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     let agents: Vec<_> = ctx.scene.agents.values().cloned().collect();
     let buf_w = ctx.layout.buf_w;
     let buf_h = ctx.layout.buf_h;
-    let mut resolved_cat_pos: Option<(Point, &'static str)> = None;
+    let mut resolved_pet_pos: Option<(Point, &'static str, PetKind)> = None;
     let mut new_coffee_carriers: Vec<ascii_agents_core::AgentId> = Vec::new();
 
     // Compute time-of-day once per frame and pass to every paint
@@ -759,19 +761,21 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         .iter()
         .all(|a| matches!(a.state, ActivityState::Idle));
 
-    {
-        let active_pet = ctx.cat_pet.filter(|p| p.is_active(ctx.now));
-        let cat_data = if let Some(pet) = active_pet {
-            // Freeze the cat at the pet position with sit sprite.
+    if let Some(kind) = ctx.floor_pet_kind {
+        let active_pet = ctx
+            .active_pet
+            .filter(|p| p.is_active(ctx.now) && p.kind == kind);
+        let pet_data = if let Some(pet) = active_pet {
             Some((
                 pet.pet_pos,
                 false,
-                "cat_sit",
+                kind.sit_anim(),
                 0usize,
                 Some(pet.elapsed_ms(ctx.now)),
             ))
         } else {
-            cat_position(
+            pet_position(
+                kind,
                 ctx.layout,
                 ctx.pack,
                 ctx.now,
@@ -779,13 +783,14 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 all_idle,
                 ctx.floor.floor_seed,
             )
-            .map(|(pos, flip, anim_name, frame_idx)| (pos, flip, anim_name, frame_idx, None))
+            .map(|(pos, flip, anim, frame)| (pos, flip, anim, frame, None))
         };
-        if let Some((pos, flip, anim_name, frame_idx, pet_elapsed)) = cat_data {
-            resolved_cat_pos = Some((pos, anim_name));
+        if let Some((pos, flip, anim_name, frame_idx, pet_elapsed)) = pet_data {
+            resolved_pet_pos = Some((pos, anim_name, kind));
             drawables.push(Drawable {
                 anchor_y: pos.y + 3,
-                kind: DrawableKind::Cat {
+                kind: DrawableKind::Pet {
+                    kind,
                     pos,
                     flip,
                     anim_name,
@@ -1023,7 +1028,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     );
 
     PixelPassResult {
-        cat_pos: resolved_cat_pos,
+        pet_pos: resolved_pet_pos,
         chitchat_bubbles,
         new_coffee_carriers,
     }

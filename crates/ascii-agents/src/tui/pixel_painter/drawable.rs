@@ -32,6 +32,7 @@ use super::furniture::{
 use super::paint_character_at;
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point, DESK_H, DESK_W};
+use crate::tui::pet::PetKind;
 
 pub(super) struct Drawable<'a> {
     pub(super) anchor_y: u16,
@@ -140,7 +141,8 @@ pub(super) enum DrawableKind<'a> {
     Printer {
         pos: Point,
     },
-    Cat {
+    Pet {
+        kind: PetKind,
         pos: Point,
         flip: bool,
         anim_name: &'static str,
@@ -149,19 +151,20 @@ pub(super) enum DrawableKind<'a> {
     },
 }
 
-/// Cat roaming the whole office like a real cat. Each 40s cycle picks
-/// a destination from all available spots (desks, pantry, meeting sofas,
-/// lounge couch, corridor), walks there from the previous spot, then
-/// sits or sleeps until the next cycle.
-pub(super) fn cat_position(
+/// Pet roaming the whole office. Each 40s cycle picks a destination
+/// from all available spots (desks, pantry, meeting sofas, lounge
+/// couch, corridor), walks there from the previous spot, then sits or
+/// sleeps until the next cycle.
+pub(super) fn pet_position(
+    kind: PetKind,
     layout: &Layout,
     pack: &Pack,
     now: SystemTime,
     idle_desk_indices: &[usize],
     all_idle: bool,
-    cat_seed: u64,
+    pet_seed: u64,
 ) -> Option<(Point, bool, &'static str, usize)> {
-    pack.animation("cat_walk")?;
+    pack.animation(kind.walk_anim())?;
     layout.corridor?;
 
     let elapsed_ms = now
@@ -170,7 +173,7 @@ pub(super) fn cat_position(
         .unwrap_or(0);
 
     const CYCLE_MS: u64 = 40_000;
-    let cycle_n = (elapsed_ms / CYCLE_MS).wrapping_add(cat_seed);
+    let cycle_n = (elapsed_ms / CYCLE_MS).wrapping_add(pet_seed);
     let frac = (elapsed_ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
 
     // Gather all interesting spots the cat can visit.
@@ -252,15 +255,15 @@ pub(super) fn cat_position(
                 y: y as u16,
             },
             flip,
-            "cat_walk",
+            kind.walk_anim(),
             frame_idx,
         ));
     }
 
-    let anim = if all_idle || is_idle_spot {
-        "cat_sleep"
+    let anim = if kind.sleeps_near_idle() && (all_idle || is_idle_spot) {
+        kind.sleep_anim()
     } else {
-        "cat_sit"
+        kind.sit_anim()
     };
     Some((dest, false, anim, 0))
 }
@@ -558,7 +561,8 @@ pub(super) fn paint_drawable(
                 }
             }
         }
-        DrawableKind::Cat {
+        DrawableKind::Pet {
+            kind,
             pos,
             flip,
             anim_name,
@@ -581,7 +585,7 @@ pub(super) fn paint_drawable(
             blit_frame(&final_frame, px, py, buf);
             if let Some(elapsed) = pet_elapsed_ms {
                 paint_pet_hearts(buf, *pos, *elapsed, theme);
-            } else if *anim_name == "cat_sleep" {
+            } else if *anim_name == kind.sleep_anim() {
                 paint_sleep_z(buf, *pos, now, 0xCAFE, theme);
             }
         }

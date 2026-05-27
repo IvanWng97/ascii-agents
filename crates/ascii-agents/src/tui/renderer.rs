@@ -89,6 +89,7 @@ pub struct DrawCtx<'a> {
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a PetState>,
     pub last_pet_pos: Option<(Point, &'static str, PetKind)>,
+    pub floor_pet_kind: Option<PetKind>,
     pub chitchat_state:
         &'a mut std::collections::HashMap<(usize, usize), crate::tui::chitchat::ActiveChitchat>,
     pub chitchat_bubbles: Vec<crate::tui::chitchat::ChitchatBubble>,
@@ -223,12 +224,13 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         history: ctx.history,
         theme,
         floor,
-        cat_pet: ctx.active_pet,
+        active_pet: ctx.active_pet,
+        floor_pet_kind: ctx.floor_pet_kind,
         chitchat_state: ctx.chitchat_state,
         coffee_holders: ctx.coffee_holders,
         coffee_fetched_at: ctx.coffee_fetched_at,
     });
-    ctx.last_pet_pos = pixel_result.cat_pos.map(|(p, a)| (p, a, PetKind::Cat));
+    ctx.last_pet_pos = pixel_result.pet_pos;
     ctx.chitchat_bubbles = pixel_result.chitchat_bubbles;
     ctx.new_coffee_carriers = pixel_result.new_coffee_carriers;
 
