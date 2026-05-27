@@ -37,12 +37,13 @@ run_check() {
     fi
 }
 
-run_check fmt     cargo fmt --all --check &
-run_check machete cargo machete &
-run_check deny    cargo deny check &
+pids=()
+run_check fmt     cargo fmt --all --check & pids+=($!)
+run_check machete cargo machete &           pids+=($!)
+run_check deny    cargo deny check &        pids+=($!)
 
 FAIL=0
-for pid in $(jobs -p); do
+for pid in "${pids[@]}"; do
     wait "$pid" || FAIL=1
 done
 [[ $FAIL -eq 0 ]] || fail 'phase 1 lint checks (see above)'
