@@ -19,15 +19,35 @@ fi
 step() { printf '\033[36m[preflight] %s\033[0m\n' "$*" >&2; }
 fail() { printf '\033[31m[preflight] FAILED: %s\033[0m\n' "$*" >&2; exit 1; }
 
-step 'cargo fmt --all --check'
-# shellcheck disable=SC2016  # backticks here are rendered as literal text, not shell exec
-cargo fmt --all --check || fail 'rustfmt: run `cargo fmt --all` and recommit'
+# --- Phase 1: fast, independent lint checks (parallel) --------------------
 
-step 'cargo machete'
-cargo machete || fail 'unused dependencies: remove them and recommit'
+step 'phase 1: fmt + machete + deny (parallel)'
 
-step 'cargo deny check'
-cargo deny check 2>&1 || fail 'cargo-deny: fix the advisory/license/ban issues above'
+TMPDIR_PF="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_PF"' EXIT
+
+run_check() {
+    local name="$1"; shift
+    if "$@" > "$TMPDIR_PF/$name.log" 2>&1; then
+        printf '\033[32m  ✓ %s\033[0m\n' "$name" >&2
+    else
+        printf '\033[31m  ✗ %s\033[0m\n' "$name" >&2
+        cat "$TMPDIR_PF/$name.log" >&2
+        return 1
+    fi
+}
+
+run_check fmt     cargo fmt --all --check &
+run_check machete cargo machete &
+run_check deny    cargo deny check &
+
+FAIL=0
+for pid in $(jobs -p); do
+    wait "$pid" || FAIL=1
+done
+[[ $FAIL -eq 0 ]] || fail 'phase 1 lint checks (see above)'
+
+# --- Phase 2: clippy (needs compile, runs before tests) -------------------
 
 step 'cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings'
 cargo clippy --workspace --all-targets \
@@ -35,9 +55,19 @@ cargo clippy --workspace --all-targets \
     -- -D warnings \
     || fail 'clippy: fix the warnings above and recommit'
 
-step 'cargo test --workspace --features ascii-agents-core/test-renderer'
-cargo test --workspace --features ascii-agents-core/test-renderer \
-    || fail 'tests: fix the failing tests above and recommit'
+# --- Phase 3: tests (parallel via nextest if available) -------------------
+
+if command -v cargo-nextest &>/dev/null; then
+    step 'cargo nextest run --workspace --features ascii-agents-core/test-renderer'
+    cargo nextest run --workspace \
+        --features ascii-agents-core/test-renderer \
+        || fail 'tests: fix the failing tests above and recommit'
+else
+    step 'cargo test --workspace --features ascii-agents-core/test-renderer'
+    cargo test --workspace \
+        --features ascii-agents-core/test-renderer \
+        || fail 'tests: fix the failing tests above and recommit'
+fi
 
 # Stamp so pre-push can skip redundant re-run (touch-based, not SHA-based,
 # because during pre-commit the final commit SHA doesn't exist yet).
