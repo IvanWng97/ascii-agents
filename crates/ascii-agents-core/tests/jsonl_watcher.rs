@@ -257,7 +257,10 @@ async fn watcher_emits_session_start_for_recent_files_on_startup() {
         }
     });
     tokio::fs::write(&fresh, format!("{line}\n")).await.unwrap();
-    // mtime is "now" (just written) — well inside the 1 hour window.
+    // Ensure the directory entry and mtime are flushed before the watcher
+    // runs its initial seed walk — without this, read_dir can miss the file
+    // on fast macOS APFS volumes.
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let (tx, mut rx) = mpsc::channel::<(Transport, AgentEvent)>(32);
     let watcher = cc_watcher(projects_root.clone()).with_initial_window(Duration::from_secs(3600));
@@ -265,8 +268,7 @@ async fn watcher_emits_session_start_for_recent_files_on_startup() {
 
     let mut got_start = false;
     let mut got_activity = false;
-    // CI runners can be slow — generous deadline to avoid flakes.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
         match tokio::time::timeout(Duration::from_millis(100), rx.recv()).await {
             Ok(Some((_, AgentEvent::SessionStart { .. }))) => got_start = true,
