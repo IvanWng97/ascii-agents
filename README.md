@@ -186,7 +186,7 @@ Three Rust crates:
 | `ascii-agents-hook` shim | `pixtuoid-hook` |
 | `~/.config/ascii-agents/` | `~/.config/pixtuoid/` |
 | `~/.cache/ascii-agents/` | `~/.cache/pixtuoid/` |
-| `/tmp/ascii-agents.sock` | `/tmp/pixtuoid.sock` |
+| `/tmp/ascii-agents-{uid}.sock` | `/tmp/pixtuoid-{uid}.sock` |
 | `_ascii_agents` hook key in `settings.json` | `_pixtuoid` |
 
 ### Upgrade steps
