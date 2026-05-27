@@ -280,6 +280,9 @@ pub const OPTIONAL_FURNITURE_ANIMATIONS: &[&str] = &[
     "cat_walk",
     "cat_sit",
     "cat_sleep",
+    "dog_walk",
+    "dog_sit",
+    "dog_sleep",
     "meeting_sofa",
     "meeting_screen",
     "pantry",
@@ -300,6 +303,7 @@ const MULTI_FRAME_REQUIREMENTS: &[(&str, usize)] = &[
     ("walking_back", 2),
     ("door", 3),
     ("cat_walk", 2),
+    ("dog_walk", 2),
 ];
 
 #[derive(Debug, Default)]

@@ -38,6 +38,8 @@ version = "1"
 "b" = "#3a5a9e"   # book spine blue
 "y" = "#c8a64c"   # book spine yellow / paperback
 "q" = "#1a1a1a"   # marker / whiteboard scribble
+"x" = "#c8a060"   # dog tan fur
+"z" = "#7a5030"   # dog dark brown (ears, tail tip, nose)
 
 [animations.seated]
 frames   = ["seated.sprite"]
@@ -122,6 +124,18 @@ frame_ms = 600
 
 [animations.cat_sleep]
 frames   = ["cat_sleep.sprite"]
+frame_ms = 600
+
+[animations.dog_walk]
+frames   = ["dog_walk_0.sprite", "dog_walk_1.sprite"]
+frame_ms = 220
+
+[animations.dog_sit]
+frames   = ["dog_sit.sprite"]
+frame_ms = 600
+
+[animations.dog_sleep]
+frames   = ["dog_sleep.sprite"]
 frame_ms = 600
 
 [animations.meeting_sofa]

@@ -1,0 +1,8 @@
+# 8x6 dog walking (frame 1). Alternate legs, tail mid.
+@frame 0
+. z x x x . . .
+. x x x x . z .
+. x e x x x x z
+. x x x x x x .
+. x . . x . . .
+. . . . . . . .
