@@ -26,7 +26,7 @@ use crate::tui::pathfind::Router;
 use crate::tui::pixel_painter::{render_to_rgb_buffer, PixelCtx};
 use crate::tui::renderer::{draw_scene, flush_buffer_to_term_at_offset, CatPetState, DrawCtx};
 
-pub struct TuiRenderer<B: Backend> {
+pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     pub terminal: Terminal<B>,
     floor_bufs: Vec<RgbBuffer>,
     floor_ctxs: Vec<FloorCtx>,
@@ -49,7 +49,7 @@ pub struct TuiRenderer<B: Backend> {
     coffee_fetched_at: std::collections::HashMap<ascii_agents_core::AgentId, SystemTime>,
 }
 
-impl<B: Backend> TuiRenderer<B> {
+impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
     pub fn new(terminal: Terminal<B>, theme: &'static crate::tui::theme::Theme) -> Self {
         Self {
             terminal,
@@ -158,7 +158,7 @@ impl<B: Backend> TuiRenderer<B> {
     }
 }
 
-impl<B: Backend> Renderer for TuiRenderer<B> {
+impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
     fn render(&mut self, scene: &SceneState, pack: &Pack, now: SystemTime) -> Result<()> {
         // Auto-expire cat pet state.
         if self.cat_pet.as_ref().is_some_and(|p| !p.is_active(now)) {

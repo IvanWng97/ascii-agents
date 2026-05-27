@@ -41,8 +41,8 @@ anyhow             = "1"
 async-trait        = "0.1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-notify             = "6"
-ratatui            = "0.28"
-crossterm          = "0.28"
+notify             = "8"
+ratatui            = "0.30"
+crossterm          = "0.29"
 clap               = { version = "4", features = ["derive"] }
 fs2                = "0.4"

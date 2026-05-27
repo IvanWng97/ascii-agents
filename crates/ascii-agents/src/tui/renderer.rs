@@ -161,7 +161,7 @@ pub fn teardown_terminal(term: &mut Term) -> Result<()> {
 //   * `flush_to_terminal` -- ratatui half-block compression + label overlay
 //     + bulletin notice + footer. Terminal-specific, runs inside
 //     `term.draw`.
-pub fn draw_scene<B: Backend>(
+pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
     term: &mut Terminal<B>,
     scene: &SceneState,
     pack: &Pack,
