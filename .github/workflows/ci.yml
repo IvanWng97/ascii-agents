@@ -117,7 +117,7 @@ jobs:
         run: ./target/release/examples/snapshot /tmp/smoke-snapshot.png
       - name: Upload snapshot artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-snapshot
           path: /tmp/smoke-snapshot.png
