@@ -132,10 +132,10 @@ jobs:
           fi
 
       - name: Build deb (pixtuoid)
-        run: cargo deb -p pixtuoid --no-build --target ${{ matrix.target }}
+        run: cargo deb -p pixtuoid --no-build --no-strip --target ${{ matrix.target }}
 
       - name: Build deb (pixtuoid-hook)
-        run: cargo deb -p pixtuoid-hook --no-build --target ${{ matrix.target }}
+        run: cargo deb -p pixtuoid-hook --no-build --no-strip --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v7
         with:
