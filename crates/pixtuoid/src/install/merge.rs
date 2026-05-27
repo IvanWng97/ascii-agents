@@ -1,7 +1,6 @@
 use serde_json::{json, Map, Value};
 
 pub const SENTINEL_KEY: &str = "_pixtuoid";
-pub const LEGACY_SENTINEL_KEY: &str = "_ascii_agents";
 pub const EVENTS: &[&str] = &[
     "SessionStart",
     "PreToolUse",
@@ -36,10 +35,7 @@ pub fn merge_install(doc: Value, hook_command: &str) -> Value {
                 list.as_array_mut().expect("just stored Value::Array")
             }
         };
-        arr.retain(|entry| {
-            entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true)
-                && entry.get(LEGACY_SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true)
-        });
+        arr.retain(|entry| entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true));
         arr.push(json!({
             SENTINEL_KEY: true,
             "matcher": ".*",
@@ -62,10 +58,7 @@ pub fn merge_uninstall(mut doc: Value) -> Value {
     };
     for (_ev, list) in hooks_obj.iter_mut() {
         if let Some(arr) = list.as_array_mut() {
-            arr.retain(|entry| {
-                entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true)
-                    && entry.get(LEGACY_SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true)
-            });
+            arr.retain(|entry| entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true));
         }
     }
     let to_remove: Vec<String> = hooks_obj

@@ -84,10 +84,6 @@ pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
     if !target.exists() {
         return Ok(None);
     }
-    let legacy_bak = target.with_extension("json.ascii-agents.bak");
-    if legacy_bak.exists() {
-        return Ok(Some(legacy_bak));
-    }
     let bak = target.with_extension("json.pixtuoid.bak");
     if bak.exists() {
         return Ok(Some(bak));
