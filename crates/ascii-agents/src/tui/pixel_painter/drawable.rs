@@ -260,7 +260,7 @@ pub(super) fn pet_position(
         ));
     }
 
-    let anim = if kind.sleeps_near_idle() && (all_idle || is_idle_spot) {
+    let anim = if all_idle || (kind.sleeps_near_idle() && is_idle_spot) {
         kind.sleep_anim()
     } else {
         kind.sit_anim()
