@@ -1,0 +1,41 @@
+---
+source: crates/pixtuoid/tests/layout_golden.rs
+expression: l.waypoints
+---
+[
+    Waypoint {
+        pos: Point {
+            x: 95,
+            y: 51,
+        },
+        kind: Couch,
+    },
+    Waypoint {
+        pos: Point {
+            x: 75,
+            y: 105,
+        },
+        kind: PhoneBooth,
+    },
+    Waypoint {
+        pos: Point {
+            x: 139,
+            y: 105,
+        },
+        kind: StandingDesk,
+    },
+    Waypoint {
+        pos: Point {
+            x: 48,
+            y: 152,
+        },
+        kind: VendingMachine,
+    },
+    Waypoint {
+        pos: Point {
+            x: 182,
+            y: 151,
+        },
+        kind: Printer,
+    },
+]

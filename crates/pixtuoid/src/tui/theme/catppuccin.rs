@@ -1,0 +1,102 @@
+use pixtuoid_core::sprite::Rgb;
+
+use super::*;
+
+/// Catppuccin Mocha — warm pastels on dark chocolate.
+/// Based on https://github.com/catppuccin/catppuccin
+/// Base: #1e1e2e, Surface0: #313244, Overlay0: #6c7086
+/// Rosewater: #f5e0dc, Flamingo: #f2cdcd, Pink: #f5c2e7
+/// Mauve: #cba6f7, Red: #f38ba8, Maroon: #eba0ac
+/// Peach: #fab387, Yellow: #f9e2af, Green: #a6e3a1
+/// Teal: #94e2d5, Sky: #89dceb, Sapphire: #74c7ec
+/// Blue: #89b4fa, Lavender: #b4befe
+pub static CATPPUCCIN: Theme = Theme {
+    name: "catppuccin",
+    surface: SurfaceColors {
+        wall: Rgb(30, 30, 46),
+        wall_trim: Rgb(69, 71, 90),
+        baseboard: Rgb(24, 24, 37),
+        carpet_base: Rgb(49, 50, 68),
+        carpet_light: Rgb(59, 60, 80),
+        carpet_dark: Rgb(39, 39, 55),
+        window_frame: Rgb(24, 24, 37),
+        bg_fallback: Rgb(30, 30, 46),
+    },
+    office: OfficeColors {
+        room_wall_body: Rgb(49, 50, 68),
+        room_wall_trim_light: Rgb(69, 71, 90),
+        room_wall_trim_dark: Rgb(24, 24, 37),
+        cubicle_divider: Rgb(69, 71, 90),
+        runner_base: Rgb(55, 50, 65),
+        runner_stripe: Rgb(65, 58, 78),
+        runner_edge: Rgb(39, 36, 50),
+        neon_panel_bg: Rgb(24, 24, 37),
+        neon_frame_base: Rgb(137, 180, 250),
+        building_dark: Rgb(20, 20, 32),
+        building_light: Rgb(70, 72, 95),
+        city_lit_windows: [Rgb(249, 226, 175), Rgb(245, 194, 231), Rgb(148, 226, 213)],
+        city_dark_window: Rgb(24, 24, 37),
+        clock_rim: Rgb(180, 190, 254),
+        clock_face: Rgb(205, 214, 244),
+        clock_hand: Rgb(30, 30, 46),
+        shadow: Rgb(17, 17, 27),
+    },
+    lighting: LightingColors {
+        day_sky_a: Rgb(110, 115, 150),
+        day_sky_b: Rgb(135, 140, 175),
+        night_sky_a: Rgb(17, 17, 27),
+        night_sky_b: Rgb(24, 24, 37),
+        twilight_a: Rgb(250, 179, 135),
+        twilight_b: Rgb(245, 194, 231),
+        sun_spill: Rgb(249, 226, 175),
+        ceiling_pool: Rgb(205, 214, 244),
+        floor_lamp_halo: Rgb(249, 226, 175),
+        night_tint: Rgb(17, 17, 27),
+    },
+    furniture: FurnitureColors {
+        wood_top: Rgb(69, 71, 90),
+        wood_trim: Rgb(49, 50, 68),
+        rug_field: Rgb(60, 45, 65),
+        rug_trim: Rgb(42, 32, 48),
+        rug_accent: Rgb(203, 166, 247),
+        magazine: Rgb(137, 180, 250),
+        magazine_trim: Rgb(68, 90, 125),
+        chair_seat: Rgb(54, 55, 72),
+        chair_trim: Rgb(39, 39, 55),
+        coffee_cup: Rgb(127, 132, 156),
+        coffee_cup_shadow: Rgb(108, 112, 134),
+        desk_plant_light: Rgb(166, 227, 161),
+        desk_plant_dark: Rgb(116, 190, 110),
+        desk_plant_pot: Rgb(69, 62, 80),
+        photo_frame: Rgb(69, 71, 90),
+        photo_bg: Rgb(245, 194, 231),
+    },
+    effects: EffectColors {
+        monitor_frame_lit: Rgb(69, 71, 90),
+        sleep_z: Rgb(137, 220, 235),
+        coffee_steam: Rgb(203, 166, 247),
+        walking_dust: Rgb(59, 60, 80),
+        waiting_bubble: Rgb(249, 226, 175),
+    },
+    tool_glow: ToolGlowColors {
+        edit: Rgb(137, 180, 250),
+        read: Rgb(116, 199, 236),
+        bash: Rgb(250, 179, 135),
+        agent: Rgb(203, 166, 247),
+        grep: Rgb(166, 227, 161),
+        default: Rgb(148, 226, 213),
+    },
+    ui: UiColors {
+        label_active: Rgb(166, 227, 161),
+        label_waiting: Rgb(249, 226, 175),
+        label_idle: Rgb(108, 112, 134),
+        label_exiting: Rgb(69, 71, 90),
+        tooltip_bg: Rgb(24, 24, 37),
+        tooltip_title: Rgb(205, 214, 244),
+        tooltip_text: Rgb(166, 173, 200),
+        tooltip_dim: Rgb(108, 112, 134),
+        neon_brand: Rgb(137, 180, 250),
+        neon_star: Rgb(245, 194, 231),
+        neon_ticker: Rgb(137, 220, 235),
+    },
+};

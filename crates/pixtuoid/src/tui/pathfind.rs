@@ -1,0 +1,643 @@
+//! Pathfinding façade — `Router` trait + `AStarRouter` impl.
+//!
+//! `Router` is the abstraction the renderer codes against: give it a static
+//! `WalkableMask` and a per-frame `OccupancyOverlay`, ask for a polyline
+//! from A to B, get back the route. The trait stays small so future impls
+//! (Theta*, HPA*, navmesh) can drop in without touching `pose.rs` or
+//! `renderer.rs`.
+//!
+//! `AStarRouter` is the concrete impl: A* on a coarsened 4×4 cell grid
+//! with a permissive cell-walkability threshold (≥12/16 px walkable).
+//! Memoizes results in a per-(from, to) cache; auto-invalidates when
+//! the overlay signature changes so per-frame agent movement still routes
+//! around live agents.
+
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
+
+use pixtuoid_core::walkable::{OccupancyOverlay, WalkableMask};
+
+use crate::tui::layout::{Bounds, Point};
+
+/// Cell size in pixels. Smaller = more accurate paths, more work per query.
+/// 4 px gives a ~40×60 grid on a typical 160×240 buffer — A* finishes in
+/// well under 1 ms uncached.
+pub const CELL_SIZE: u16 = 4;
+/// Cell-walkable threshold (out of CELL_SIZE^2 = 16 pixels). At 8 (50%) the
+/// coarsened grid can squeeze through 2-pixel-wide corridors, which is
+/// what the meeting-room interior needs after furniture obstacle padding.
+/// Tighter (e.g. 12 = 75%) made the meeting room unreachable; looser (e.g.
+/// 4 = 25%) lets paths graze furniture edges. 50% is the sweet spot.
+const CELL_WALKABLE_MIN: u16 = 8;
+
+/// Abstract pathfinder — implementations route from `from` to `to` over
+/// the supplied mask + overlay, returning a polyline (first = `from`,
+/// last = `to`, intermediate = corners). Renderer + pose layer use this
+/// trait so the algorithm can be swapped without touching them.
+pub trait Router {
+    /// Compute or look up the route. The returned slice is owned by the
+    /// router (cache-backed); copy if you need to outlive the next call.
+    fn route(
+        &mut self,
+        mask: &WalkableMask,
+        overlay: &OccupancyOverlay,
+        from: Point,
+        to: Point,
+    ) -> Vec<Point>;
+
+    /// Drop any cached state — call when the static mask is replaced
+    /// (terminal resize, layout shape change).
+    fn invalidate(&mut self);
+
+    /// Optional: bias the cost function toward a preferred zone (e.g. the
+    /// office corridor). Cells inside `zone` get a small cost discount so
+    /// paths naturally hug the hallway instead of cutting diagonally
+    /// across the cubicle floor. Default impl is a no-op so a Router
+    /// that doesn't care about zones can skip it.
+    fn set_preferred_zone(&mut self, zone: Option<Bounds>) {
+        let _ = zone;
+    }
+}
+
+/// A* router with internal path cache. Cache invalidates on overlay
+/// signature change so per-frame occupancy movement (live agents) still
+/// produces correct routes.
+#[derive(Debug, Default, Clone)]
+pub struct AStarRouter {
+    paths: HashMap<(Point, Point), Vec<Point>>,
+    last_overlay_sig: u64,
+    /// Cells inside this zone get a cost discount during A*. When `None`,
+    /// every cell has uniform cost. Changing this drops the cached paths
+    /// (different zone = different optimal route).
+    preferred_zone: Option<Bounds>,
+}
+
+impl AStarRouter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> usize {
+        self.paths.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+}
+
+impl Router for AStarRouter {
+    fn route(
+        &mut self,
+        mask: &WalkableMask,
+        overlay: &OccupancyOverlay,
+        from: Point,
+        to: Point,
+    ) -> Vec<Point> {
+        let overlay_sig = overlay.signature();
+        // Per-path validity (replaces the old global cache wipe): when the
+        // overlay changes, check each cached path to see if it now crosses
+        // an obstacle. Only invalidate entries that actually conflict —
+        // paths in unaffected corridors stay cached.
+        if overlay_sig != self.last_overlay_sig {
+            self.paths.retain(|_, path| path_clear_under(path, overlay));
+            self.last_overlay_sig = overlay_sig;
+        }
+        if let Some(p) = self.paths.get(&(from, to)) {
+            return p.clone();
+        }
+        let path = find_path(mask, overlay, self.preferred_zone, from, to)
+            .unwrap_or_else(|| vec![from, to]);
+        self.paths.insert((from, to), path.clone());
+        path
+    }
+
+    fn invalidate(&mut self) {
+        self.paths.clear();
+    }
+
+    fn set_preferred_zone(&mut self, zone: Option<Bounds>) {
+        // Different zone produces different optimal paths — invalidate the
+        // cache. Cheap to do unconditionally; the layout's corridor only
+        // changes on terminal resize so this fires rarely.
+        if self.preferred_zone != zone {
+            self.paths.clear();
+            self.preferred_zone = zone;
+        }
+    }
+}
+
+/// Is `path` still walkable under the current `overlay`? Samples each
+/// segment at a small stride and checks whether any sample falls inside
+/// an overlay rect. Faster than re-running A* per path; tolerates a tiny
+/// overshoot (a 1-px clip into an obstacle won't invalidate, but a
+/// real intersection at any corner will).
+fn path_clear_under(path: &[Point], overlay: &OccupancyOverlay) -> bool {
+    if overlay.is_empty() {
+        return true;
+    }
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let dx = b.x as i32 - a.x as i32;
+        let dy = b.y as i32 - a.y as i32;
+        let steps = dx.abs().max(dy.abs()).max(1) / 4;
+        let n = steps.max(2);
+        for i in 0..=n {
+            let x = (a.x as i32 + dx * i / n).max(0) as u16;
+            let y = (a.y as i32 + dy * i / n).max(0) as u16;
+            if overlay.blocks(x, y) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[derive(Eq, PartialEq)]
+struct Node {
+    f: u32,
+    g: u32,
+    cell: (u16, u16),
+}
+
+impl Ord for Node {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.f.cmp(&self.f).then(other.g.cmp(&self.g))
+    }
+}
+
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+const NEIGHBORS_8: [(i32, i32); 8] = [
+    (1, 0),
+    (-1, 0),
+    (0, 1),
+    (0, -1),
+    (1, 1),
+    (1, -1),
+    (-1, 1),
+    (-1, -1),
+];
+
+fn heuristic(a: (u16, u16), b: (u16, u16)) -> u32 {
+    let dx = (a.0 as i32 - b.0 as i32).unsigned_abs();
+    let dy = (a.1 as i32 - b.1 as i32).unsigned_abs();
+    14 * dx.min(dy) + 10 * (dx.max(dy) - dx.min(dy))
+}
+
+/// Is the center of cell `(cx, cy)` inside `zone`? Used by the preferred-
+/// zone discount: cells whose center lands in the corridor get a cheaper
+/// step cost so A* hugs the hallway.
+fn cell_in_zone(zone: Option<Bounds>, cx: u16, cy: u16) -> bool {
+    let Some(z) = zone else {
+        return false;
+    };
+    let cp = cell_center(cx, cy);
+    cp.x >= z.x && cp.x < z.x + z.width && cp.y >= z.y && cp.y < z.y + z.height
+}
+
+fn cell_walkable(mask: &WalkableMask, overlay: &OccupancyOverlay, cx: u16, cy: u16) -> bool {
+    let px_start = cx.saturating_mul(CELL_SIZE);
+    let py_start = cy.saturating_mul(CELL_SIZE);
+    let mut walk_count = 0u16;
+    for dy in 0..CELL_SIZE {
+        for dx in 0..CELL_SIZE {
+            let px = px_start + dx;
+            let py = py_start + dy;
+            if mask.is_walkable(px, py) && !overlay.blocks(px, py) {
+                walk_count += 1;
+            }
+        }
+    }
+    walk_count >= CELL_WALKABLE_MIN
+}
+
+fn cell_of(p: Point) -> (u16, u16) {
+    (p.x / CELL_SIZE, p.y / CELL_SIZE)
+}
+
+fn cell_center(cx: u16, cy: u16) -> Point {
+    Point {
+        x: cx * CELL_SIZE + CELL_SIZE / 2,
+        y: cy * CELL_SIZE + CELL_SIZE / 2,
+    }
+}
+
+const MAX_SNAP_RADIUS: u16 = 12;
+
+fn snap_to_walkable(
+    mask: &WalkableMask,
+    overlay: &OccupancyOverlay,
+    cell: (u16, u16),
+    cell_w: u16,
+    cell_h: u16,
+) -> Option<(u16, u16)> {
+    if cell.0 < cell_w && cell.1 < cell_h && cell_walkable(mask, overlay, cell.0, cell.1) {
+        return Some(cell);
+    }
+    for r in 1..=MAX_SNAP_RADIUS {
+        let r_i = r as i32;
+        for dy in -r_i..=r_i {
+            for dx in -r_i..=r_i {
+                if dx.abs() != r_i && dy.abs() != r_i {
+                    continue;
+                }
+                let nx = cell.0 as i32 + dx;
+                let ny = cell.1 as i32 + dy;
+                if nx < 0 || ny < 0 {
+                    continue;
+                }
+                let (nx, ny) = (nx as u16, ny as u16);
+                if nx >= cell_w || ny >= cell_h {
+                    continue;
+                }
+                if cell_walkable(mask, overlay, nx, ny) {
+                    return Some((nx, ny));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Run A* on the layout's walkability mask + per-frame occupancy. When
+/// `preferred` is `Some(rect)`, cells whose center falls inside the rect
+/// get a 30% step-cost discount — paths naturally hug that zone (e.g.
+/// the office corridor) when an off-zone diagonal cut would otherwise
+/// be slightly shorter.
+pub fn find_path(
+    mask: &WalkableMask,
+    overlay: &OccupancyOverlay,
+    preferred: Option<Bounds>,
+    from: Point,
+    to: Point,
+) -> Option<Vec<Point>> {
+    let cell_w = mask.width / CELL_SIZE;
+    let cell_h = mask.height / CELL_SIZE;
+    if cell_w == 0 || cell_h == 0 {
+        return Some(vec![from, to]);
+    }
+
+    let start = snap_to_walkable(mask, overlay, cell_of(from), cell_w, cell_h)?;
+    let goal = snap_to_walkable(mask, overlay, cell_of(to), cell_w, cell_h)?;
+
+    if start == goal {
+        return Some(vec![from, to]);
+    }
+
+    let mut open: BinaryHeap<Node> = BinaryHeap::new();
+    let mut came_from: HashMap<(u16, u16), (u16, u16)> = HashMap::new();
+    let mut g_score: HashMap<(u16, u16), u32> = HashMap::new();
+    g_score.insert(start, 0);
+    open.push(Node {
+        f: heuristic(start, goal),
+        g: 0,
+        cell: start,
+    });
+
+    while let Some(current) = open.pop() {
+        if current.cell == goal {
+            return Some(reconstruct(&came_from, goal, from, to));
+        }
+        if current.g > *g_score.get(&current.cell).unwrap_or(&u32::MAX) {
+            continue;
+        }
+        for (dx, dy) in NEIGHBORS_8.iter() {
+            let nx = current.cell.0 as i32 + dx;
+            let ny = current.cell.1 as i32 + dy;
+            if nx < 0 || ny < 0 {
+                continue;
+            }
+            let (nx, ny) = (nx as u16, ny as u16);
+            if nx >= cell_w || ny >= cell_h {
+                continue;
+            }
+            if !cell_walkable(mask, overlay, nx, ny) {
+                continue;
+            }
+            let base_step = if dx.abs() + dy.abs() == 2 { 14 } else { 10 };
+            let step = if cell_in_zone(preferred, nx, ny) {
+                base_step * 7 / 10
+            } else {
+                base_step
+            };
+            let tentative = current.g + step;
+            if tentative < *g_score.get(&(nx, ny)).unwrap_or(&u32::MAX) {
+                came_from.insert((nx, ny), current.cell);
+                g_score.insert((nx, ny), tentative);
+                open.push(Node {
+                    f: tentative + heuristic((nx, ny), goal),
+                    g: tentative,
+                    cell: (nx, ny),
+                });
+            }
+        }
+    }
+    None
+}
+
+fn reconstruct(
+    came_from: &HashMap<(u16, u16), (u16, u16)>,
+    end: (u16, u16),
+    from: Point,
+    to: Point,
+) -> Vec<Point> {
+    let mut cells = vec![end];
+    let mut cur = end;
+    while let Some(&prev) = came_from.get(&cur) {
+        cells.push(prev);
+        cur = prev;
+    }
+    cells.reverse();
+    let mut pts: Vec<Point> = cells.iter().map(|&(cx, cy)| cell_center(cx, cy)).collect();
+    if pts.is_empty() {
+        return vec![from, to];
+    }
+    pts[0] = from;
+    let last = pts.len() - 1;
+    pts[last] = to;
+    simplify_polyline(pts)
+}
+
+fn simplify_polyline(pts: Vec<Point>) -> Vec<Point> {
+    if pts.len() < 3 {
+        return pts;
+    }
+    let mut out: Vec<Point> = Vec::with_capacity(pts.len());
+    out.push(pts[0]);
+    for i in 1..pts.len() - 1 {
+        let prev = *out.last().expect("just pushed start point");
+        let here = pts[i];
+        let next = pts[i + 1];
+        let dx_in = here.x as i32 - prev.x as i32;
+        let dy_in = here.y as i32 - prev.y as i32;
+        let dx_out = next.x as i32 - here.x as i32;
+        let dy_out = next.y as i32 - here.y as i32;
+        if dx_in * dy_out != dy_in * dx_out {
+            out.push(here);
+        }
+    }
+    out.push(*pts.last().expect("non-empty"));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::layout::Layout;
+
+    fn make_layout() -> Layout {
+        Layout::compute(160, 200, 4).expect("layout fits")
+    }
+
+    #[test]
+    fn straight_line_when_unobstructed() {
+        let l = make_layout();
+        let overlay = OccupancyOverlay::new();
+        let from = Point {
+            x: l.corridor.unwrap().x + 10,
+            y: l.corridor.unwrap().y + 2,
+        };
+        let to = Point {
+            x: l.corridor.unwrap().x + 60,
+            y: l.corridor.unwrap().y + 2,
+        };
+        let path = find_path(&l.walkable, &overlay, None, from, to).expect("path");
+        assert!(path.len() >= 2);
+        assert_eq!(path[0], from);
+        assert_eq!(*path.last().unwrap(), to);
+    }
+
+    #[test]
+    fn simplify_collapses_collinear() {
+        let pts = vec![
+            Point { x: 0, y: 0 },
+            Point { x: 4, y: 0 },
+            Point { x: 8, y: 0 },
+            Point { x: 12, y: 0 },
+            Point { x: 12, y: 4 },
+        ];
+        let s = simplify_polyline(pts);
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn routes_around_meeting_room_wall() {
+        let l = make_layout();
+        let overlay = OccupancyOverlay::new();
+        let from = l.home_desks[0];
+        let pantry = l
+            .waypoints
+            .iter()
+            .find(|w| w.kind == crate::tui::layout::WaypointKind::Pantry)
+            .expect("pantry wp")
+            .pos;
+        let path = find_path(&l.walkable, &overlay, None, from, pantry).expect("path");
+        assert!(path.len() >= 3, "expected routed path, got {path:?}");
+    }
+
+    #[test]
+    fn router_caches_until_overlay_changes() {
+        let l = make_layout();
+        let mut router = AStarRouter::new();
+        let mut overlay = OccupancyOverlay::new();
+        let from = Point { x: 30, y: 80 };
+        let to = Point { x: 30, y: 120 };
+        let _ = router.route(&l.walkable, &overlay, from, to);
+        assert_eq!(router.len(), 1);
+        let _ = router.route(&l.walkable, &overlay, from, to);
+        assert_eq!(router.len(), 1, "should hit cache");
+
+        // Push an occupancy rect — cache should drop.
+        overlay.add(100, 100, 8, 8);
+        let _ = router.route(&l.walkable, &overlay, from, to);
+        assert_eq!(router.len(), 1, "cache rebuilt after overlay change");
+    }
+
+    #[test]
+    fn routes_around_dynamic_obstacle() {
+        // Synthetic open mask isolates the routing behaviour from the
+        // production layout's obstacle clutter.
+        let mask = pixtuoid_core::walkable::WalkableMask::new_open(100, 100);
+        let mut overlay = OccupancyOverlay::new();
+        let from = Point { x: 10, y: 50 };
+        let to = Point { x: 90, y: 50 };
+        let baseline = find_path(&mask, &overlay, None, from, to).expect("baseline");
+        assert_eq!(baseline.len(), 2, "open mask should yield straight line");
+
+        overlay.add(40, 40, 20, 20);
+        let detour = find_path(&mask, &overlay, None, from, to).expect("detour");
+        assert!(
+            detour.len() > 2,
+            "detour must add at least one corner around the dynamic block, got {detour:?}"
+        );
+    }
+
+    #[test]
+    fn path_clear_under_empty_overlay_always_true() {
+        let overlay = OccupancyOverlay::new();
+        let path = vec![Point { x: 0, y: 0 }, Point { x: 100, y: 100 }];
+        assert!(path_clear_under(&path, &overlay));
+    }
+
+    #[test]
+    fn path_clear_under_blocked_returns_false() {
+        let mut overlay = OccupancyOverlay::new();
+        overlay.add(50, 50, 10, 10);
+        let path = vec![Point { x: 0, y: 0 }, Point { x: 100, y: 100 }];
+        assert!(!path_clear_under(&path, &overlay));
+    }
+
+    #[test]
+    fn path_clear_under_misses_obstacle_returns_true() {
+        let mut overlay = OccupancyOverlay::new();
+        overlay.add(50, 50, 10, 10);
+        let path = vec![Point { x: 0, y: 0 }, Point { x: 40, y: 0 }];
+        assert!(path_clear_under(&path, &overlay));
+    }
+
+    #[test]
+    fn snap_to_walkable_returns_cell_when_already_walkable() {
+        let l = make_layout();
+        let overlay = OccupancyOverlay::new();
+        let corridor = l.corridor.unwrap();
+        let cell_w = l.buf_w / 4;
+        let cell_h = l.buf_h / 4;
+        let cx = (corridor.x + corridor.width / 2) / 4;
+        let cy = (corridor.y + corridor.height / 2) / 4;
+        let result = snap_to_walkable(&l.walkable, &overlay, (cx, cy), cell_w, cell_h);
+        assert_eq!(result, Some((cx, cy)));
+    }
+
+    #[test]
+    fn snap_to_walkable_finds_nearby_cell_when_blocked() {
+        let l = make_layout();
+        let cell_w = l.buf_w / 4;
+        let cell_h = l.buf_h / 4;
+        let wall_cell_y = l.top_margin / CELL_SIZE;
+        let result = snap_to_walkable(
+            &l.walkable,
+            &OccupancyOverlay::new(),
+            (0, wall_cell_y),
+            cell_w,
+            cell_h,
+        );
+        assert!(result.is_some(), "should snap to a nearby walkable cell");
+    }
+
+    #[test]
+    fn heuristic_zero_for_same_cell() {
+        assert_eq!(heuristic((5, 5), (5, 5)), 0);
+    }
+
+    #[test]
+    fn heuristic_straight_horizontal() {
+        assert_eq!(heuristic((0, 0), (3, 0)), 30);
+    }
+
+    #[test]
+    fn heuristic_diagonal_uses_octile() {
+        let h = heuristic((0, 0), (2, 2));
+        assert_eq!(h, 28);
+    }
+
+    #[test]
+    fn cell_of_maps_pixel_to_cell() {
+        assert_eq!(cell_of(Point { x: 0, y: 0 }), (0, 0));
+        assert_eq!(cell_of(Point { x: 7, y: 11 }), (1, 2));
+        assert_eq!(cell_of(Point { x: 4, y: 4 }), (1, 1));
+    }
+
+    #[test]
+    fn cell_center_is_midpoint_of_cell() {
+        let c = cell_center(0, 0);
+        assert_eq!(c, Point { x: 2, y: 2 });
+        let c = cell_center(3, 5);
+        assert_eq!(c, Point { x: 14, y: 22 });
+    }
+
+    #[test]
+    fn cell_in_zone_false_when_none() {
+        assert!(!cell_in_zone(None, 5, 5));
+    }
+
+    #[test]
+    fn cell_in_zone_true_when_inside() {
+        let zone = Bounds {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 40,
+        };
+        assert!(cell_in_zone(Some(zone), 2, 2));
+    }
+
+    #[test]
+    fn cell_in_zone_false_when_outside() {
+        let zone = Bounds {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        assert!(!cell_in_zone(Some(zone), 20, 20));
+    }
+
+    #[test]
+    fn cell_walkable_on_open_mask() {
+        let mask = WalkableMask::new_open(100, 100);
+        let overlay = OccupancyOverlay::new();
+        assert!(cell_walkable(&mask, &overlay, 5, 5));
+    }
+
+    #[test]
+    fn cell_walkable_false_when_blocked_by_overlay() {
+        let mask = WalkableMask::new_open(100, 100);
+        let mut overlay = OccupancyOverlay::new();
+        overlay.add(20, 20, CELL_SIZE, CELL_SIZE);
+        assert!(!cell_walkable(&mask, &overlay, 5, 5));
+    }
+
+    #[test]
+    fn find_path_returns_none_when_target_completely_surrounded() {
+        // 200×200 mask so the wall around (100,100) doesn't saturate to
+        // origin and accidentally cover from=(4,4). This ensures
+        // snap_to_walkable succeeds on `from` but fails on the goal.
+        let mask = WalkableMask::new_open(200, 200);
+        let mut overlay = OccupancyOverlay::new();
+        let target = Point { x: 100, y: 100 };
+        let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
+        let wall_origin = 100u16 - wall_size / 2;
+        overlay.add(wall_origin, wall_origin, wall_size, wall_size);
+
+        let from = Point { x: 4, y: 4 };
+        let result = find_path(&mask, &overlay, None, from, target);
+        assert!(
+            result.is_none(),
+            "completely surrounded target should return None, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn router_falls_back_to_straight_line_when_path_is_none() {
+        let mask = WalkableMask::new_open(200, 200);
+        let mut overlay = OccupancyOverlay::new();
+        let from = Point { x: 4, y: 4 };
+        let to = Point { x: 100, y: 100 };
+        let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
+        let wall_origin = 100u16 - wall_size / 2;
+        overlay.add(wall_origin, wall_origin, wall_size, wall_size);
+
+        let mut router = AStarRouter::new();
+        let path = router.route(&mask, &overlay, from, to);
+        assert_eq!(
+            path,
+            vec![from, to],
+            "router should fall back to [from, to] when find_path returns None"
+        );
+    }
+}

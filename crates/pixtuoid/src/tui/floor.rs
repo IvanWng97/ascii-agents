@@ -1,0 +1,356 @@
+//! Multi-floor office partitioning.
+//!
+//! When more agents are active than `max_desks` can seat on a single floor,
+//! the scene is split into multiple floors. This module provides the pure
+//! arithmetic (which floor does desk N belong to? how many floors exist?)
+//! and the per-floor rendering context (`FloorCtx`) so each floor owns its
+//! own router, overlay, pose history, and frame cache.
+
+use std::time::{Duration, SystemTime};
+
+use pixtuoid_core::state::{AgentSlot, SceneState};
+use pixtuoid_core::walkable::OccupancyOverlay;
+
+use crate::tui::frame_cache::FrameCache;
+use crate::tui::pathfind::AStarRouter;
+use crate::tui::pose::PoseHistory;
+
+pub use pixtuoid_core::state::MAX_FLOORS;
+
+/// Fibonacci hash multiplier for floor seed derivation. Used in both
+/// `FloorMeta::for_floor` and the TUI auto-compute loop.
+pub const FLOOR_SEED_MULTIPLIER: u64 = 0x9e37_79b9_7f4a_7c15;
+
+#[derive(Debug, Clone, Copy)]
+pub struct FloorMeta {
+    pub floor_idx: usize,
+    pub altitude: f32,
+    pub floor_seed: u64,
+    pub sunlight_boost: f32,
+}
+
+impl FloorMeta {
+    pub fn for_floor(floor_idx: usize, total_floors: usize) -> Self {
+        let altitude = if total_floors <= 1 {
+            0.0
+        } else {
+            floor_idx as f32 / (total_floors - 1) as f32
+        };
+        Self {
+            floor_idx,
+            altitude,
+            floor_seed: (floor_idx as u64).wrapping_mul(FLOOR_SEED_MULTIPLIER),
+            sunlight_boost: altitude * 0.3,
+        }
+    }
+
+    pub fn ground() -> Self {
+        Self::for_floor(0, 1)
+    }
+}
+
+/// Per-floor rendering state. Each floor gets its own pathfinder,
+/// occupancy overlay, pose history, and recolored-frame cache so floors
+/// are fully independent.
+pub struct FloorCtx {
+    pub router: AStarRouter,
+    pub overlay: OccupancyOverlay,
+    pub history: PoseHistory,
+    pub cache: FrameCache,
+}
+
+impl Default for FloorCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FloorCtx {
+    pub fn new() -> Self {
+        Self {
+            router: AStarRouter::new(),
+            overlay: OccupancyOverlay::new(),
+            history: PoseHistory::new(),
+            cache: FrameCache::new(),
+        }
+    }
+}
+
+/// Animated floor-switch transition.
+pub struct FloorTransition {
+    pub from_floor: usize,
+    pub to_floor: usize,
+    pub started_at: SystemTime,
+    pub duration_ms: u64,
+}
+
+const TRANSITION_DURATION_MS: u64 = 900;
+
+impl FloorTransition {
+    pub fn new(from: usize, to: usize, now: SystemTime) -> Self {
+        Self {
+            from_floor: from,
+            to_floor: to,
+            started_at: now,
+            duration_ms: TRANSITION_DURATION_MS,
+        }
+    }
+
+    /// Progress ratio 0.0 → 1.0 with ease-in-out curve.
+    pub fn t(&self, now: SystemTime) -> f32 {
+        let elapsed = now
+            .duration_since(self.started_at)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as f32;
+        let linear = (elapsed / self.duration_ms as f32).clamp(0.0, 1.0);
+        ease_out(linear)
+    }
+
+    pub fn is_done(&self, now: SystemTime) -> bool {
+        self.t(now) >= 1.0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure arithmetic helpers
+// ---------------------------------------------------------------------------
+
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t) * (1.0 - t)
+}
+
+/// How many floors are needed to seat all agents?
+pub fn num_floors(scene: &SceneState) -> usize {
+    scene
+        .agents
+        .values()
+        .map(|a| a.floor_idx + 1)
+        .max()
+        .unwrap_or(1)
+        .max(1)
+}
+
+/// Extract agents belonging to `floor_idx`, remapping their `desk_index`
+/// into the `[0..capacity)` range so the layout engine sees a
+/// self-contained floor. Uses the stored `floor_idx` on each slot so
+/// capacity growth never migrates agents between floors.
+pub fn build_floor_scene(scene: &SceneState, floor_idx: usize) -> Vec<AgentSlot> {
+    let offset = scene.floor_range(floor_idx).start;
+    scene
+        .agents
+        .values()
+        .filter(|a| a.floor_idx == floor_idx)
+        .filter_map(|a| {
+            if a.desk_index < offset {
+                return None;
+            }
+            let mut slot = a.clone();
+            slot.desk_index = a.desk_index - offset;
+            Some(slot)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pixtuoid_core::id::AgentId;
+    use pixtuoid_core::state::ActivityState;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn make_scene(n: usize, max_desks: usize) -> SceneState {
+        let mut s = SceneState::uniform(max_desks);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for i in 0..n {
+            let id = AgentId::from_transcript_path(&format!("/p/{i}.jsonl"));
+            let floor_idx = s.floor_of(i);
+            s.agents.insert(
+                id,
+                AgentSlot {
+                    agent_id: id,
+                    source: Arc::from("cc"),
+                    session_id: Arc::from(format!("s{i}").as_str()),
+                    cwd: Arc::from(Path::new("/repo")),
+                    label: Arc::from(format!("a{i}").as_str()),
+                    state: ActivityState::Idle,
+                    state_started_at: now,
+                    created_at: now,
+                    last_event_at: now,
+                    exiting_at: None,
+                    pending_idle_at: None,
+
+                    desk_index: i,
+                    floor_idx,
+                    tool_call_count: 0,
+                    active_ms: 0,
+                    unknown_cwd: false,
+                    parent_id: None,
+                },
+            );
+        }
+        s
+    }
+
+    #[test]
+    fn floor_of_maps_desk_to_floor() {
+        let s = SceneState::uniform(16);
+        assert_eq!(s.floor_of(0), 0);
+        assert_eq!(s.floor_of(15), 0);
+        assert_eq!(s.floor_of(16), 1);
+        assert_eq!(s.floor_of(31), 1);
+        assert_eq!(s.floor_of(32), 2);
+    }
+
+    #[test]
+    fn floor_local_desk_remaps_to_floor_range() {
+        let s = SceneState::uniform(16);
+        assert_eq!(s.floor_local_desk(0), 0);
+        assert_eq!(s.floor_local_desk(16), 0);
+        assert_eq!(s.floor_local_desk(17), 1);
+        assert_eq!(s.floor_local_desk(31), 15);
+    }
+
+    #[test]
+    fn num_floors_with_overflow() {
+        let scene = make_scene(20, 16);
+        assert_eq!(num_floors(&scene), 2);
+    }
+
+    #[test]
+    fn num_floors_exact_fit() {
+        let scene = make_scene(16, 16);
+        assert_eq!(num_floors(&scene), 1);
+    }
+
+    #[test]
+    fn num_floors_empty() {
+        let scene = make_scene(0, 16);
+        assert_eq!(num_floors(&scene), 1);
+    }
+
+    #[test]
+    fn build_floor_scene_filters_and_remaps() {
+        let scene = make_scene(20, 16);
+
+        let floor0 = build_floor_scene(&scene, 0);
+        assert_eq!(floor0.len(), 16);
+        for a in &floor0 {
+            assert!(
+                a.desk_index < 16,
+                "desk_index {} out of range",
+                a.desk_index
+            );
+        }
+
+        let floor1 = build_floor_scene(&scene, 1);
+        assert_eq!(floor1.len(), 4);
+        let mut indices: Vec<usize> = floor1.iter().map(|a| a.desk_index).collect();
+        indices.sort();
+        assert_eq!(indices, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn build_floor_scene_skips_agent_below_grown_offset() {
+        // Agent assigned desk 5 on floor 1 when floor 0 had capacity 4.
+        // Floor 0 later grows to capacity 8. floor_range(1).start = 8,
+        // so desk 5 < 8 and the agent should be invisible on floor 1.
+        let mut s = SceneState::new([4, 4, 0, 0, 0]);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let id = AgentId::from_transcript_path("/p/stale.jsonl");
+        s.agents.insert(
+            id,
+            AgentSlot {
+                agent_id: id,
+                source: Arc::from("cc"),
+                session_id: Arc::from("s"),
+                cwd: Arc::from(Path::new("/repo")),
+                label: Arc::from("stale"),
+                state: ActivityState::Idle,
+                state_started_at: now,
+                created_at: now,
+                last_event_at: now,
+                exiting_at: None,
+                pending_idle_at: None,
+                desk_index: 5,
+                floor_idx: 1,
+                tool_call_count: 0,
+                active_ms: 0,
+                unknown_cwd: false,
+                parent_id: None,
+            },
+        );
+        // Simulate floor 0 capacity growth
+        s.floor_capacities = [8, 4, 0, 0, 0];
+        let floor1 = build_floor_scene(&s, 1);
+        assert!(
+            floor1.is_empty(),
+            "agent below grown offset must be skipped, not mapped to desk 0"
+        );
+    }
+
+    #[test]
+    fn num_floors_variable_capacities() {
+        // F0: 0..4, F1: 4..12 — 6 agents span 2 floors
+        let mut s = SceneState::new([4, 8, 6, 4, 2]);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        for i in 0..6 {
+            let id = AgentId::from_transcript_path(&format!("/p/{i}.jsonl"));
+            let floor_idx = s.floor_of(i);
+            s.agents.insert(
+                id,
+                AgentSlot {
+                    agent_id: id,
+                    source: Arc::from("cc"),
+                    session_id: Arc::from(format!("s{i}").as_str()),
+                    cwd: Arc::from(Path::new("/repo")),
+                    label: Arc::from(format!("a{i}").as_str()),
+                    state: ActivityState::Idle,
+                    state_started_at: now,
+                    created_at: now,
+                    last_event_at: now,
+                    exiting_at: None,
+                    pending_idle_at: None,
+                    desk_index: i,
+                    floor_idx,
+                    tool_call_count: 0,
+                    active_ms: 0,
+                    unknown_cwd: false,
+                    parent_id: None,
+                },
+            );
+        }
+        assert_eq!(num_floors(&s), 2);
+    }
+
+    #[test]
+    fn transition_t_progresses() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let tr = FloorTransition::new(0, 1, start);
+
+        assert!((tr.t(start) - 0.0).abs() < f32::EPSILON);
+
+        let mid = start + Duration::from_millis(450);
+        let t_mid = tr.t(mid);
+        assert!(
+            t_mid > 0.0 && t_mid < 1.0,
+            "mid should be between 0 and 1, got {t_mid}"
+        );
+
+        let end = start + Duration::from_millis(900);
+        assert!((tr.t(end) - 1.0).abs() < f32::EPSILON);
+        assert!(!tr.is_done(start + Duration::from_millis(450)));
+        assert!(tr.is_done(end));
+    }
+
+    #[test]
+    fn transition_t_clamps_past_duration() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let tr = FloorTransition::new(0, 1, start);
+
+        let past = start + Duration::from_millis(1000);
+        assert!((tr.t(past) - 1.0).abs() < f32::EPSILON);
+        assert!(tr.is_done(past));
+    }
+}

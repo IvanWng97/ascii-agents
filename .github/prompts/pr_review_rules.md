@@ -1,4 +1,4 @@
-# PR Review Rules for ascii-agents
+# PR Review Rules for pixtuoid
 
 ## Setup
 
@@ -15,7 +15,7 @@ by reading actual code — no guessing, no "this might be an issue."
 ### Must check
 
 1. **Architecture invariant violations** (the 6 invariants in CLAUDE.md):
-   - `ascii-agents-core` importing terminal dependencies (ratatui, crossterm)
+   - `pixtuoid-core` importing terminal dependencies (ratatui, crossterm)
    - Events bypassing the typed `mpsc` channel or hardcoding `Transport::Hook`
    - Source implementations not going through the `Source` trait
    - `install-hooks` not using `write_settings_atomic` for settings.json

@@ -1,0 +1,66 @@
+---
+source: crates/pixtuoid/tests/layout_golden.rs
+expression: l.room_walls
+---
+[
+    (
+        Point {
+            x: 42,
+            y: 48,
+        },
+        Point {
+            x: 42,
+            y: 69,
+        },
+    ),
+    (
+        Point {
+            x: 42,
+            y: 83,
+        },
+        Point {
+            x: 42,
+            y: 104,
+        },
+    ),
+    (
+        Point {
+            x: 42,
+            y: 110,
+        },
+        Point {
+            x: 42,
+            y: 128,
+        },
+    ),
+    (
+        Point {
+            x: 42,
+            y: 142,
+        },
+        Point {
+            x: 42,
+            y: 160,
+        },
+    ),
+    (
+        Point {
+            x: 0,
+            y: 104,
+        },
+        Point {
+            x: 18,
+            y: 104,
+        },
+    ),
+    (
+        Point {
+            x: 32,
+            y: 104,
+        },
+        Point {
+            x: 42,
+            y: 104,
+        },
+    ),
+]

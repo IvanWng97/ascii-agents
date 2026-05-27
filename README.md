@@ -1,25 +1,25 @@
 <p align="center">
-  <img src="docs/images/sprite-banner.png" alt="ascii-agents sprites" width="500" />
+  <img src="docs/images/sprite-banner.png" alt="pixtuoid sprites" width="500" />
 </p>
 
-<h1 align="center">ascii-agents</h1>
+<h1 align="center">pixtuoid</h1>
 
 <p align="center">
   <em>Your AI coding agents, visualized as pixel-art coworkers in a terminal office.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/IvanWng97/ascii-agents/stargazers"><img src="https://img.shields.io/github/stars/IvanWng97/ascii-agents?style=flat-square" alt="Stars" /></a>
-  <a href="https://github.com/IvanWng97/ascii-agents/releases"><img src="https://img.shields.io/github/v/release/IvanWng97/ascii-agents?label=version&style=flat-square" alt="Version" /></a>
+  <a href="https://github.com/IvanWng97/pixtuoid/stargazers"><img src="https://img.shields.io/github/stars/IvanWng97/pixtuoid?style=flat-square" alt="Stars" /></a>
+  <a href="https://github.com/IvanWng97/pixtuoid/releases"><img src="https://img.shields.io/github/v/release/IvanWng97/pixtuoid?label=version&style=flat-square" alt="Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/IvanWng97/ascii-agents/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/IvanWng97/ascii-agents/ci.yml?style=flat-square&label=CI" alt="CI" /></a>
-  <a href="https://codecov.io/gh/IvanWng97/ascii-agents"><img src="https://img.shields.io/codecov/c/github/IvanWng97/ascii-agents?style=flat-square" alt="Coverage" /></a>
+  <a href="https://github.com/IvanWng97/pixtuoid/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/IvanWng97/pixtuoid/ci.yml?style=flat-square&label=CI" alt="CI" /></a>
+  <a href="https://codecov.io/gh/IvanWng97/pixtuoid"><img src="https://img.shields.io/codecov/c/github/IvanWng97/pixtuoid?style=flat-square" alt="Coverage" /></a>
   <a href="https://claude.ai/code"><img src="https://img.shields.io/badge/Built%20with-Claude%20Code-blueviolet?style=flat-square&logo=anthropic" alt="Built with Claude Code" /></a>
   <a href="https://buymeacoffee.com/IvanWng97"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat-square&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee" /></a>
 </p>
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="ascii-agents animated demo" width="800" />
+  <img src="docs/images/demo.gif" alt="pixtuoid animated demo" width="800" />
 </p>
 
 <p align="center">
@@ -32,14 +32,14 @@
 
 Running multiple AI agents in the terminal is like managing a sweatshop you can't see. They type, they wait, they finish — and you have no idea who's doing what unless you scroll through logs like a bureaucrat.
 
-**ascii-agents** puts them all in a tiny pixel-art office you can watch from above. A little bit *Black Mirror*, a little bit *The Sims* — and somehow the most intuitive multi-agent dashboard you'll ever use.
+**pixtuoid** puts them all in a tiny pixel-art office you can watch from above. A little bit *Black Mirror*, a little bit *The Sims* — and somehow the most intuitive multi-agent dashboard you'll ever use.
 
 ## Quick Start
 
 ```bash
-brew install IvanWng97/ascii-agents/ascii-agents
-ascii-agents install-hooks
-ascii-agents
+brew install IvanWng97/pixtuoid/pixtuoid
+pixtuoid install-hooks
+pixtuoid
 ```
 
 In another terminal, start a Claude Code session. A character walks in from the elevator within a second.
@@ -51,25 +51,25 @@ In another terminal, start a Claude Code session. A character walks in from the 
 
 ### Pre-built binaries
 
-Download from [GitHub Releases](https://github.com/IvanWng97/ascii-agents/releases/latest):
+Download from [GitHub Releases](https://github.com/IvanWng97/pixtuoid/releases/latest):
 
 | Platform | Tarball |
 |---|---|
-| macOS (Apple Silicon) | `ascii-agents-v*-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `ascii-agents-v*-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64, static) | `ascii-agents-v*-x86_64-unknown-linux-musl.tar.gz` |
-| Linux (ARM64) | `ascii-agents-v*-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS (Apple Silicon) | `pixtuoid-v*-aarch64-apple-darwin.tar.gz` |
+| macOS (Intel) | `pixtuoid-v*-x86_64-apple-darwin.tar.gz` |
+| Linux (x86_64, static) | `pixtuoid-v*-x86_64-unknown-linux-musl.tar.gz` |
+| Linux (ARM64) | `pixtuoid-v*-aarch64-unknown-linux-gnu.tar.gz` |
 
 ### Cargo
 
 ```bash
-cargo install ascii-agents
+cargo install pixtuoid
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/IvanWng97/ascii-agents && cd ascii-agents
+git clone https://github.com/IvanWng97/pixtuoid && cd pixtuoid
 cargo build --release
 ```
 
@@ -114,12 +114,12 @@ Press `t` to switch themes with live preview. Your choice persists across sessio
   <img src="docs/images/themes-composite.png" alt="6 themes: Normal, Cyberpunk, Dracula, Tokyo Night, Catppuccin, Gruvbox" width="800" />
 </p>
 
-Settings are stored in `~/.config/ascii-agents/config.toml` (respects `$XDG_CONFIG_HOME`):
+Settings are stored in `~/.config/pixtuoid/config.toml` (respects `$XDG_CONFIG_HOME`):
 
 ```toml
 theme = "cyberpunk"
 max-desks = 8
-pack-dir = "~/.config/ascii-agents/packs/robot"
+pack-dir = "~/.config/pixtuoid/packs/robot"
 ```
 
 | Key | Default | Description |
@@ -128,17 +128,17 @@ pack-dir = "~/.config/ascii-agents/packs/robot"
 | `max-desks` | auto | Cap desks per floor. If unset, auto-computed from terminal size. Excess agents overflow to additional floors. |
 | `pack-dir` | — | Custom sprite pack directory. Supports `~` expansion. |
 
-CLI flags override config: `ascii-agents run --theme dracula`
+CLI flags override config: `pixtuoid run --theme dracula`
 
 ### Custom Sprite Packs
 
 Create your own character sprites:
 
 ```bash
-ascii-agents init-pack ./my-pack     # extract skeleton template
+pixtuoid init-pack ./my-pack     # extract skeleton template
 # edit the .sprite files in ./my-pack
-ascii-agents validate-pack ./my-pack # check for missing animations
-ascii-agents run --pack-dir ./my-pack
+pixtuoid validate-pack ./my-pack # check for missing animations
+pixtuoid run --pack-dir ./my-pack
 ```
 
 A **robot** pack ships as an example at `sprites/robot/`. See the [sprite format docs](CLAUDE.md) for palette keys and animation requirements.
@@ -149,10 +149,10 @@ A **robot** pack ships as an example at `sprites/robot/`. See the [sprite format
 <summary><strong>Architecture</strong></summary>
 
 ```
-CC tool call ──► CC fires hook ──► ascii-agents-hook (shim)
+CC tool call ──► CC fires hook ──► pixtuoid-hook (shim)
                                          │ JSON over Unix socket
                                          ▼
-                                  /tmp/ascii-agents.sock
+                                  /tmp/pixtuoid.sock
                                          │
                        HookSocketListener ─────► ┐
                                                  │ (Transport, AgentEvent)
@@ -168,11 +168,48 @@ Three Rust crates:
 
 | Crate | Role |
 |---|---|
-| **ascii-agents-core** | Headless library — no terminal deps. Source trait, reducer, pose, layout, sprites. |
-| **ascii-agents** | TUI binary — ratatui + crossterm + tokio. Half-block rendering + theme system. |
-| **ascii-agents-hook** | Tiny shim CC invokes from hooks. 200ms timeout, always exits 0. |
+| **pixtuoid-core** | Headless library — no terminal deps. Source trait, reducer, pose, layout, sprites. |
+| **pixtuoid** | TUI binary — ratatui + crossterm + tokio. Half-block rendering + theme system. |
+| **pixtuoid-hook** | Tiny shim CC invokes from hooks. 200ms timeout, always exits 0. |
 
 </details>
+
+## Migrating from ascii-agents (v0.3.0 → v0.4.0)
+
+**v0.4.0 renames the project from `ascii-agents` to `pixtuoid`** — pix(el) + tu(i) + (agent-)oid.
+
+### What changed
+
+| Before (v0.3.x) | After (v0.4.0) |
+|---|---|
+| `ascii-agents` binary | `pixtuoid` |
+| `ascii-agents-hook` shim | `pixtuoid-hook` |
+| `~/.config/ascii-agents/` | `~/.config/pixtuoid/` |
+| `~/.cache/ascii-agents/` | `~/.cache/pixtuoid/` |
+| `/tmp/ascii-agents.sock` | `/tmp/pixtuoid.sock` |
+| `_ascii_agents` hook key in `settings.json` | `_pixtuoid` |
+
+### Upgrade steps
+
+1. **Install the new version:**
+   ```bash
+   brew untap IvanWng97/ascii-agents 2>/dev/null
+   brew install IvanWng97/pixtuoid/pixtuoid
+   # or: cargo install pixtuoid
+   ```
+
+2. **Re-register hooks** (replaces old `ascii-agents-hook` entries automatically):
+   ```bash
+   pixtuoid install-hooks
+   ```
+
+3. **Migrate config** (optional — only if you customized `config.toml`):
+   ```bash
+   mkdir -p ~/.config/pixtuoid
+   mv ~/.config/ascii-agents/config.toml ~/.config/pixtuoid/config.toml
+   ```
+
+> **GitHub links:** The old `IvanWng97/ascii-agents` URL automatically redirects to `IvanWng97/pixtuoid`. Existing bookmarks and stars carry over.
 
 ## Contributing
 
@@ -199,7 +236,7 @@ Inspired by [`pixel-agents`](https://github.com/pablodelucca/pixel-agents) (VS C
 
 ## Support
 
-If you enjoy ascii-agents, consider [buying me a coffee](https://buymeacoffee.com/IvanWng97) :)
+If you enjoy pixtuoid, consider [buying me a coffee](https://buymeacoffee.com/IvanWng97) :)
 
 ## License
 

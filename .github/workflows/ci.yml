@@ -36,7 +36,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings
+      - run: cargo clippy --workspace --all-targets --features pixtuoid-core/test-renderer -- -D warnings
 
   deny:
     name: cargo-deny
@@ -70,7 +70,7 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@cargo-nextest
       - name: Generate coverage + JUnit XML (single test run)
-        run: cargo llvm-cov nextest --workspace --features ascii-agents-core/test-renderer --lcov --output-path lcov.info --profile ci
+        run: cargo llvm-cov nextest --workspace --features pixtuoid-core/test-renderer --lcov --output-path lcov.info --profile ci
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
         with:
@@ -101,18 +101,18 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build release binaries + examples
         run: cargo build --release --workspace --bins --examples
-      - name: ascii-agents --help exits 0
-        run: ./target/release/ascii-agents --help
-      - name: ascii-agents-hook exits 0 with no socket
+      - name: pixtuoid --help exits 0
+        run: ./target/release/pixtuoid --help
+      - name: pixtuoid-hook exits 0 with no socket
         run: |
-          echo '{}' | ./target/release/ascii-agents-hook || true
+          echo '{}' | ./target/release/pixtuoid-hook || true
           echo "hook shim exited (expected silent no-op)"
       - name: install-hooks round-trip
         run: |
           mkdir -p /tmp/smoke-test/.claude
           echo '{}' > /tmp/smoke-test/.claude/settings.json
-          HOME=/tmp/smoke-test ./target/release/ascii-agents install-hooks
-          HOME=/tmp/smoke-test ./target/release/ascii-agents uninstall-hooks
+          HOME=/tmp/smoke-test ./target/release/pixtuoid install-hooks
+          HOME=/tmp/smoke-test ./target/release/pixtuoid uninstall-hooks
       - name: snapshot renders without crash
         run: ./target/release/examples/snapshot /tmp/smoke-snapshot.png
       - name: Upload snapshot artifact

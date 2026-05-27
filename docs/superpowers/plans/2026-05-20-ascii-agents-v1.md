@@ -1,14 +1,14 @@
-# ascii-agents v1 Implementation Plan
+# pixtuoid v1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a terminal-native, multi-agent pixel-art visualizer for Claude Code that watches hook + JSONL events and renders each session as an animated half-block sprite in an ASCII office.
 
-**Architecture:** Cargo workspace with three crates — `ascii-agents-core` (headless lib, no terminal deps), `ascii-agents` (TUI binary), `ascii-agents-hook` (tiny shim CC invokes from its hooks). Events flow `CC → shim → unix socket → core listener → reducer → SceneState → Renderer trait`. The TUI renders via ratatui + a custom half-block sprite blitter.
+**Architecture:** Cargo workspace with three crates — `pixtuoid-core` (headless lib, no terminal deps), `pixtuoid` (TUI binary), `pixtuoid-hook` (tiny shim CC invokes from its hooks). Events flow `CC → shim → unix socket → core listener → reducer → SceneState → Renderer trait`. The TUI renders via ratatui + a custom half-block sprite blitter.
 
 **Tech Stack:** Rust 1.78+, tokio, ratatui 0.28, crossterm 0.28, serde + serde_json, notify 6, toml 0.8, clap 4, fs2 (advisory lock), async-trait, anyhow + thiserror, tracing.
 
-**Spec:** `docs/superpowers/specs/2026-05-20-ascii-agents-design.md`
+**Spec:** `docs/superpowers/specs/2026-05-20-pixtuoid-design.md`
 
 ---
 
@@ -17,7 +17,7 @@
 Phase A creates the scaffold. Phases B–J add files into it.
 
 ```
-ascii-agents/
+pixtuoid/
 ├── Cargo.toml                                  workspace
 ├── .gitignore                                  rust
 ├── rust-toolchain.toml                         pinned stable
@@ -29,7 +29,7 @@ ascii-agents/
 │   ├── typing_2.sprite
 │   └── waiting.sprite                          arm raised
 ├── crates/
-│   ├── ascii-agents-core/
+│   ├── pixtuoid-core/
 │   │   ├── Cargo.toml
 │   │   ├── src/
 │   │   │   ├── lib.rs                          re-exports
@@ -64,7 +64,7 @@ ascii-agents/
 │   │           ├── hooks/
 │   │           ├── jsonl/
 │   │           └── sprites/
-│   ├── ascii-agents/
+│   ├── pixtuoid/
 │   │   ├── Cargo.toml
 │   │   ├── src/
 │   │   │   ├── main.rs                         CLI dispatch
@@ -79,13 +79,13 @@ ascii-agents/
 │   │   │       └── renderer.rs                 impl Renderer for TuiRenderer
 │   │   └── tests/
 │   │       └── install.rs
-│   └── ascii-agents-hook/
+│   └── pixtuoid-hook/
 │       ├── Cargo.toml
 │       └── src/main.rs                         stdin → socket forwarder
 └── docs/
     └── superpowers/
-        ├── specs/2026-05-20-ascii-agents-design.md
-        └── plans/2026-05-20-ascii-agents-v1.md   ← this file
+        ├── specs/2026-05-20-pixtuoid-design.md
+        └── plans/2026-05-20-pixtuoid-v1.md   ← this file
 ```
 
 ---
@@ -101,7 +101,7 @@ ascii-agents/
 - **Phase G — Binary: CLI scaffold**
 - **Phase H — Binary: TUI renderer**
 - **Phase I — Binary: install-hooks / uninstall-hooks**
-- **Phase J — ascii-agents-hook shim & polish**
+- **Phase J — pixtuoid-hook shim & polish**
 
 <!-- TASKS_BELOW -->
 
@@ -113,12 +113,12 @@ ascii-agents/
 - Create: `Cargo.toml`
 - Create: `.gitignore`
 - Create: `rust-toolchain.toml`
-- Create: `crates/ascii-agents-core/Cargo.toml`
-- Create: `crates/ascii-agents-core/src/lib.rs`
-- Create: `crates/ascii-agents/Cargo.toml`
-- Create: `crates/ascii-agents/src/main.rs`
-- Create: `crates/ascii-agents-hook/Cargo.toml`
-- Create: `crates/ascii-agents-hook/src/main.rs`
+- Create: `crates/pixtuoid-core/Cargo.toml`
+- Create: `crates/pixtuoid-core/src/lib.rs`
+- Create: `crates/pixtuoid/Cargo.toml`
+- Create: `crates/pixtuoid/src/main.rs`
+- Create: `crates/pixtuoid-hook/Cargo.toml`
+- Create: `crates/pixtuoid-hook/src/main.rs`
 
 - [ ] **Step 1: Create `Cargo.toml` workspace manifest**
 
@@ -126,9 +126,9 @@ ascii-agents/
 [workspace]
 resolver = "2"
 members  = [
-    "crates/ascii-agents-core",
-    "crates/ascii-agents",
-    "crates/ascii-agents-hook",
+    "crates/pixtuoid-core",
+    "crates/pixtuoid",
+    "crates/pixtuoid-hook",
 ]
 
 [workspace.package]
@@ -136,7 +136,7 @@ version      = "0.1.0"
 edition      = "2021"
 rust-version = "1.78"
 license      = "MIT"
-repository   = "https://github.com/IvanWng97/ascii-agents"
+repository   = "https://github.com/IvanWng97/pixtuoid"
 
 [workspace.dependencies]
 tokio              = { version = "1", default-features = false }
@@ -173,11 +173,11 @@ channel    = "stable"
 components = ["rustfmt", "clippy"]
 ```
 
-- [ ] **Step 4: Create `crates/ascii-agents-core/Cargo.toml`**
+- [ ] **Step 4: Create `crates/pixtuoid-core/Cargo.toml`**
 
 ```toml
 [package]
-name         = "ascii-agents-core"
+name         = "pixtuoid-core"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -204,17 +204,17 @@ tokio = { workspace = true, features = ["sync", "rt", "macros", "fs", "net", "ti
 tempfile = "3"
 ```
 
-- [ ] **Step 5: Create `crates/ascii-agents-core/src/lib.rs`**
+- [ ] **Step 5: Create `crates/pixtuoid-core/src/lib.rs`**
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 ```
 
-- [ ] **Step 6: Create `crates/ascii-agents/Cargo.toml`**
+- [ ] **Step 6: Create `crates/pixtuoid/Cargo.toml`**
 
 ```toml
 [package]
-name         = "ascii-agents"
+name         = "pixtuoid"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -222,11 +222,11 @@ license.workspace      = true
 repository.workspace   = true
 
 [[bin]]
-name = "ascii-agents"
+name = "pixtuoid"
 path = "src/main.rs"
 
 [dependencies]
-ascii-agents-core  = { path = "../ascii-agents-core", features = ["test-renderer"] }
+pixtuoid-core  = { path = "../pixtuoid-core", features = ["test-renderer"] }
 tokio              = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net", "fs", "io-util"] }
 ratatui            = { workspace = true }
 crossterm          = { workspace = true }
@@ -243,19 +243,19 @@ fs2                = { workspace = true }
 tempfile = "3"
 ```
 
-- [ ] **Step 7: Create `crates/ascii-agents/src/main.rs`**
+- [ ] **Step 7: Create `crates/pixtuoid/src/main.rs`**
 
 ```rust
 fn main() {
-    println!("ascii-agents placeholder");
+    println!("pixtuoid placeholder");
 }
 ```
 
-- [ ] **Step 8: Create `crates/ascii-agents-hook/Cargo.toml`**
+- [ ] **Step 8: Create `crates/pixtuoid-hook/Cargo.toml`**
 
 ```toml
 [package]
-name         = "ascii-agents-hook"
+name         = "pixtuoid-hook"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -263,7 +263,7 @@ license.workspace      = true
 repository.workspace   = true
 
 [[bin]]
-name = "ascii-agents-hook"
+name = "pixtuoid-hook"
 path = "src/main.rs"
 
 [dependencies]
@@ -271,24 +271,24 @@ serde_json = { workspace = true }
 anyhow     = { workspace = true }
 ```
 
-- [ ] **Step 9: Create `crates/ascii-agents-hook/src/main.rs`**
+- [ ] **Step 9: Create `crates/pixtuoid-hook/src/main.rs`**
 
 ```rust
 fn main() {
-    eprintln!("ascii-agents-hook placeholder");
+    eprintln!("pixtuoid-hook placeholder");
 }
 ```
 
 - [ ] **Step 10: Verify the workspace builds**
 
 Run: `cargo build --workspace`
-Expected: Compiles cleanly. Three target binaries: `ascii-agents`, `ascii-agents-hook` (no binary from core).
+Expected: Compiles cleanly. Three target binaries: `pixtuoid`, `pixtuoid-hook` (no binary from core).
 
 - [ ] **Step 11: Commit**
 
 ```bash
 git add Cargo.toml .gitignore rust-toolchain.toml crates/
-git commit -m "feat: cargo workspace scaffold for ascii-agents v1"
+git commit -m "feat: cargo workspace scaffold for pixtuoid v1"
 ```
 
 ## Phase B — Core types & reducer
@@ -296,13 +296,13 @@ git commit -m "feat: cargo workspace scaffold for ascii-agents v1"
 ### Task 2: AgentId type
 
 **Files:**
-- Create: `crates/ascii-agents-core/src/id.rs`
-- Modify: `crates/ascii-agents-core/src/lib.rs`
+- Create: `crates/pixtuoid-core/src/id.rs`
+- Modify: `crates/pixtuoid-core/src/lib.rs`
 - Test: inline in `id.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Add to a new file `crates/ascii-agents-core/src/id.rs`:
+Add to a new file `crates/pixtuoid-core/src/id.rs`:
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -356,10 +356,10 @@ mod tests {
 }
 ```
 
-Update `crates/ascii-agents-core/src/lib.rs`:
+Update `crates/pixtuoid-core/src/lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 
@@ -368,13 +368,13 @@ pub use id::AgentId;
 
 - [ ] **Step 2: Run test to verify it passes**
 
-Run: `cargo test -p ascii-agents-core id::`
+Run: `cargo test -p pixtuoid-core id::`
 Expected: 3 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/id.rs crates/ascii-agents-core/src/lib.rs
+git add crates/pixtuoid-core/src/id.rs crates/pixtuoid-core/src/lib.rs
 git commit -m "feat(core): AgentId derived from transcript path (FNV-1a)"
 ```
 
@@ -383,10 +383,10 @@ git commit -m "feat(core): AgentId derived from transcript path (FNV-1a)"
 ### Task 3: AgentEvent + Activity + Source trait skeleton
 
 **Files:**
-- Create: `crates/ascii-agents-core/src/source/mod.rs`
-- Modify: `crates/ascii-agents-core/src/lib.rs`
+- Create: `crates/pixtuoid-core/src/source/mod.rs`
+- Modify: `crates/pixtuoid-core/src/lib.rs`
 
-- [ ] **Step 1: Create `crates/ascii-agents-core/src/source/mod.rs`**
+- [ ] **Step 1: Create `crates/pixtuoid-core/src/source/mod.rs`**
 
 ```rust
 use std::path::PathBuf;
@@ -454,10 +454,10 @@ pub mod jsonl;
 pub mod decoder;
 ```
 
-Update `crates/ascii-agents-core/src/lib.rs`:
+Update `crates/pixtuoid-core/src/lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 pub mod source;
@@ -468,25 +468,25 @@ pub use source::{Activity, AgentEvent, Source};
 
 - [ ] **Step 2: Create empty submodule stubs to satisfy `mod` declarations**
 
-`crates/ascii-agents-core/src/source/claude_code.rs`:
+`crates/pixtuoid-core/src/source/claude_code.rs`:
 
 ```rust
 // implemented in a later task
 ```
 
-`crates/ascii-agents-core/src/source/hook.rs`:
+`crates/pixtuoid-core/src/source/hook.rs`:
 
 ```rust
 // implemented in a later task
 ```
 
-`crates/ascii-agents-core/src/source/jsonl.rs`:
+`crates/pixtuoid-core/src/source/jsonl.rs`:
 
 ```rust
 // implemented in a later task
 ```
 
-`crates/ascii-agents-core/src/source/decoder.rs`:
+`crates/pixtuoid-core/src/source/decoder.rs`:
 
 ```rust
 // implemented in a later task
@@ -494,13 +494,13 @@ pub use source::{Activity, AgentEvent, Source};
 
 - [ ] **Step 3: Build**
 
-Run: `cargo build -p ascii-agents-core`
+Run: `cargo build -p pixtuoid-core`
 Expected: Compiles cleanly (no tests yet, no warnings beyond `dead_code` allowed).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source crates/ascii-agents-core/src/lib.rs
+git add crates/pixtuoid-core/src/source crates/pixtuoid-core/src/lib.rs
 git commit -m "feat(core): Source trait + AgentEvent enum + module skeleton"
 ```
 
@@ -509,10 +509,10 @@ git commit -m "feat(core): Source trait + AgentEvent enum + module skeleton"
 ### Task 4: SceneState + ActivityState + AgentSlot
 
 **Files:**
-- Create: `crates/ascii-agents-core/src/state/mod.rs`
-- Modify: `crates/ascii-agents-core/src/lib.rs`
+- Create: `crates/pixtuoid-core/src/state/mod.rs`
+- Modify: `crates/pixtuoid-core/src/lib.rs`
 
-- [ ] **Step 1: Create `crates/ascii-agents-core/src/state/mod.rs`**
+- [ ] **Step 1: Create `crates/pixtuoid-core/src/state/mod.rs`**
 
 ```rust
 use std::collections::BTreeMap;
@@ -600,10 +600,10 @@ mod tests {
 }
 ```
 
-Update `crates/ascii-agents-core/src/lib.rs`:
+Update `crates/pixtuoid-core/src/lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 pub mod source;
@@ -616,13 +616,13 @@ pub use state::{ActivityState, AgentSlot, SceneState};
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p ascii-agents-core state::`
+Run: `cargo test -p pixtuoid-core state::`
 Expected: 2 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/state crates/ascii-agents-core/src/lib.rs
+git add crates/pixtuoid-core/src/state crates/pixtuoid-core/src/lib.rs
 git commit -m "feat(core): SceneState + AgentSlot + ActivityState"
 ```
 
@@ -631,21 +631,21 @@ git commit -m "feat(core): SceneState + AgentSlot + ActivityState"
 ### Task 5: Reducer — SessionStart assigns desk + creates slot
 
 **Files:**
-- Create: `crates/ascii-agents-core/src/state/reducer.rs`
-- Test: `crates/ascii-agents-core/tests/reducer.rs`
+- Create: `crates/pixtuoid-core/src/state/reducer.rs`
+- Test: `crates/pixtuoid-core/tests/reducer.rs`
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `crates/ascii-agents-core/tests/reducer.rs`:
+Create `crates/pixtuoid-core/tests/reducer.rs`:
 
 ```rust
 use std::path::PathBuf;
 use std::time::Instant;
 
-use ascii_agents_core::source::AgentEvent;
-use ascii_agents_core::state::reducer::Reducer;
-use ascii_agents_core::state::{ActivityState, SceneState};
-use ascii_agents_core::AgentId;
+use pixtuoid_core::source::AgentEvent;
+use pixtuoid_core::state::reducer::Reducer;
+use pixtuoid_core::state::{ActivityState, SceneState};
+use pixtuoid_core::AgentId;
 
 #[test]
 fn session_start_creates_idle_slot_at_first_free_desk() {
@@ -669,12 +669,12 @@ fn session_start_creates_idle_slot_at_first_free_desk() {
 
 This will not compile yet — `Reducer` doesn't exist and `Source` doesn't exist on the test path. We will add both in step 2. Run anyway to confirm the failure mode.
 
-Run: `cargo test -p ascii-agents-core --test reducer`
+Run: `cargo test -p pixtuoid-core --test reducer`
 Expected: compile error mentioning unresolved imports `state::reducer::Reducer` and `Source`.
 
 - [ ] **Step 2: Implement minimum to make it pass**
 
-Create `crates/ascii-agents-core/src/state/reducer.rs`:
+Create `crates/pixtuoid-core/src/state/reducer.rs`:
 
 ```rust
 use std::collections::HashMap;
@@ -788,10 +788,10 @@ fn event_tool_use_id(ev: &AgentEvent) -> Option<&str> {
 fn _unused(_: Activity) {}
 ```
 
-Update `crates/ascii-agents-core/src/state/mod.rs` (already declares `pub mod reducer;`). Re-export the helpers from `lib.rs`:
+Update `crates/pixtuoid-core/src/state/mod.rs` (already declares `pub mod reducer;`). Re-export the helpers from `lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 pub mod source;
@@ -807,13 +807,13 @@ Note: `Source` the trait and `Source` the dedup-origin enum collide. The lib.rs 
 
 - [ ] **Step 3: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test reducer`
+Run: `cargo test -p pixtuoid-core --test reducer`
 Expected: 1 passed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/state/reducer.rs crates/ascii-agents-core/src/lib.rs crates/ascii-agents-core/tests/reducer.rs
+git add crates/pixtuoid-core/src/state/reducer.rs crates/pixtuoid-core/src/lib.rs crates/pixtuoid-core/tests/reducer.rs
 git commit -m "feat(core): reducer handles SessionStart, assigns first free desk"
 ```
 
@@ -822,12 +822,12 @@ git commit -m "feat(core): reducer handles SessionStart, assigns first free desk
 ### Task 6: Reducer — ActivityStart / ActivityEnd / Waiting / SessionEnd
 
 **Files:**
-- Modify: `crates/ascii-agents-core/tests/reducer.rs`
+- Modify: `crates/pixtuoid-core/tests/reducer.rs`
 
-- [ ] **Step 1: Append four tests to `crates/ascii-agents-core/tests/reducer.rs`**
+- [ ] **Step 1: Append four tests to `crates/pixtuoid-core/tests/reducer.rs`**
 
 ```rust
-use ascii_agents_core::source::Activity;
+use pixtuoid_core::source::Activity;
 
 fn start(reducer: &mut Reducer, scene: &mut SceneState, id: AgentId) {
     reducer.apply(scene, AgentEvent::SessionStart {
@@ -904,13 +904,13 @@ fn session_end_removes_slot_and_frees_desk() {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p ascii-agents-core --test reducer`
+Run: `cargo test -p pixtuoid-core --test reducer`
 Expected: 5 passed (Task 5 test + 4 new).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/tests/reducer.rs
+git add crates/pixtuoid-core/tests/reducer.rs
 git commit -m "test(core): reducer covers ActivityStart/End, Waiting, SessionEnd"
 ```
 
@@ -919,7 +919,7 @@ git commit -m "test(core): reducer covers ActivityStart/End, Waiting, SessionEnd
 ### Task 7: Reducer — dedup Hook wins over JSONL within 500ms window
 
 **Files:**
-- Modify: `crates/ascii-agents-core/tests/reducer.rs`
+- Modify: `crates/pixtuoid-core/tests/reducer.rs`
 
 - [ ] **Step 1: Append two tests**
 
@@ -982,13 +982,13 @@ fn jsonl_event_after_dedup_window_is_applied() {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p ascii-agents-core --test reducer`
+Run: `cargo test -p pixtuoid-core --test reducer`
 Expected: 7 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/tests/reducer.rs
+git add crates/pixtuoid-core/tests/reducer.rs
 git commit -m "test(core): reducer dedup — hook wins within 500ms window"
 ```
 
@@ -997,10 +997,10 @@ git commit -m "test(core): reducer dedup — hook wins within 500ms window"
 ### Task 8: Sprite types — Rgb, Palette, Frame, Sprite, RgbBuffer
 
 **Files:**
-- Create: `crates/ascii-agents-core/src/sprite/mod.rs`
-- Modify: `crates/ascii-agents-core/src/lib.rs`
+- Create: `crates/pixtuoid-core/src/sprite/mod.rs`
+- Modify: `crates/pixtuoid-core/src/lib.rs`
 
-- [ ] **Step 1: Create `crates/ascii-agents-core/src/sprite/mod.rs`**
+- [ ] **Step 1: Create `crates/pixtuoid-core/src/sprite/mod.rs`**
 
 ```rust
 use std::collections::HashMap;
@@ -1104,25 +1104,25 @@ mod tests {
 
 Create stub files to satisfy the `mod` declarations:
 
-`crates/ascii-agents-core/src/sprite/format.rs`:
+`crates/pixtuoid-core/src/sprite/format.rs`:
 ```rust
 // implemented in a later task
 ```
 
-`crates/ascii-agents-core/src/sprite/animator.rs`:
+`crates/pixtuoid-core/src/sprite/animator.rs`:
 ```rust
 // implemented in a later task
 ```
 
-`crates/ascii-agents-core/src/sprite/blit.rs`:
+`crates/pixtuoid-core/src/sprite/blit.rs`:
 ```rust
 // implemented in a later task
 ```
 
-Update `crates/ascii-agents-core/src/lib.rs`:
+Update `crates/pixtuoid-core/src/lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 pub mod source;
@@ -1138,13 +1138,13 @@ pub use sprite::{Frame, Palette, Pixel, Rgb, RgbBuffer, Sprite};
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p ascii-agents-core sprite::`
+Run: `cargo test -p pixtuoid-core sprite::`
 Expected: 2 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite crates/ascii-agents-core/src/lib.rs
+git add crates/pixtuoid-core/src/sprite crates/pixtuoid-core/src/lib.rs
 git commit -m "feat(core): sprite types — Rgb, Palette, Frame, Sprite, RgbBuffer"
 ```
 
@@ -1153,13 +1153,13 @@ git commit -m "feat(core): sprite types — Rgb, Palette, Frame, Sprite, RgbBuff
 ### Task 9: `.sprite` file parser
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/sprite/format.rs`
-- Test: `crates/ascii-agents-core/tests/sprite_format.rs`
-- Create: `crates/ascii-agents-core/tests/fixtures/sprites/mini.sprite`
+- Modify: `crates/pixtuoid-core/src/sprite/format.rs`
+- Test: `crates/pixtuoid-core/tests/sprite_format.rs`
+- Create: `crates/pixtuoid-core/tests/fixtures/sprites/mini.sprite`
 
 - [ ] **Step 1: Create the fixture**
 
-`crates/ascii-agents-core/tests/fixtures/sprites/mini.sprite`:
+`crates/pixtuoid-core/tests/fixtures/sprites/mini.sprite`:
 
 ```
 # 4x2 px, two frames
@@ -1173,11 +1173,11 @@ B . A .
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/ascii-agents-core/tests/sprite_format.rs`:
+Create `crates/pixtuoid-core/tests/sprite_format.rs`:
 
 ```rust
-use ascii_agents_core::sprite::format::parse_sprite_file;
-use ascii_agents_core::sprite::{Palette, Pixel, Rgb};
+use pixtuoid_core::sprite::format::parse_sprite_file;
+use pixtuoid_core::sprite::{Palette, Pixel, Rgb};
 
 fn palette() -> Palette {
     let mut p = Palette::new();
@@ -1219,12 +1219,12 @@ fn rejects_inconsistent_row_widths() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test sprite_format`
+Run: `cargo test -p pixtuoid-core --test sprite_format`
 Expected: compile error (no `parse_sprite_file`).
 
 - [ ] **Step 3: Implement the parser**
 
-Replace `crates/ascii-agents-core/src/sprite/format.rs`:
+Replace `crates/pixtuoid-core/src/sprite/format.rs`:
 
 ```rust
 use anyhow::{anyhow, bail, Context, Result};
@@ -1310,13 +1310,13 @@ fn rows_to_frame(rows: Vec<Vec<Pixel>>) -> Result<Frame> {
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test sprite_format`
+Run: `cargo test -p pixtuoid-core --test sprite_format`
 Expected: 3 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite/format.rs crates/ascii-agents-core/tests/sprite_format.rs crates/ascii-agents-core/tests/fixtures/sprites/mini.sprite
+git add crates/pixtuoid-core/src/sprite/format.rs crates/pixtuoid-core/tests/sprite_format.rs crates/pixtuoid-core/tests/fixtures/sprites/mini.sprite
 git commit -m "feat(core): sprite file parser (@frame blocks, palette keys)"
 ```
 
@@ -1325,14 +1325,14 @@ git commit -m "feat(core): sprite file parser (@frame blocks, palette keys)"
 ### Task 10: `pack.toml` loader
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/sprite/format.rs`
-- Test: `crates/ascii-agents-core/tests/sprite_format.rs`
-- Create: `crates/ascii-agents-core/tests/fixtures/sprites/mini_pack/pack.toml`
-- Create: `crates/ascii-agents-core/tests/fixtures/sprites/mini_pack/idle.sprite`
+- Modify: `crates/pixtuoid-core/src/sprite/format.rs`
+- Test: `crates/pixtuoid-core/tests/sprite_format.rs`
+- Create: `crates/pixtuoid-core/tests/fixtures/sprites/mini_pack/pack.toml`
+- Create: `crates/pixtuoid-core/tests/fixtures/sprites/mini_pack/idle.sprite`
 
 - [ ] **Step 1: Create the fixture pack**
 
-`crates/ascii-agents-core/tests/fixtures/sprites/mini_pack/pack.toml`:
+`crates/pixtuoid-core/tests/fixtures/sprites/mini_pack/pack.toml`:
 
 ```toml
 [pack]
@@ -1349,7 +1349,7 @@ frames   = ["idle.sprite"]
 frame_ms = 500
 ```
 
-`crates/ascii-agents-core/tests/fixtures/sprites/mini_pack/idle.sprite`:
+`crates/pixtuoid-core/tests/fixtures/sprites/mini_pack/idle.sprite`:
 
 ```
 @frame 0
@@ -1359,10 +1359,10 @@ A . B .
 
 - [ ] **Step 2: Append the failing test**
 
-Add to `crates/ascii-agents-core/tests/sprite_format.rs`:
+Add to `crates/pixtuoid-core/tests/sprite_format.rs`:
 
 ```rust
-use ascii_agents_core::sprite::format::load_pack;
+use pixtuoid_core::sprite::format::load_pack;
 use std::path::Path;
 
 #[test]
@@ -1381,10 +1381,10 @@ fn missing_animation_returns_none() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test sprite_format`
+Run: `cargo test -p pixtuoid-core --test sprite_format`
 Expected: compile errors — `load_pack` and `Pack` do not exist.
 
-- [ ] **Step 3: Add Pack + loader to `crates/ascii-agents-core/src/sprite/format.rs`**
+- [ ] **Step 3: Add Pack + loader to `crates/pixtuoid-core/src/sprite/format.rs`**
 
 Append to the file:
 
@@ -1486,13 +1486,13 @@ fn parse_palette_value(v: &str) -> Result<Pixel> {
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test sprite_format`
+Run: `cargo test -p pixtuoid-core --test sprite_format`
 Expected: 5 passed total.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite/format.rs crates/ascii-agents-core/tests/sprite_format.rs crates/ascii-agents-core/tests/fixtures/sprites/mini_pack
+git add crates/pixtuoid-core/src/sprite/format.rs crates/pixtuoid-core/tests/sprite_format.rs crates/pixtuoid-core/tests/fixtures/sprites/mini_pack
 git commit -m "feat(core): pack.toml loader (palette + animations + frame_ms)"
 ```
 
@@ -1501,16 +1501,16 @@ git commit -m "feat(core): pack.toml loader (palette + animations + frame_ms)"
 ### Task 11: Animator — frame index from elapsed time
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/sprite/animator.rs`
-- Test: `crates/ascii-agents-core/tests/animator.rs`
+- Modify: `crates/pixtuoid-core/src/sprite/animator.rs`
+- Test: `crates/pixtuoid-core/tests/animator.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/ascii-agents-core/tests/animator.rs`:
+Create `crates/pixtuoid-core/tests/animator.rs`:
 
 ```rust
 use std::time::{Duration, Instant};
-use ascii_agents_core::sprite::animator::frame_index_at;
+use pixtuoid_core::sprite::animator::frame_index_at;
 
 #[test]
 fn frame_index_advances_with_time() {
@@ -1532,12 +1532,12 @@ fn single_frame_always_returns_zero() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test animator`
+Run: `cargo test -p pixtuoid-core --test animator`
 Expected: compile error — `frame_index_at` missing.
 
 - [ ] **Step 2: Implement**
 
-Replace `crates/ascii-agents-core/src/sprite/animator.rs`:
+Replace `crates/pixtuoid-core/src/sprite/animator.rs`:
 
 ```rust
 use std::time::Instant;
@@ -1552,13 +1552,13 @@ pub fn frame_index_at(start: Instant, now: Instant, frame_ms: u32, n_frames: usi
 
 - [ ] **Step 3: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test animator`
+Run: `cargo test -p pixtuoid-core --test animator`
 Expected: 2 passed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite/animator.rs crates/ascii-agents-core/tests/animator.rs
+git add crates/pixtuoid-core/src/sprite/animator.rs crates/pixtuoid-core/tests/animator.rs
 git commit -m "feat(core): frame_index_at — drift-free frame selection from Instant"
 ```
 
@@ -1567,16 +1567,16 @@ git commit -m "feat(core): frame_index_at — drift-free frame selection from In
 ### Task 12: Half-block blitter
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/sprite/blit.rs`
-- Test: `crates/ascii-agents-core/tests/sprite_blit.rs`
+- Modify: `crates/pixtuoid-core/src/sprite/blit.rs`
+- Test: `crates/pixtuoid-core/tests/sprite_blit.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/ascii-agents-core/tests/sprite_blit.rs`:
+Create `crates/pixtuoid-core/tests/sprite_blit.rs`:
 
 ```rust
-use ascii_agents_core::sprite::blit::{blit_frame, half_block_cells, HalfCell};
-use ascii_agents_core::sprite::{Frame, Pixel, Rgb, RgbBuffer};
+use pixtuoid_core::sprite::blit::{blit_frame, half_block_cells, HalfCell};
+use pixtuoid_core::sprite::{Frame, Pixel, Rgb, RgbBuffer};
 
 fn px(r: u8, g: u8, b: u8) -> Pixel { Some(Rgb(r, g, b)) }
 fn t() -> Pixel { None }
@@ -1644,12 +1644,12 @@ fn half_block_cells_pads_odd_height_with_repeated_row() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test sprite_blit`
+Run: `cargo test -p pixtuoid-core --test sprite_blit`
 Expected: compile error — `blit_frame`, `half_block_cells`, `HalfCell` missing.
 
 - [ ] **Step 2: Implement**
 
-Replace `crates/ascii-agents-core/src/sprite/blit.rs`:
+Replace `crates/pixtuoid-core/src/sprite/blit.rs`:
 
 ```rust
 use crate::sprite::{Frame, Rgb, RgbBuffer};
@@ -1701,13 +1701,13 @@ pub fn half_block_cells(buf: &RgbBuffer) -> Vec<Vec<HalfCell>> {
 
 - [ ] **Step 3: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test sprite_blit`
+Run: `cargo test -p pixtuoid-core --test sprite_blit`
 Expected: 4 passed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite/blit.rs crates/ascii-agents-core/tests/sprite_blit.rs
+git add crates/pixtuoid-core/src/sprite/blit.rs crates/pixtuoid-core/tests/sprite_blit.rs
 git commit -m "feat(core): blit_frame + half_block_cells (▀ render helper)"
 ```
 
@@ -1722,7 +1722,7 @@ git commit -m "feat(core): blit_frame + half_block_cells (▀ render helper)"
 - Create: `assets/sprites/default/typing_1.sprite`
 - Create: `assets/sprites/default/typing_2.sprite`
 - Create: `assets/sprites/default/waiting.sprite`
-- Test: `crates/ascii-agents-core/tests/sprite_format.rs`
+- Test: `crates/pixtuoid-core/tests/sprite_format.rs`
 
 - [ ] **Step 1: Create `assets/sprites/default/pack.toml`**
 
@@ -1888,7 +1888,7 @@ Identical body to typing_0 so the 3-frame loop reads as down-up-down.
 
 - [ ] **Step 7: Append a smoke test that the default pack actually loads**
 
-Add to `crates/ascii-agents-core/tests/sprite_format.rs`:
+Add to `crates/pixtuoid-core/tests/sprite_format.rs`:
 
 ```rust
 #[test]
@@ -1908,13 +1908,13 @@ fn default_pack_loads_with_three_animations() {
 
 - [ ] **Step 8: Run tests**
 
-Run: `cargo test -p ascii-agents-core --test sprite_format`
+Run: `cargo test -p pixtuoid-core --test sprite_format`
 Expected: 6 passed.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add assets crates/ascii-agents-core/tests/sprite_format.rs
+git add assets crates/pixtuoid-core/tests/sprite_format.rs
 git commit -m "feat: bundled default sprite pack (idle, typing x3, waiting)"
 ```
 
@@ -1925,17 +1925,17 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 ### Task 14: Hook payload decoder
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/source/decoder.rs`
-- Test: `crates/ascii-agents-core/tests/decoder.rs`
-- Create: `crates/ascii-agents-core/tests/fixtures/hooks/session_start.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/hooks/pre_tool_use_write.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/hooks/post_tool_use_write.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/hooks/notification.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/hooks/session_end.json`
+- Modify: `crates/pixtuoid-core/src/source/decoder.rs`
+- Test: `crates/pixtuoid-core/tests/decoder.rs`
+- Create: `crates/pixtuoid-core/tests/fixtures/hooks/session_start.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/hooks/pre_tool_use_write.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/hooks/post_tool_use_write.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/hooks/notification.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/hooks/session_end.json`
 
 - [ ] **Step 1: Create fixtures**
 
-`crates/ascii-agents-core/tests/fixtures/hooks/session_start.json`:
+`crates/pixtuoid-core/tests/fixtures/hooks/session_start.json`:
 ```json
 {
   "hook_event_name": "SessionStart",
@@ -1945,7 +1945,7 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/hooks/pre_tool_use_write.json`:
+`crates/pixtuoid-core/tests/fixtures/hooks/pre_tool_use_write.json`:
 ```json
 {
   "hook_event_name": "PreToolUse",
@@ -1957,7 +1957,7 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/hooks/post_tool_use_write.json`:
+`crates/pixtuoid-core/tests/fixtures/hooks/post_tool_use_write.json`:
 ```json
 {
   "hook_event_name": "PostToolUse",
@@ -1970,7 +1970,7 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/hooks/notification.json`:
+`crates/pixtuoid-core/tests/fixtures/hooks/notification.json`:
 ```json
 {
   "hook_event_name": "Notification",
@@ -1981,7 +1981,7 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/hooks/session_end.json`:
+`crates/pixtuoid-core/tests/fixtures/hooks/session_end.json`:
 ```json
 {
   "hook_event_name": "SessionEnd",
@@ -1994,12 +1994,12 @@ Reducer dedup note (clarification for v1): the design uses `tool_use_id` for hoo
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/ascii-agents-core/tests/decoder.rs`:
+Create `crates/pixtuoid-core/tests/decoder.rs`:
 
 ```rust
-use ascii_agents_core::source::decoder::decode_hook_payload;
-use ascii_agents_core::source::{Activity, AgentEvent};
-use ascii_agents_core::AgentId;
+use pixtuoid_core::source::decoder::decode_hook_payload;
+use pixtuoid_core::source::{Activity, AgentEvent};
+use pixtuoid_core::AgentId;
 
 fn load(name: &str) -> serde_json::Value {
     let s = std::fs::read_to_string(format!("tests/fixtures/hooks/{name}.json")).unwrap();
@@ -2061,12 +2061,12 @@ fn decode_unknown_event_returns_none_via_err() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test decoder`
+Run: `cargo test -p pixtuoid-core --test decoder`
 Expected: compile error — `decode_hook_payload` missing.
 
 - [ ] **Step 3: Implement the decoder**
 
-Replace `crates/ascii-agents-core/src/source/decoder.rs`:
+Replace `crates/pixtuoid-core/src/source/decoder.rs`:
 
 ```rust
 use anyhow::{anyhow, bail, Context, Result};
@@ -2143,13 +2143,13 @@ Note the `_link` line is just to keep the `Context` import warning-free across f
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test decoder`
+Run: `cargo test -p pixtuoid-core --test decoder`
 Expected: 6 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source/decoder.rs crates/ascii-agents-core/tests/decoder.rs crates/ascii-agents-core/tests/fixtures/hooks
+git add crates/pixtuoid-core/src/source/decoder.rs crates/pixtuoid-core/tests/decoder.rs crates/pixtuoid-core/tests/fixtures/hooks
 git commit -m "feat(core): decode_hook_payload — CC hook JSON → AgentEvent"
 ```
 
@@ -2158,15 +2158,15 @@ git commit -m "feat(core): decode_hook_payload — CC hook JSON → AgentEvent"
 ### Task 15: JSONL transcript line decoder
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/source/decoder.rs`
-- Modify: `crates/ascii-agents-core/tests/decoder.rs`
-- Create: `crates/ascii-agents-core/tests/fixtures/jsonl/user_message.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/jsonl/assistant_tool_use.json`
-- Create: `crates/ascii-agents-core/tests/fixtures/jsonl/tool_result.json`
+- Modify: `crates/pixtuoid-core/src/source/decoder.rs`
+- Modify: `crates/pixtuoid-core/tests/decoder.rs`
+- Create: `crates/pixtuoid-core/tests/fixtures/jsonl/user_message.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/jsonl/assistant_tool_use.json`
+- Create: `crates/pixtuoid-core/tests/fixtures/jsonl/tool_result.json`
 
 - [ ] **Step 1: Create fixtures**
 
-`crates/ascii-agents-core/tests/fixtures/jsonl/user_message.json`:
+`crates/pixtuoid-core/tests/fixtures/jsonl/user_message.json`:
 ```json
 {
   "type": "user",
@@ -2177,7 +2177,7 @@ git commit -m "feat(core): decode_hook_payload — CC hook JSON → AgentEvent"
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/jsonl/assistant_tool_use.json`:
+`crates/pixtuoid-core/tests/fixtures/jsonl/assistant_tool_use.json`:
 ```json
 {
   "type": "assistant",
@@ -2195,7 +2195,7 @@ git commit -m "feat(core): decode_hook_payload — CC hook JSON → AgentEvent"
 }
 ```
 
-`crates/ascii-agents-core/tests/fixtures/jsonl/tool_result.json`:
+`crates/pixtuoid-core/tests/fixtures/jsonl/tool_result.json`:
 ```json
 {
   "type": "user",
@@ -2213,10 +2213,10 @@ git commit -m "feat(core): decode_hook_payload — CC hook JSON → AgentEvent"
 
 - [ ] **Step 2: Append failing tests**
 
-Add to `crates/ascii-agents-core/tests/decoder.rs`:
+Add to `crates/pixtuoid-core/tests/decoder.rs`:
 
 ```rust
-use ascii_agents_core::source::decoder::decode_jsonl_line;
+use pixtuoid_core::source::decoder::decode_jsonl_line;
 
 fn load_jsonl(name: &str) -> serde_json::Value {
     let s = std::fs::read_to_string(format!("tests/fixtures/jsonl/{name}.json")).unwrap();
@@ -2259,12 +2259,12 @@ fn jsonl_plain_user_message_yields_no_events() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test decoder`
+Run: `cargo test -p pixtuoid-core --test decoder`
 Expected: compile error — `decode_jsonl_line` missing.
 
 - [ ] **Step 3: Implement**
 
-Append to `crates/ascii-agents-core/src/source/decoder.rs`:
+Append to `crates/pixtuoid-core/src/source/decoder.rs`:
 
 ```rust
 /// Decode one JSONL transcript line into 0..N AgentEvents. Unknown / unrelated
@@ -2316,13 +2316,13 @@ Remove the placeholder `_link` helper from Task 14 if your rustc didn't need it.
 
 - [ ] **Step 4: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test decoder`
+Run: `cargo test -p pixtuoid-core --test decoder`
 Expected: 9 passed total.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source/decoder.rs crates/ascii-agents-core/tests/decoder.rs crates/ascii-agents-core/tests/fixtures/jsonl
+git add crates/pixtuoid-core/src/source/decoder.rs crates/pixtuoid-core/tests/decoder.rs crates/pixtuoid-core/tests/fixtures/jsonl
 git commit -m "feat(core): decode_jsonl_line — CC transcript line → AgentEvents"
 ```
 
@@ -2331,12 +2331,12 @@ git commit -m "feat(core): decode_jsonl_line — CC transcript line → AgentEve
 ### Task 16: Hook Unix socket listener
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/source/hook.rs`
-- Test: `crates/ascii-agents-core/tests/hook_socket.rs`
+- Modify: `crates/pixtuoid-core/src/source/hook.rs`
+- Test: `crates/pixtuoid-core/tests/hook_socket.rs`
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `crates/ascii-agents-core/tests/hook_socket.rs`:
+Create `crates/pixtuoid-core/tests/hook_socket.rs`:
 
 ```rust
 use std::time::Duration;
@@ -2345,13 +2345,13 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
-use ascii_agents_core::source::hook::HookSocketListener;
-use ascii_agents_core::source::AgentEvent;
+use pixtuoid_core::source::hook::HookSocketListener;
+use pixtuoid_core::source::AgentEvent;
 
 #[tokio::test]
 async fn listener_parses_line_and_emits_event() {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("ascii-agents.sock");
+    let path = dir.path().join("pixtuoid.sock");
 
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(16);
     let listener = HookSocketListener::bind(path.clone()).await.unwrap();
@@ -2381,7 +2381,7 @@ async fn listener_parses_line_and_emits_event() {
 #[tokio::test]
 async fn listener_skips_malformed_line_and_keeps_going() {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("ascii-agents.sock");
+    let path = dir.path().join("pixtuoid.sock");
     let (tx, mut rx) = mpsc::channel::<AgentEvent>(16);
     let listener = HookSocketListener::bind(path.clone()).await.unwrap();
     let handle = tokio::spawn(async move { listener.run(tx).await });
@@ -2407,12 +2407,12 @@ async fn listener_skips_malformed_line_and_keeps_going() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test hook_socket`
+Run: `cargo test -p pixtuoid-core --test hook_socket`
 Expected: compile error — `HookSocketListener` missing.
 
 - [ ] **Step 2: Implement**
 
-Replace `crates/ascii-agents-core/src/source/hook.rs`:
+Replace `crates/pixtuoid-core/src/source/hook.rs`:
 
 ```rust
 use std::path::{Path, PathBuf};
@@ -2488,13 +2488,13 @@ async fn handle_conn(stream: UnixStream, tx: mpsc::Sender<AgentEvent>) {
 
 - [ ] **Step 3: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test hook_socket -- --nocapture`
+Run: `cargo test -p pixtuoid-core --test hook_socket -- --nocapture`
 Expected: 2 passed.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source/hook.rs crates/ascii-agents-core/tests/hook_socket.rs
+git add crates/pixtuoid-core/src/source/hook.rs crates/pixtuoid-core/tests/hook_socket.rs
 git commit -m "feat(core): HookSocketListener — Unix-socket JSON-line ingest"
 ```
 
@@ -2503,12 +2503,12 @@ git commit -m "feat(core): HookSocketListener — Unix-socket JSON-line ingest"
 ### Task 17: JSONL transcript watcher
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/source/jsonl.rs`
-- Test: `crates/ascii-agents-core/tests/jsonl_watcher.rs`
+- Modify: `crates/pixtuoid-core/src/source/jsonl.rs`
+- Test: `crates/pixtuoid-core/tests/jsonl_watcher.rs`
 
 - [ ] **Step 1: Write the failing integration test**
 
-Create `crates/ascii-agents-core/tests/jsonl_watcher.rs`:
+Create `crates/pixtuoid-core/tests/jsonl_watcher.rs`:
 
 ```rust
 use std::time::Duration;
@@ -2516,8 +2516,8 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-use ascii_agents_core::source::jsonl::JsonlWatcher;
-use ascii_agents_core::source::AgentEvent;
+use pixtuoid_core::source::jsonl::JsonlWatcher;
+use pixtuoid_core::source::AgentEvent;
 
 #[tokio::test]
 async fn watcher_emits_session_start_then_activity_for_tool_use() {
@@ -2579,12 +2579,12 @@ async fn watcher_emits_session_start_then_activity_for_tool_use() {
 }
 ```
 
-Run: `cargo test -p ascii-agents-core --test jsonl_watcher`
+Run: `cargo test -p pixtuoid-core --test jsonl_watcher`
 Expected: compile error — `JsonlWatcher` missing.
 
 - [ ] **Step 2: Implement**
 
-Replace `crates/ascii-agents-core/src/source/jsonl.rs`:
+Replace `crates/pixtuoid-core/src/source/jsonl.rs`:
 
 ```rust
 use std::collections::HashMap;
@@ -2723,13 +2723,13 @@ async fn walk_jsonl(
 
 - [ ] **Step 3: Run tests to verify pass**
 
-Run: `cargo test -p ascii-agents-core --test jsonl_watcher -- --nocapture`
+Run: `cargo test -p pixtuoid-core --test jsonl_watcher -- --nocapture`
 Expected: 1 passed. May take ~1s due to file-system event propagation.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source/jsonl.rs crates/ascii-agents-core/tests/jsonl_watcher.rs
+git add crates/pixtuoid-core/src/source/jsonl.rs crates/pixtuoid-core/tests/jsonl_watcher.rs
 git commit -m "feat(core): JsonlWatcher — recursive notify + per-file cursor"
 ```
 
@@ -2738,11 +2738,11 @@ git commit -m "feat(core): JsonlWatcher — recursive notify + per-file cursor"
 ### Task 18: ClaudeCodeSource — wires hook listener + JSONL watcher
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/source/claude_code.rs`
+- Modify: `crates/pixtuoid-core/src/source/claude_code.rs`
 
 - [ ] **Step 1: Implement**
 
-Replace `crates/ascii-agents-core/src/source/claude_code.rs`:
+Replace `crates/pixtuoid-core/src/source/claude_code.rs`:
 
 ```rust
 use std::path::PathBuf;
@@ -2766,7 +2766,7 @@ impl ClaudeCodeSource {
     pub fn default_paths() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         Self {
-            socket_path: PathBuf::from("/tmp/ascii-agents.sock"),
+            socket_path: PathBuf::from("/tmp/pixtuoid.sock"),
             projects_root: PathBuf::from(format!("{home}/.claude/projects")),
         }
     }
@@ -2797,13 +2797,13 @@ impl Source for ClaudeCodeSource {
 
 - [ ] **Step 2: Smoke build**
 
-Run: `cargo build -p ascii-agents-core`
+Run: `cargo build -p pixtuoid-core`
 Expected: clean build.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/source/claude_code.rs
+git add crates/pixtuoid-core/src/source/claude_code.rs
 git commit -m "feat(core): ClaudeCodeSource — hook listener + jsonl watcher"
 ```
 
@@ -2812,13 +2812,13 @@ git commit -m "feat(core): ClaudeCodeSource — hook listener + jsonl watcher"
 ### Task 19: Renderer trait + TestRenderer (feature-gated)
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/render/mod.rs`
-- Create: `crates/ascii-agents-core/src/render/test_renderer.rs`
-- Modify: `crates/ascii-agents-core/src/lib.rs`
+- Modify: `crates/pixtuoid-core/src/render/mod.rs`
+- Create: `crates/pixtuoid-core/src/render/test_renderer.rs`
+- Modify: `crates/pixtuoid-core/src/lib.rs`
 
 - [ ] **Step 1: Add the render module**
 
-Replace `crates/ascii-agents-core/src/render/mod.rs`:
+Replace `crates/pixtuoid-core/src/render/mod.rs`:
 
 ```rust
 use anyhow::Result;
@@ -2832,7 +2832,7 @@ pub trait Renderer {
 pub mod test_renderer;
 ```
 
-Create `crates/ascii-agents-core/src/render/test_renderer.rs`:
+Create `crates/pixtuoid-core/src/render/test_renderer.rs`:
 
 ```rust
 use std::sync::{Arc, Mutex};
@@ -2861,10 +2861,10 @@ impl Renderer for TestRenderer {
 }
 ```
 
-Update `crates/ascii-agents-core/src/lib.rs`:
+Update `crates/pixtuoid-core/src/lib.rs`:
 
 ```rust
-//! ascii-agents-core: headless logic for the ascii-agents TUI.
+//! pixtuoid-core: headless logic for the pixtuoid TUI.
 
 pub mod id;
 pub mod render;
@@ -2882,13 +2882,13 @@ pub use state::{ActivityState, AgentSlot, SceneState};
 
 - [ ] **Step 2: Build with feature flag**
 
-Run: `cargo build -p ascii-agents-core --features test-renderer`
+Run: `cargo build -p pixtuoid-core --features test-renderer`
 Expected: clean build.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/render crates/ascii-agents-core/src/lib.rs
+git add crates/pixtuoid-core/src/render crates/pixtuoid-core/src/lib.rs
 git commit -m "feat(core): Renderer trait + TestRenderer (feature-gated)"
 ```
 
@@ -2897,11 +2897,11 @@ git commit -m "feat(core): Renderer trait + TestRenderer (feature-gated)"
 ### Task 20: End-to-end test — MockSource → Reducer → TestRenderer
 
 **Files:**
-- Test: `crates/ascii-agents-core/tests/e2e.rs`
+- Test: `crates/pixtuoid-core/tests/e2e.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/ascii-agents-core/tests/e2e.rs`:
+Create `crates/pixtuoid-core/tests/e2e.rs`:
 
 ```rust
 #![cfg(feature = "test-renderer")]
@@ -2909,9 +2909,9 @@ Create `crates/ascii-agents-core/tests/e2e.rs`:
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use ascii_agents_core::render::test_renderer::TestRenderer;
-use ascii_agents_core::source::Activity;
-use ascii_agents_core::{
+use pixtuoid_core::render::test_renderer::TestRenderer;
+use pixtuoid_core::source::Activity;
+use pixtuoid_core::{
     AgentEvent, AgentId, Reducer, Renderer, SceneState, Source,
     state::ActivityState,
 };
@@ -2963,13 +2963,13 @@ fn scripted_timeline_drives_scene_through_states() {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p ascii-agents-core --features test-renderer --test e2e`
+Run: `cargo test -p pixtuoid-core --features test-renderer --test e2e`
 Expected: 1 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents-core/tests/e2e.rs
+git add crates/pixtuoid-core/tests/e2e.rs
 git commit -m "test(core): e2e — scripted timeline drives scene through all states"
 ```
 
@@ -2978,17 +2978,17 @@ git commit -m "test(core): e2e — scripted timeline drives scene through all st
 ### Task 21: clap CLI with `run`, `install-hooks`, `uninstall-hooks`
 
 **Files:**
-- Create: `crates/ascii-agents/src/cli.rs`
-- Modify: `crates/ascii-agents/src/main.rs`
+- Create: `crates/pixtuoid/src/cli.rs`
+- Modify: `crates/pixtuoid/src/main.rs`
 
-- [ ] **Step 1: Create `crates/ascii-agents/src/cli.rs`**
+- [ ] **Step 1: Create `crates/pixtuoid/src/cli.rs`**
 
 ```rust
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "ascii-agents", version, about = "Terminal pixel-art office for AI coding agents")]
+#[command(name = "pixtuoid", version, about = "Terminal pixel-art office for AI coding agents")]
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Option<Cmd>,
@@ -3010,7 +3010,7 @@ pub enum Cmd {
         #[arg(long)] hook_path: Option<PathBuf>,
         #[arg(long)] settings: Option<PathBuf>,
     },
-    /// Remove ascii-agents hook entries from settings.json.
+    /// Remove pixtuoid hook entries from settings.json.
     UninstallHooks {
         #[arg(long)] settings: Option<PathBuf>,
     },
@@ -3027,7 +3027,7 @@ impl Cli {
 }
 ```
 
-- [ ] **Step 2: Replace `crates/ascii-agents/src/main.rs`**
+- [ ] **Step 2: Replace `crates/pixtuoid/src/main.rs`**
 
 ```rust
 mod cli;
@@ -3063,19 +3063,19 @@ fn main() -> Result<()> {
 
 - [ ] **Step 3: Create stub modules so this compiles**
 
-`crates/ascii-agents/src/runtime.rs`:
+`crates/pixtuoid/src/runtime.rs`:
 ```rust
 use std::path::PathBuf;
 use anyhow::Result;
 
 pub fn run(_socket: Option<PathBuf>, _projects_root: Option<PathBuf>, _max_desks: usize) -> Result<()> {
-    println!("ascii-agents run — wiring in Task 22");
+    println!("pixtuoid run — wiring in Task 22");
     Ok(())
 }
 ```
 
-`crates/ascii-agents/src/install/mod.rs` (note: install becomes a directory in Phase I):
-For now, simpler: create `crates/ascii-agents/src/install.rs`:
+`crates/pixtuoid/src/install/mod.rs` (note: install becomes a directory in Phase I):
+For now, simpler: create `crates/pixtuoid/src/install.rs`:
 ```rust
 use std::path::PathBuf;
 use anyhow::Result;
@@ -3089,20 +3089,20 @@ pub fn uninstall(_settings: Option<PathBuf>) -> Result<()> {
 }
 ```
 
-`crates/ascii-agents/src/tui/mod.rs`:
+`crates/pixtuoid/src/tui/mod.rs`:
 ```rust
 // implemented in Phase H
 ```
 
 - [ ] **Step 4: Build**
 
-Run: `cargo build -p ascii-agents`
-Expected: clean. `cargo run -p ascii-agents -- --help` should print clap usage.
+Run: `cargo build -p pixtuoid`
+Expected: clean. `cargo run -p pixtuoid -- --help` should print clap usage.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src
+git add crates/pixtuoid/src
 git commit -m "feat(bin): clap CLI scaffold (run, install-hooks, uninstall-hooks)"
 ```
 
@@ -3111,7 +3111,7 @@ git commit -m "feat(bin): clap CLI scaffold (run, install-hooks, uninstall-hooks
 ### Task 22: tokio runtime wiring — Source → Reducer → Renderer loop
 
 **Files:**
-- Replace: `crates/ascii-agents/src/runtime.rs`
+- Replace: `crates/pixtuoid/src/runtime.rs`
 
 - [ ] **Step 1: Implement**
 
@@ -3121,8 +3121,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ascii_agents_core::source::claude_code::ClaudeCodeSource;
-use ascii_agents_core::{AgentEvent, Reducer, SceneState, Source};
+use pixtuoid_core::source::claude_code::ClaudeCodeSource;
+use pixtuoid_core::{AgentEvent, Reducer, SceneState, Source};
 use tokio::sync::{mpsc, RwLock};
 
 pub fn run(
@@ -3151,7 +3151,7 @@ async fn run_async(
     tokio::spawn(reducer_task(rx, scene_for_reducer));
 
     // Source task.
-    let src_box: Box<dyn ascii_agents_core::source::Source> = Box::new(src);
+    let src_box: Box<dyn pixtuoid_core::source::Source> = Box::new(src);
     tokio::spawn(async move {
         if let Err(e) = src_box.run(tx).await {
             tracing::error!("source died: {e}");
@@ -3179,11 +3179,11 @@ async fn reducer_task(
 
 - [ ] **Step 2: Add stub `tui::run_tui`**
 
-Replace `crates/ascii-agents/src/tui/mod.rs`:
+Replace `crates/pixtuoid/src/tui/mod.rs`:
 ```rust
 use std::sync::Arc;
 use anyhow::Result;
-use ascii_agents_core::SceneState;
+use pixtuoid_core::SceneState;
 use tokio::sync::RwLock;
 
 pub async fn run_tui(_scene: Arc<RwLock<SceneState>>) -> Result<()> {
@@ -3195,13 +3195,13 @@ pub async fn run_tui(_scene: Arc<RwLock<SceneState>>) -> Result<()> {
 
 - [ ] **Step 3: Build**
 
-Run: `cargo build -p ascii-agents`
+Run: `cargo build -p pixtuoid`
 Expected: clean.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/runtime.rs crates/ascii-agents/src/tui/mod.rs
+git add crates/pixtuoid/src/runtime.rs crates/pixtuoid/src/tui/mod.rs
 git commit -m "feat(bin): runtime wiring — ClaudeCodeSource → Reducer → TUI"
 ```
 
@@ -3210,7 +3210,7 @@ git commit -m "feat(bin): runtime wiring — ClaudeCodeSource → Reducer → TU
 ### Task 23: Embedded default sprite pack via `include_str!`
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/embedded_pack.rs`
+- Create: `crates/pixtuoid/src/tui/embedded_pack.rs`
 
 - [ ] **Step 1: Implement**
 
@@ -3219,7 +3219,7 @@ git commit -m "feat(bin): runtime wiring — ClaudeCodeSource → Reducer → TU
 //! by re-parsing the same .sprite + pack.toml format used on disk.
 
 use anyhow::Result;
-use ascii_agents_core::sprite::format::{load_pack_from_strings, Pack};
+use pixtuoid_core::sprite::format::{load_pack_from_strings, Pack};
 
 pub fn load_default_pack() -> Result<Pack> {
     let pack_toml   = include_str!("../../../../assets/sprites/default/pack.toml");
@@ -3241,7 +3241,7 @@ pub fn load_default_pack() -> Result<Pack> {
 
 - [ ] **Step 2: Add `load_pack_from_strings` to core**
 
-Append to `crates/ascii-agents-core/src/sprite/format.rs`:
+Append to `crates/pixtuoid-core/src/sprite/format.rs`:
 
 ```rust
 /// Same as `load_pack` but takes in-memory strings — used by binaries that
@@ -3282,13 +3282,13 @@ pub fn load_pack_from_strings(
 
 - [ ] **Step 3: Build**
 
-Run: `cargo build -p ascii-agents`
+Run: `cargo build -p pixtuoid`
 Expected: clean.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/sprite/format.rs crates/ascii-agents/src/tui/embedded_pack.rs
+git add crates/pixtuoid-core/src/sprite/format.rs crates/pixtuoid/src/tui/embedded_pack.rs
 git commit -m "feat: embed default sprite pack via include_str!"
 ```
 
@@ -3297,21 +3297,21 @@ git commit -m "feat: embed default sprite pack via include_str!"
 ### Task 24: TuiRenderer — ratatui scene with sprites, labels, status bar, quit
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/renderer.rs`
-- Replace: `crates/ascii-agents/src/tui/mod.rs`
+- Create: `crates/pixtuoid/src/tui/renderer.rs`
+- Replace: `crates/pixtuoid/src/tui/mod.rs`
 
-- [ ] **Step 1: Create `crates/ascii-agents/src/tui/renderer.rs`**
+- [ ] **Step 1: Create `crates/pixtuoid/src/tui/renderer.rs`**
 
 ```rust
 use std::io::{stdout, Stdout};
 
 use anyhow::Result;
-use ascii_agents_core::sprite::animator::frame_index_at;
-use ascii_agents_core::sprite::blit::{blit_frame, half_block_cells, HalfCell};
-use ascii_agents_core::sprite::format::Pack;
-use ascii_agents_core::sprite::{Palette, Pixel, Rgb, RgbBuffer};
-use ascii_agents_core::state::ActivityState;
-use ascii_agents_core::SceneState;
+use pixtuoid_core::sprite::animator::frame_index_at;
+use pixtuoid_core::sprite::blit::{blit_frame, half_block_cells, HalfCell};
+use pixtuoid_core::sprite::format::Pack;
+use pixtuoid_core::sprite::{Palette, Pixel, Rgb, RgbBuffer};
+use pixtuoid_core::state::ActivityState;
+use pixtuoid_core::SceneState;
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -3375,7 +3375,7 @@ pub fn draw_scene(term: &mut Term, scene: &SceneState, pack: &Pack, now: Instant
         let size = f.size();
         // Top status bar.
         let title = Paragraph::new(Line::from(vec![
-            Span::raw(" ascii-agents — "),
+            Span::raw(" pixtuoid — "),
             Span::raw(format!("{} session{} ", agents.len(), if agents.len() == 1 { "" } else { "s" })),
         ]))
         .block(Block::default().borders(Borders::BOTTOM));
@@ -3481,10 +3481,10 @@ pub fn draw_scene(term: &mut Term, scene: &SceneState, pack: &Pack, now: Instant
 }
 
 fn recolor_frame(
-    frame: &ascii_agents_core::sprite::Frame,
+    frame: &pixtuoid_core::sprite::Frame,
     _base: &Palette,
     _agent: &Palette,
-) -> ascii_agents_core::sprite::Frame {
+) -> pixtuoid_core::sprite::Frame {
     // Pixels already carry final RGB. We only need recolor when a sprite's
     // palette key 'B'/'H' has been overridden, but the frame is already
     // decoded with the base palette. For v1, recolor by swapping any RGB
@@ -3503,7 +3503,7 @@ fn summarize_state(s: &ActivityState) -> &'static str {
 }
 ```
 
-- [ ] **Step 2: Replace `crates/ascii-agents/src/tui/mod.rs`**
+- [ ] **Step 2: Replace `crates/pixtuoid/src/tui/mod.rs`**
 
 ```rust
 pub mod embedded_pack;
@@ -3513,7 +3513,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use ascii_agents_core::SceneState;
+use pixtuoid_core::SceneState;
 use crossterm::event::{self, Event, KeyCode};
 use tokio::sync::RwLock;
 
@@ -3557,18 +3557,18 @@ pub async fn run_tui(scene: Arc<RwLock<SceneState>>) -> Result<()> {
 
 - [ ] **Step 3: Build**
 
-Run: `cargo build -p ascii-agents`
+Run: `cargo build -p pixtuoid`
 Expected: clean.
 
 - [ ] **Step 4: Manual smoke test (won't pass headless)**
 
-Run: `cargo run -p ascii-agents`
+Run: `cargo run -p pixtuoid`
 Expected: empty office scene displayed, `q` quits cleanly.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui
+git add crates/pixtuoid/src/tui
 git commit -m "feat(bin): ratatui TUI renderer with half-block sprites + labels"
 ```
 
@@ -3577,30 +3577,30 @@ git commit -m "feat(bin): ratatui TUI renderer with half-block sprites + labels"
 ### Task 25: settings.json merge logic (pure, testable)
 
 **Files:**
-- Create: `crates/ascii-agents/src/install/mod.rs`
-- Create: `crates/ascii-agents/src/install/merge.rs`
-- Create: `crates/ascii-agents/src/install/io.rs`
-- Delete: `crates/ascii-agents/src/install.rs` (replaced by the directory above)
-- Test: `crates/ascii-agents/tests/install.rs`
+- Create: `crates/pixtuoid/src/install/mod.rs`
+- Create: `crates/pixtuoid/src/install/merge.rs`
+- Create: `crates/pixtuoid/src/install/io.rs`
+- Delete: `crates/pixtuoid/src/install.rs` (replaced by the directory above)
+- Test: `crates/pixtuoid/tests/install.rs`
 
 - [ ] **Step 1: Remove the old single-file stub**
 
 ```bash
-git rm crates/ascii-agents/src/install.rs
+git rm crates/pixtuoid/src/install.rs
 ```
 
-- [ ] **Step 2: Create `crates/ascii-agents/src/install/merge.rs`**
+- [ ] **Step 2: Create `crates/pixtuoid/src/install/merge.rs`**
 
 ```rust
 use serde_json::{json, Map, Value};
 
-pub const SENTINEL_KEY: &str = "_ascii_agents";
+pub const SENTINEL_KEY: &str = "_pixtuoid";
 pub const EVENTS: &[&str] = &[
     "SessionStart", "PreToolUse", "PostToolUse", "Notification", "SessionEnd",
 ];
 
-/// Merge ascii-agents hook entries into a CC settings.json document.
-/// Idempotent: re-running replaces existing ascii-agents entries.
+/// Merge pixtuoid hook entries into a CC settings.json document.
+/// Idempotent: re-running replaces existing pixtuoid entries.
 pub fn merge_install(mut doc: Value, hook_command: &str) -> Value {
     let root = doc.as_object_mut()
         .map(|m| m.clone())
@@ -3612,7 +3612,7 @@ pub fn merge_install(mut doc: Value, hook_command: &str) -> Value {
     for ev in EVENTS {
         let list = hooks_obj.entry((*ev).to_string()).or_insert_with(|| Value::Array(vec![]));
         let arr = list.as_array_mut().expect("event entry must be array");
-        // Drop any prior ascii-agents entries so we re-add the current one.
+        // Drop any prior pixtuoid entries so we re-add the current one.
         arr.retain(|entry| {
             entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true)
         });
@@ -3628,7 +3628,7 @@ pub fn merge_install(mut doc: Value, hook_command: &str) -> Value {
     Value::Object(root)
 }
 
-/// Remove ascii-agents hook entries. Idempotent.
+/// Remove pixtuoid hook entries. Idempotent.
 pub fn merge_uninstall(mut doc: Value) -> Value {
     let Some(root) = doc.as_object_mut() else { return doc; };
     let Some(Value::Object(hooks_obj)) = root.get_mut("hooks") else { return doc; };
@@ -3655,13 +3655,13 @@ mod tests {
 
     #[test]
     fn install_creates_entries_for_all_events() {
-        let doc = merge_install(json!({}), "/usr/local/bin/ascii-agents-hook");
+        let doc = merge_install(json!({}), "/usr/local/bin/pixtuoid-hook");
         let hooks = doc.get("hooks").and_then(|v| v.as_object()).unwrap();
         for ev in EVENTS {
             let arr = hooks.get(*ev).and_then(|v| v.as_array()).unwrap();
             assert_eq!(arr.len(), 1, "event {ev}");
             assert_eq!(arr[0][SENTINEL_KEY], json!(true));
-            assert_eq!(arr[0]["hooks"][0]["command"], json!("/usr/local/bin/ascii-agents-hook"));
+            assert_eq!(arr[0]["hooks"][0]["command"], json!("/usr/local/bin/pixtuoid-hook"));
         }
     }
 
@@ -3710,7 +3710,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Create `crates/ascii-agents/src/install/io.rs`**
+- [ ] **Step 3: Create `crates/pixtuoid/src/install/io.rs`**
 
 ```rust
 use std::fs::{File, OpenOptions};
@@ -3732,15 +3732,15 @@ pub fn default_hook_binary() -> Result<PathBuf> {
         return Ok(PathBuf::from(p));
     }
     // 2. Resolve `which`.
-    if let Ok(p) = which::which("ascii-agents-hook") {
+    if let Ok(p) = which::which("pixtuoid-hook") {
         return Ok(p);
     }
     // 3. Fallback: assume the binary is in the same dir as the running exe.
     let exe = std::env::current_exe().context("current_exe")?;
     let dir = exe.parent().ok_or_else(|| anyhow!("exe has no parent"))?;
-    let candidate = dir.join("ascii-agents-hook");
+    let candidate = dir.join("pixtuoid-hook");
     if candidate.exists() { return Ok(candidate); }
-    Err(anyhow!("could not locate ascii-agents-hook; pass --hook-path"))
+    Err(anyhow!("could not locate pixtuoid-hook; pass --hook-path"))
 }
 
 pub fn read_settings(path: &Path) -> Result<Value> {
@@ -3779,16 +3779,16 @@ pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
 
 pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
     if !path.exists() { return Ok(None); }
-    let bak = path.with_extension("json.ascii-agents.bak");
+    let bak = path.with_extension("json.pixtuoid.bak");
     if bak.exists() { return Ok(Some(bak)); }
     std::fs::copy(path, &bak)?;
     Ok(Some(bak))
 }
 ```
 
-Add `which = "6"` to `crates/ascii-agents/Cargo.toml` `[dependencies]`.
+Add `which = "6"` to `crates/pixtuoid/Cargo.toml` `[dependencies]`.
 
-- [ ] **Step 4: Create `crates/ascii-agents/src/install/mod.rs`**
+- [ ] **Step 4: Create `crates/pixtuoid/src/install/mod.rs`**
 
 ```rust
 pub mod io;
@@ -3807,7 +3807,7 @@ pub fn install(hook_path: Option<PathBuf>, settings: Option<PathBuf>) -> Result<
     let merged = merge::merge_install(doc, &hook_str);
     io::write_settings_atomic(&settings_path, &merged)?;
 
-    println!("ok: installed ascii-agents hooks into {}", settings_path.display());
+    println!("ok: installed pixtuoid hooks into {}", settings_path.display());
     if let Some(b) = backup {
         println!("backup: {}", b.display());
     }
@@ -3823,19 +3823,19 @@ pub fn uninstall(settings: Option<PathBuf>) -> Result<()> {
     let doc = io::read_settings(&settings_path)?;
     let cleaned = merge::merge_uninstall(doc);
     io::write_settings_atomic(&settings_path, &cleaned)?;
-    println!("ok: removed ascii-agents hooks from {}", settings_path.display());
+    println!("ok: removed pixtuoid hooks from {}", settings_path.display());
     Ok(())
 }
 ```
 
 - [ ] **Step 5: Run unit tests for merge**
 
-Run: `cargo test -p ascii-agents install::merge`
+Run: `cargo test -p pixtuoid install::merge`
 Expected: 5 passed.
 
 - [ ] **Step 6: Add integration test against a temp file**
 
-Create `crates/ascii-agents/tests/install.rs`:
+Create `crates/pixtuoid/tests/install.rs`:
 
 ```rust
 use std::path::PathBuf;
@@ -3851,7 +3851,7 @@ fn install_then_uninstall_round_trip() {
     let dir = TempDir::new().unwrap();
     let settings = dir.path().join("settings.json");
 
-    let bin = env!("CARGO_BIN_EXE_ascii-agents");
+    let bin = env!("CARGO_BIN_EXE_pixtuoid");
     // install
     let status = std::process::Command::new(bin)
         .args(["install-hooks", "--settings", settings.to_str().unwrap(), "--hook-path", "/fake/path"])
@@ -3860,7 +3860,7 @@ fn install_then_uninstall_round_trip() {
 
     let contents = std::fs::read_to_string(&settings).unwrap();
     let v: serde_json::Value = serde_json::from_str(&contents).unwrap();
-    assert!(v["hooks"]["PreToolUse"][0]["_ascii_agents"].as_bool().unwrap());
+    assert!(v["hooks"]["PreToolUse"][0]["_pixtuoid"].as_bool().unwrap());
 
     // uninstall
     let status = std::process::Command::new(bin)
@@ -3873,29 +3873,29 @@ fn install_then_uninstall_round_trip() {
     assert!(v.get("hooks").is_none(), "got {v}");
 
     // backup should exist
-    assert!(PathBuf::from(format!("{}.ascii-agents.bak", settings.with_extension("").to_string_lossy())).exists()
-        || dir.path().join("settings.json.ascii-agents.bak").exists());
+    assert!(PathBuf::from(format!("{}.pixtuoid.bak", settings.with_extension("").to_string_lossy())).exists()
+        || dir.path().join("settings.json.pixtuoid.bak").exists());
 }
 ```
 
 - [ ] **Step 7: Run integration test**
 
-Run: `cargo test -p ascii-agents --test install`
+Run: `cargo test -p pixtuoid --test install`
 Expected: 1 passed.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/ascii-agents/src/install crates/ascii-agents/tests/install.rs crates/ascii-agents/Cargo.toml
+git add crates/pixtuoid/src/install crates/pixtuoid/tests/install.rs crates/pixtuoid/Cargo.toml
 git commit -m "feat(bin): install/uninstall hooks with atomic write + advisory lock"
 ```
 
-## Phase J — ascii-agents-hook shim & polish
+## Phase J — pixtuoid-hook shim & polish
 
-### Task 26: ascii-agents-hook shim binary
+### Task 26: pixtuoid-hook shim binary
 
 **Files:**
-- Replace: `crates/ascii-agents-hook/src/main.rs`
+- Replace: `crates/pixtuoid-hook/src/main.rs`
 
 - [ ] **Step 1: Implement**
 
@@ -3909,7 +3909,7 @@ use serde_json::Value;
 
 fn main() -> Result<()> {
     let socket = std::env::var("ASCII_AGENTS_SOCKET")
-        .unwrap_or_else(|_| "/tmp/ascii-agents.sock".to_string());
+        .unwrap_or_else(|_| "/tmp/pixtuoid.sock".to_string());
 
     // Read whole stdin (CC sends a single JSON object).
     let mut buf = String::new();
@@ -3938,22 +3938,22 @@ fn main() -> Result<()> {
 
 - [ ] **Step 2: Build**
 
-Run: `cargo build -p ascii-agents-hook`
-Expected: clean. Binary at `target/debug/ascii-agents-hook`.
+Run: `cargo build -p pixtuoid-hook`
+Expected: clean. Binary at `target/debug/pixtuoid-hook`.
 
 - [ ] **Step 3: Manual smoke**
 
 ```bash
-target/debug/ascii-agents-hook < /dev/null    # exit 0, no error
+target/debug/pixtuoid-hook < /dev/null    # exit 0, no error
 echo '{"hook_event_name":"SessionStart","session_id":"x","transcript_path":"/p","cwd":"/"}' | \
-  target/debug/ascii-agents-hook              # exit 0 even if socket missing
+  target/debug/pixtuoid-hook              # exit 0 even if socket missing
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents-hook/src/main.rs
-git commit -m "feat(hook): shim — stdin JSON → /tmp/ascii-agents.sock"
+git add crates/pixtuoid-hook/src/main.rs
+git commit -m "feat(hook): shim — stdin JSON → /tmp/pixtuoid.sock"
 ```
 
 ---
@@ -3961,12 +3961,12 @@ git commit -m "feat(hook): shim — stdin JSON → /tmp/ascii-agents.sock"
 ### Task 27: Full-stack smoke test — spawn binary, fire events, verify
 
 **Files:**
-- Create: `crates/ascii-agents/tests/smoke.rs`
+- Create: `crates/pixtuoid/tests/smoke.rs`
 
 - [ ] **Step 1: Write the test**
 
 ```rust
-//! Spawns the ascii-agents binary with --socket pointed at a temp path and
+//! Spawns the pixtuoid binary with --socket pointed at a temp path and
 //! the TUI disabled (TODO: add a --headless flag for tests), then writes
 //! several fake events via the socket and verifies the process keeps running.
 //!
@@ -3998,13 +3998,13 @@ async fn binary_accepts_events_on_socket() {
 
 - [ ] **Step 2: Run**
 
-Run: `cargo test -p ascii-agents --test smoke`
+Run: `cargo test -p pixtuoid --test smoke`
 Expected: 1 passed.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents/tests/smoke.rs
+git add crates/pixtuoid/tests/smoke.rs
 git commit -m "test(bin): placeholder smoke test for socket ingest"
 ```
 
@@ -4019,24 +4019,24 @@ This task has no code. It documents the steps a human should run to verify v1 wo
 ```bash
 cargo build --release
 ```
-Binaries appear at `target/release/ascii-agents` and `target/release/ascii-agents-hook`.
+Binaries appear at `target/release/pixtuoid` and `target/release/pixtuoid-hook`.
 
 - [ ] **Step 2: Install hooks pointing at the release binary**
 
 ```bash
-./target/release/ascii-agents install-hooks --hook-path "$(pwd)/target/release/ascii-agents-hook"
+./target/release/pixtuoid install-hooks --hook-path "$(pwd)/target/release/pixtuoid-hook"
 ```
 
-Expected output includes `ok: installed ascii-agents hooks into ~/.claude/settings.json` and a backup path. Verify:
+Expected output includes `ok: installed pixtuoid hooks into ~/.claude/settings.json` and a backup path. Verify:
 
 ```bash
-jq '.hooks.PreToolUse' ~/.claude/settings.json   # shows an entry with _ascii_agents: true
+jq '.hooks.PreToolUse' ~/.claude/settings.json   # shows an entry with _pixtuoid: true
 ```
 
 - [ ] **Step 3: Launch the TUI in one terminal**
 
 ```bash
-./target/release/ascii-agents
+./target/release/pixtuoid
 ```
 
 You should see an empty office scene with the title bar and footer.
@@ -4044,7 +4044,7 @@ You should see an empty office scene with the title bar and footer.
 - [ ] **Step 4: Start a Claude Code session in another terminal**
 
 ```bash
-cd /tmp && mkdir -p ascii-agents-demo && cd ascii-agents-demo
+cd /tmp && mkdir -p pixtuoid-demo && cd pixtuoid-demo
 claude
 ```
 
@@ -4061,7 +4061,7 @@ Exit CC (`Ctrl-D` twice). The character should disappear from the TUI within a f
 - [ ] **Step 7: Uninstall hooks**
 
 ```bash
-./target/release/ascii-agents uninstall-hooks
+./target/release/pixtuoid uninstall-hooks
 ```
 
 Verify `~/.claude/settings.json` no longer contains the sentinel:

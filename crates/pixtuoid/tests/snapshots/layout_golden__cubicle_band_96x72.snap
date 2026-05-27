@@ -1,0 +1,11 @@
+---
+source: crates/pixtuoid/tests/layout_golden.rs
+assertion_line: 38
+expression: l.cubicle_band
+---
+Bounds {
+    x: 27,
+    y: 21,
+    width: 69,
+    height: 43,
+}

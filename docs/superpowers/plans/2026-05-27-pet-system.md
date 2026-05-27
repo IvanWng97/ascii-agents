@@ -13,38 +13,38 @@
 ## File Structure
 
 ### New files
-- `crates/ascii-agents/src/tui/pet.rs` — `PetKind` enum, `select_pet_for_floor()`, all per-kind static data
-- `crates/ascii-agents/sprites/default/dog_walk_0.sprite` — 8x6 dog walking frame 0
-- `crates/ascii-agents/sprites/default/dog_walk_1.sprite` — 8x6 dog walking frame 1
-- `crates/ascii-agents/sprites/default/dog_sit.sprite` — 6x6 dog sitting
-- `crates/ascii-agents/sprites/default/dog_sleep.sprite` — 6x4 dog sleeping
+- `crates/pixtuoid/src/tui/pet.rs` — `PetKind` enum, `select_pet_for_floor()`, all per-kind static data
+- `crates/pixtuoid/sprites/default/dog_walk_0.sprite` — 8x6 dog walking frame 0
+- `crates/pixtuoid/sprites/default/dog_walk_1.sprite` — 8x6 dog walking frame 1
+- `crates/pixtuoid/sprites/default/dog_sit.sprite` — 6x6 dog sitting
+- `crates/pixtuoid/sprites/default/dog_sleep.sprite` — 6x4 dog sleeping
 
 ### Modified files
-- `crates/ascii-agents/src/tui/mod.rs` — add `pub mod pet;`, update click handler
-- `crates/ascii-agents/src/config.rs` — add `enabled_pets` field + `resolve_pets()`
-- `crates/ascii-agents/src/tui/renderer.rs` — rename `CatPetState` → `PetPetState`, update `DrawCtx`
-- `crates/ascii-agents/src/tui/tui_renderer.rs` — rename fields, add `enabled_pets`, update accessors
-- `crates/ascii-agents/src/tui/pixel_painter/drawable.rs` — `DrawableKind::Cat` → `Pet`, `cat_position` → `pet_position`
-- `crates/ascii-agents/src/tui/pixel_painter/mod.rs` — update `PixelPassResult`, `PixelCtx`, cat block
-- `crates/ascii-agents/src/tui/hit_test.rs` — `hit_test_cat` → `hit_test_pet`
-- `crates/ascii-agents/src/tui/widgets/tooltip.rs` — `paint_cat_tooltip` → `paint_pet_tooltip`
-- `crates/ascii-agents-core/src/sprite/format.rs` — add dog to `OPTIONAL_FURNITURE_ANIMATIONS`
-- `crates/ascii-agents/sprites/default/pack.toml` — add dog palette + animations
-- `crates/ascii-agents/src/tui/embedded_pack.rs` — add `include_str!` for dog sprites
-- `crates/ascii-agents/src/runtime.rs` — thread `enabled_pets` to `run_tui`
-- `crates/ascii-agents/src/main.rs` — resolve pets from config, pass to `runtime::run`
+- `crates/pixtuoid/src/tui/mod.rs` — add `pub mod pet;`, update click handler
+- `crates/pixtuoid/src/config.rs` — add `enabled_pets` field + `resolve_pets()`
+- `crates/pixtuoid/src/tui/renderer.rs` — rename `CatPetState` → `PetPetState`, update `DrawCtx`
+- `crates/pixtuoid/src/tui/tui_renderer.rs` — rename fields, add `enabled_pets`, update accessors
+- `crates/pixtuoid/src/tui/pixel_painter/drawable.rs` — `DrawableKind::Cat` → `Pet`, `cat_position` → `pet_position`
+- `crates/pixtuoid/src/tui/pixel_painter/mod.rs` — update `PixelPassResult`, `PixelCtx`, cat block
+- `crates/pixtuoid/src/tui/hit_test.rs` — `hit_test_cat` → `hit_test_pet`
+- `crates/pixtuoid/src/tui/widgets/tooltip.rs` — `paint_cat_tooltip` → `paint_pet_tooltip`
+- `crates/pixtuoid-core/src/sprite/format.rs` — add dog to `OPTIONAL_FURNITURE_ANIMATIONS`
+- `crates/pixtuoid/sprites/default/pack.toml` — add dog palette + animations
+- `crates/pixtuoid/src/tui/embedded_pack.rs` — add `include_str!` for dog sprites
+- `crates/pixtuoid/src/runtime.rs` — thread `enabled_pets` to `run_tui`
+- `crates/pixtuoid/src/main.rs` — resolve pets from config, pass to `runtime::run`
 
 ---
 
 ### Task 1: PetKind enum and floor selection
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/pet.rs`
-- Modify: `crates/ascii-agents/src/tui/mod.rs:1-13` (add module declaration)
+- Create: `crates/pixtuoid/src/tui/pet.rs`
+- Modify: `crates/pixtuoid/src/tui/mod.rs:1-13` (add module declaration)
 
 - [ ] **Step 1: Write failing tests for PetKind**
 
-Add to `crates/ascii-agents/src/tui/pet.rs`:
+Add to `crates/pixtuoid/src/tui/pet.rs`:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -165,17 +165,17 @@ mod tests {
 
 - [ ] **Step 2: Add module declaration**
 
-In `crates/ascii-agents/src/tui/mod.rs`, add `pub mod pet;` after line 6 (after `pub mod hit_test;`).
+In `crates/pixtuoid/src/tui/mod.rs`, add `pub mod pet;` after line 6 (after `pub mod hit_test;`).
 
 - [ ] **Step 3: Run tests to verify they pass**
 
-Run: `cargo test -p ascii-agents -- tui::pet --nocapture`
+Run: `cargo test -p pixtuoid -- tui::pet --nocapture`
 Expected: All 6 tests PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/pet.rs crates/ascii-agents/src/tui/mod.rs
+git add crates/pixtuoid/src/tui/pet.rs crates/pixtuoid/src/tui/mod.rs
 git commit -m "feat(pet): add PetKind enum and select_pet_for_floor"
 ```
 
@@ -184,11 +184,11 @@ git commit -m "feat(pet): add PetKind enum and select_pet_for_floor"
 ### Task 2: Config layer — enabled-pets
 
 **Files:**
-- Modify: `crates/ascii-agents/src/config.rs:5-16` (AppConfig struct)
+- Modify: `crates/pixtuoid/src/config.rs:5-16` (AppConfig struct)
 
 - [ ] **Step 1: Write failing tests for resolve_pets**
 
-Add to `crates/ascii-agents/src/config.rs` test module:
+Add to `crates/pixtuoid/src/config.rs` test module:
 
 ```rust
 #[test]
@@ -241,12 +241,12 @@ fn save_preserves_enabled_pets() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p ascii-agents -- config::tests --nocapture`
+Run: `cargo test -p pixtuoid -- config::tests --nocapture`
 Expected: FAIL — `enabled_pets` field and `resolve_pets` not found
 
 - [ ] **Step 3: Implement config changes**
 
-In `crates/ascii-agents/src/config.rs`, add to `AppConfig` struct (after `pack_dir` field at line 15):
+In `crates/pixtuoid/src/config.rs`, add to `AppConfig` struct (after `pack_dir` field at line 15):
 
 ```rust
     #[serde(rename = "enabled-pets", default, skip_serializing_if = "Option::is_none")]
@@ -275,13 +275,13 @@ pub fn resolve_pets(config: &AppConfig) -> Vec<crate::tui::pet::PetKind> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p ascii-agents -- config::tests --nocapture`
+Run: `cargo test -p pixtuoid -- config::tests --nocapture`
 Expected: All tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/config.rs
+git add crates/pixtuoid/src/config.rs
 git commit -m "feat(pet): add enabled-pets config field and resolve_pets"
 ```
 
@@ -290,16 +290,16 @@ git commit -m "feat(pet): add enabled-pets config field and resolve_pets"
 ### Task 3: Rename CatPetState → PetPetState and update DrawCtx
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/renderer.rs:48-99` (struct + DrawCtx)
-- Modify: `crates/ascii-agents/src/tui/tui_renderer.rs:29-50,53-72,132-142,163-166,386-408`
-- Modify: `crates/ascii-agents/src/tui/mod.rs:176-183` (click handler)
-- Modify: `crates/ascii-agents/src/tui/pixel_painter/mod.rs:66-82` (PixelCtx)
+- Modify: `crates/pixtuoid/src/tui/renderer.rs:48-99` (struct + DrawCtx)
+- Modify: `crates/pixtuoid/src/tui/tui_renderer.rs:29-50,53-72,132-142,163-166,386-408`
+- Modify: `crates/pixtuoid/src/tui/mod.rs:176-183` (click handler)
+- Modify: `crates/pixtuoid/src/tui/pixel_painter/mod.rs:66-82` (PixelCtx)
 
 These files are tightly coupled — change them together.
 
 - [ ] **Step 1: Rename CatPetState → PetPetState in renderer.rs**
 
-In `crates/ascii-agents/src/tui/renderer.rs`:
+In `crates/pixtuoid/src/tui/renderer.rs`:
 
 Rename `CatPetState` to `PetPetState` (lines 53-71). Add `kind: PetKind` field:
 
@@ -328,7 +328,7 @@ Update `draw_scene()`:
 
 - [ ] **Step 2: Update TuiRenderer fields in tui_renderer.rs**
 
-In `crates/ascii-agents/src/tui/tui_renderer.rs`:
+In `crates/pixtuoid/src/tui/tui_renderer.rs`:
 
 Rename fields (lines 41-42):
 - `cat_pet: Option<CatPetState>` → `active_pet: Option<PetPetState>`
@@ -352,7 +352,7 @@ Update DrawCtx assembly (lines 386-406):
 
 - [ ] **Step 3: Update PixelCtx and PixelPassResult in pixel_painter/mod.rs**
 
-In `crates/ascii-agents/src/tui/pixel_painter/mod.rs`:
+In `crates/pixtuoid/src/tui/pixel_painter/mod.rs`:
 
 `PixelPassResult` (line 33): `cat_pos: Option<(Point, &'static str)>` → `pet_pos: Option<(Point, &'static str, PetKind)>`
 
@@ -364,7 +364,7 @@ Return (line 1026): `cat_pos: resolved_cat_pos` → `pet_pos: resolved_pet_pos`
 
 - [ ] **Step 4: Update click handler in tui/mod.rs**
 
-In `crates/ascii-agents/src/tui/mod.rs` (lines 176-183):
+In `crates/pixtuoid/src/tui/mod.rs` (lines 176-183):
 
 ```rust
 } else if let Some((pet_pos, anim, kind)) = renderer.cached_pet_pos() {
@@ -386,7 +386,7 @@ Expected: compiles (some warnings about unused `hit_test_pet`/`paint_pet_tooltip
 
 - [ ] **Step 6: Run tests**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS
 
 - [ ] **Step 7: Commit**
@@ -401,12 +401,12 @@ git commit -m "refactor(pet): rename CatPetState → PetPetState, update DrawCtx
 ### Task 4: Generalize drawable — DrawableKind::Pet and pet_position()
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/pixel_painter/drawable.rs:143-149,156-266,561-587`
-- Modify: `crates/ascii-agents/src/tui/pixel_painter/mod.rs:762-797`
+- Modify: `crates/pixtuoid/src/tui/pixel_painter/drawable.rs:143-149,156-266,561-587`
+- Modify: `crates/pixtuoid/src/tui/pixel_painter/mod.rs:762-797`
 
 - [ ] **Step 1: Rename DrawableKind::Cat → DrawableKind::Pet**
 
-In `crates/ascii-agents/src/tui/pixel_painter/drawable.rs`:
+In `crates/pixtuoid/src/tui/pixel_painter/drawable.rs`:
 
 Add import: `use crate::tui::pet::PetKind;`
 
@@ -453,7 +453,7 @@ let anim = if kind.sleeps_near_idle() && (all_idle || is_idle_spot) {
 
 - [ ] **Step 3: Update the cat block in pixel_painter/mod.rs**
 
-In `crates/ascii-agents/src/tui/pixel_painter/mod.rs` (lines 762-797):
+In `crates/pixtuoid/src/tui/pixel_painter/mod.rs` (lines 762-797):
 
 Replace the cat block with a pet block:
 
@@ -488,7 +488,7 @@ In `tui_renderer.rs` DrawCtx construction: add `floor_pet_kind: crate::tui::pet:
 
 - [ ] **Step 5: Verify compilation and tests**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS
 
 - [ ] **Step 6: Commit**
@@ -503,13 +503,13 @@ git commit -m "refactor(pet): generalize DrawableKind::Cat → Pet, cat_position
 ### Task 5: Generalize hit-test and tooltip
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/hit_test.rs:287-305,393-423`
-- Modify: `crates/ascii-agents/src/tui/widgets/tooltip.rs:295-343`
-- Modify: `crates/ascii-agents/src/tui/renderer.rs:35-45` (re-exports)
+- Modify: `crates/pixtuoid/src/tui/hit_test.rs:287-305,393-423`
+- Modify: `crates/pixtuoid/src/tui/widgets/tooltip.rs:295-343`
+- Modify: `crates/pixtuoid/src/tui/renderer.rs:35-45` (re-exports)
 
 - [ ] **Step 1: Rename hit_test_cat → hit_test_pet**
 
-In `crates/ascii-agents/src/tui/hit_test.rs`:
+In `crates/pixtuoid/src/tui/hit_test.rs`:
 
 Add import: `use crate::tui::pet::PetKind;`
 
@@ -528,7 +528,7 @@ Update existing tests to use `hit_test_pet(PetKind::Cat, ...)`.
 
 - [ ] **Step 2: Rename paint_cat_tooltip → paint_pet_tooltip**
 
-In `crates/ascii-agents/src/tui/widgets/tooltip.rs`:
+In `crates/pixtuoid/src/tui/widgets/tooltip.rs`:
 
 Add import: `use crate::tui::pet::PetKind;`
 
@@ -586,7 +586,7 @@ paint_pet_tooltip(f, kind, anim, on_cooldown, mx, my, actual_scene, theme);
 
 - [ ] **Step 5: Verify compilation and tests**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS
 
 - [ ] **Step 6: Commit**
@@ -601,13 +601,13 @@ git commit -m "refactor(pet): generalize hit_test_cat → hit_test_pet, paint_ca
 ### Task 6: Wire config through to TuiRenderer
 
 **Files:**
-- Modify: `crates/ascii-agents/src/main.rs:48-69` (Cmd::Run handler)
-- Modify: `crates/ascii-agents/src/runtime.rs:30-60,99` (run function + run_tui call)
-- Modify: `crates/ascii-agents/src/tui/mod.rs:27-34` (run_tui signature)
+- Modify: `crates/pixtuoid/src/main.rs:48-69` (Cmd::Run handler)
+- Modify: `crates/pixtuoid/src/runtime.rs:30-60,99` (run function + run_tui call)
+- Modify: `crates/pixtuoid/src/tui/mod.rs:27-34` (run_tui signature)
 
 - [ ] **Step 1: Add enabled_pets to runtime::run signature**
 
-In `crates/ascii-agents/src/runtime.rs`, add `enabled_pets: Vec<crate::tui::pet::PetKind>` parameter to `run()`.
+In `crates/pixtuoid/src/runtime.rs`, add `enabled_pets: Vec<crate::tui::pet::PetKind>` parameter to `run()`.
 
 Thread it to the `run_tui` call:
 ```rust
@@ -616,13 +616,13 @@ crate::tui::run_tui(scene_rx, pack_dir, floor_caps, theme, config_path, desk_cap
 
 - [ ] **Step 2: Update run_tui signature and TuiRenderer construction**
 
-In `crates/ascii-agents/src/tui/mod.rs`, add `enabled_pets: Vec<pet::PetKind>` to `run_tui()` signature.
+In `crates/pixtuoid/src/tui/mod.rs`, add `enabled_pets: Vec<pet::PetKind>` to `run_tui()` signature.
 
 Pass `enabled_pets` to `TuiRenderer::new()`.
 
 - [ ] **Step 3: Resolve pets in main.rs**
 
-In `crates/ascii-agents/src/main.rs`, inside the `Cmd::Run` handler (around line 58), add:
+In `crates/pixtuoid/src/main.rs`, inside the `Cmd::Run` handler (around line 58), add:
 ```rust
 let enabled_pets = config::resolve_pets(&cfg);
 ```
@@ -647,7 +647,7 @@ In `runtime.rs`, the headless path doesn't use TuiRenderer, so `enabled_pets` is
 
 - [ ] **Step 5: Verify compilation and tests**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS
 
 - [ ] **Step 6: Commit**
@@ -662,17 +662,17 @@ git commit -m "feat(pet): wire enabled-pets config through main → runtime → 
 ### Task 7: Dog sprites and pack registration
 
 **Files:**
-- Create: `crates/ascii-agents/sprites/default/dog_walk_0.sprite`
-- Create: `crates/ascii-agents/sprites/default/dog_walk_1.sprite`
-- Create: `crates/ascii-agents/sprites/default/dog_sit.sprite`
-- Create: `crates/ascii-agents/sprites/default/dog_sleep.sprite`
-- Modify: `crates/ascii-agents/sprites/default/pack.toml:7-40,115-125`
-- Modify: `crates/ascii-agents/src/tui/embedded_pack.rs:96-143`
-- Modify: `crates/ascii-agents-core/src/sprite/format.rs:270-303`
+- Create: `crates/pixtuoid/sprites/default/dog_walk_0.sprite`
+- Create: `crates/pixtuoid/sprites/default/dog_walk_1.sprite`
+- Create: `crates/pixtuoid/sprites/default/dog_sit.sprite`
+- Create: `crates/pixtuoid/sprites/default/dog_sleep.sprite`
+- Modify: `crates/pixtuoid/sprites/default/pack.toml:7-40,115-125`
+- Modify: `crates/pixtuoid/src/tui/embedded_pack.rs:96-143`
+- Modify: `crates/pixtuoid-core/src/sprite/format.rs:270-303`
 
 - [ ] **Step 1: Add dog to OPTIONAL_FURNITURE_ANIMATIONS**
 
-In `crates/ascii-agents-core/src/sprite/format.rs`:
+In `crates/pixtuoid-core/src/sprite/format.rs`:
 
 Add `"dog_walk"`, `"dog_sit"`, `"dog_sleep"` to `OPTIONAL_FURNITURE_ANIMATIONS` (after the cat entries around line 277).
 
@@ -680,7 +680,7 @@ Add `("dog_walk", 2)` to `MULTI_FRAME_REQUIREMENTS` (after `("cat_walk", 2)` at 
 
 - [ ] **Step 2: Create dog sprite files**
 
-`crates/ascii-agents/sprites/default/dog_walk_0.sprite`:
+`crates/pixtuoid/sprites/default/dog_walk_0.sprite`:
 ```
 # 8x6 dog walking (frame 0). Side view — floppy ears, wagging tail up.
 # Palette: x = tan fur (#c8a060), z = dark brown (#7a5030)
@@ -693,7 +693,7 @@ Add `("dog_walk", 2)` to `MULTI_FRAME_REQUIREMENTS` (after `("cat_walk", 2)` at 
 . . . . . . . .
 ```
 
-`crates/ascii-agents/sprites/default/dog_walk_1.sprite`:
+`crates/pixtuoid/sprites/default/dog_walk_1.sprite`:
 ```
 # 8x6 dog walking (frame 1). Alternate legs, tail mid.
 @frame 0
@@ -705,7 +705,7 @@ Add `("dog_walk", 2)` to `MULTI_FRAME_REQUIREMENTS` (after `("cat_walk", 2)` at 
 . . . . . . . .
 ```
 
-`crates/ascii-agents/sprites/default/dog_sit.sprite`:
+`crates/pixtuoid/sprites/default/dog_sit.sprite`:
 ```
 # 6x6 dog sitting — front view, ears floppy, tongue out.
 @frame 0
@@ -717,7 +717,7 @@ x x r x x .
 . . . . . .
 ```
 
-`crates/ascii-agents/sprites/default/dog_sleep.sprite`:
+`crates/pixtuoid/sprites/default/dog_sleep.sprite`:
 ```
 # 6x4 dog sleeping — curled up, nose tucked.
 @frame 0
@@ -729,7 +729,7 @@ x x r x x .
 
 - [ ] **Step 3: Add palette keys and animations to pack.toml**
 
-In `crates/ascii-agents/sprites/default/pack.toml`:
+In `crates/pixtuoid/sprites/default/pack.toml`:
 
 Add palette entries (in the `[palette]` section):
 ```toml
@@ -754,7 +754,7 @@ frame_ms = 600
 
 - [ ] **Step 4: Add include_str! entries in embedded_pack.rs**
 
-In `crates/ascii-agents/src/tui/embedded_pack.rs`, after the cat includes (around line 99):
+In `crates/pixtuoid/src/tui/embedded_pack.rs`, after the cat includes (around line 99):
 
 ```rust
 let dog_0 = include_str!("../../sprites/default/dog_walk_0.sprite");
@@ -773,7 +773,7 @@ And add to the tuple array (after cat entries around line 143):
 
 - [ ] **Step 5: Verify compilation and tests**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS
 
 - [ ] **Step 6: Visual verification**
@@ -802,12 +802,12 @@ git commit -m "feat(pet): add dog sprites, pack registration, and embedded_pack 
 
 - [ ] **Step 1: Run full test suite**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All tests PASS (330+)
 
 - [ ] **Step 2: Run clippy**
 
-Run: `cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings`
+Run: `cargo clippy --workspace --all-targets --features pixtuoid-core/test-renderer -- -D warnings`
 Expected: No warnings
 
 - [ ] **Step 3: Run full preflight**
@@ -819,7 +819,7 @@ Expected: All checks pass (fmt, machete, deny, clippy, tests)
 
 ```bash
 cargo build --release --workspace
-./target/release/ascii-agents run
+./target/release/pixtuoid run
 ```
 
 Verify:
@@ -831,7 +831,7 @@ Verify:
 
 - [ ] **Step 5: Test config**
 
-Create `~/.config/ascii-agents/config.toml`:
+Create `~/.config/pixtuoid/config.toml`:
 ```toml
 enabled-pets = ["dog"]
 ```

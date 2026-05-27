@@ -1,0 +1,53 @@
+[package]
+name                   = "pixtuoid"
+description            = "Terminal pixel-art office for AI coding agents"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+homepage.workspace     = true
+keywords.workspace     = true
+categories.workspace   = true
+
+[[bin]]
+name = "pixtuoid"
+path = "src/main.rs"
+
+[dependencies]
+pixtuoid-core  = { path = "../pixtuoid-core", version = "0.4.0" }
+tokio              = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net", "fs", "io-util"] }
+ratatui            = { workspace = true }
+crossterm          = { workspace = true }
+clap               = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+toml               = { workspace = true }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+fs2                = { workspace = true }
+which              = "8"
+# clock feature gives us Local::now() w/ system timezone for the wall clock.
+chrono             = { version = "0.4", default-features = false, features = ["clock"] }
+# palette gives Lab-space color blending — perceptually-correct twilight
+# transitions and dim overlays vs naive sRGB linear blend.
+palette            = { version = "0.7", default-features = false, features = ["std"] }
+open               = "5"
+
+[dev-dependencies]
+tempfile = "3"
+image    = { version = "0.25", default-features = false, features = ["png", "gif"] }
+insta    = "1"
+
+[[example]]
+name = "snapshot"
+path = "examples/snapshot.rs"
+
+[package.metadata.deb]
+section = "utils"
+assets = [
+    ["target/release/pixtuoid", "usr/bin/", "755"],
+]
+extended-description = "Terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each running Claude Code session appears as an animated sprite in a top-down ASCII office."

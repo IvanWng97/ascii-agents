@@ -1,14 +1,14 @@
 ---
 name: beautify-decoration
 version: 1.0.0
-description: "Iterate on the visual identity of a top-down pixel-art decoration (sprite + layout integration) in ascii-agents. Use when redesigning an existing decoration (pantry, lounge, meeting room, cubicle decor) or adding a new one. Captures the rebuild trap, the visual-verification loop, resolution constraints, sprite-format pitfalls, and the layout-integration checklist that we learned the hard way during the pantry beautify session."
+description: "Iterate on the visual identity of a top-down pixel-art decoration (sprite + layout integration) in pixtuoid. Use when redesigning an existing decoration (pantry, lounge, meeting room, cubicle decor) or adding a new one. Captures the rebuild trap, the visual-verification loop, resolution constraints, sprite-format pitfalls, and the layout-integration checklist that we learned the hard way during the pantry beautify session."
 metadata:
-  scope: "ascii-agents repo only"
+  scope: "pixtuoid repo only"
 ---
 
 # beautify-decoration (v1)
 
-A repo-specific iteration loop for visually redesigning a decoration in `ascii-agents`. Follow this when the user says "beautify X" or "make Y look better" — it short-circuits several rebuild traps and visual-design dead ends that aren't obvious from the codebase alone.
+A repo-specific iteration loop for visually redesigning a decoration in `pixtuoid`. Follow this when the user says "beautify X" or "make Y look better" — it short-circuits several rebuild traps and visual-design dead ends that aren't obvious from the codebase alone.
 
 ## When to use
 
@@ -39,7 +39,7 @@ A repo-specific iteration loop for visually redesigning a decoration in `ascii-a
 
 The user is the final judge of "does it look like a fridge / coffee machine / etc." — but you should self-critique before sending. Three iterations of self-critique before bothering the user.
 
-**Step 7 is mandatory.** `cargo build --release --example snapshot` does NOT rebuild the main binary. Users testing with `./target/release/ascii-agents run` won't see sprite changes until the workspace is rebuilt. Forgetting this step is how "I changed the sprite but nothing happened in the live TUI" bugs get filed.
+**Step 7 is mandatory.** `cargo build --release --example snapshot` does NOT rebuild the main binary. Users testing with `./target/release/pixtuoid run` won't see sprite changes until the workspace is rebuilt. Forgetting this step is how "I changed the sprite but nothing happened in the live TUI" bugs get filed.
 
 **Step 8 is mandatory.** Commit messages for sprite changes must include the iteration count and a one-line rationale for each rejected attempt. Future editors need to know which alternatives were explored — otherwise they'll re-try the same dead-end designs (the seated_sleeping sprite went through 4 iterations before reading correctly at scale).
 
@@ -48,14 +48,14 @@ The user is the final judge of "does it look like a fridge / coffee machine / et
 ### 1. The rebuild trap
 
 - `cargo build --release --workspace` **does not** rebuild examples. Use `cargo build --release --example snapshot` when iterating on `examples/snapshot`.
-- `include_str!` in `crates/ascii-agents/src/tui/embedded_pack.rs` bakes sprite files at compile time. A `build.rs` exists at `crates/ascii-agents/build.rs` that emits `rerun-if-changed` for every `.sprite` and `pack.toml` — so a sprite edit DOES trigger a rebuild now. If you added a new asset and edits still aren't being picked up, check that build.rs is matching its extension.
+- `include_str!` in `crates/pixtuoid/src/tui/embedded_pack.rs` bakes sprite files at compile time. A `build.rs` exists at `crates/pixtuoid/build.rs` that emits `rerun-if-changed` for every `.sprite` and `pack.toml` — so a sprite edit DOES trigger a rebuild now. If you added a new asset and edits still aren't being picked up, check that build.rs is matching its extension.
 - If unsure, verify with: `strings target/release/examples/snapshot | grep "<some unique string from your sprite>"`.
 
 ### 2. Snapshot defaults hide the large sprite variants
 
 `examples/snapshot` defaults to 192×80 cells → buffer 192×160. Several layouts (pantry, corridor appliances) have conditional variants based on room dimensions. Corridor items (vending machine, printer) only appear when `walkway_h ≥ 9–10`. **Use the default `--cols 192 --rows 80` to see everything.**
 
-Pantry-specific threshold: `pantry_room.width >= 36` triggers the 32×10 sprite; below that, the 20×8 `pantry_small.sprite` is used. Threshold lives in `crates/ascii-agents-core/src/layout.rs:compute()`.
+Pantry-specific threshold: `pantry_room.width >= 36` triggers the 32×10 sprite; below that, the 20×8 `pantry_small.sprite` is used. Threshold lives in `crates/pixtuoid-core/src/layout.rs:compute()`.
 
 ### 3. Visual-inspection helper
 
@@ -98,10 +98,10 @@ Symptoms of weak identity:
 ### 6. Sprite-format pitfalls
 
 - Every row in a `.sprite` file must have **exactly** the same number of space-separated cells. Off-by-one is the most common bug.
-- Verify with: `awk '/^@/{next}/^#/{next}NF{print NR": "NF}' crates/ascii-agents/sprites/default/foo.sprite` — all NF values must match.
+- Verify with: `awk '/^@/{next}/^#/{next}NF{print NR": "NF}' crates/pixtuoid/sprites/default/foo.sprite` — all NF values must match.
 - Or visualize packed rows: `awk '/^@/{next}/^#/{next}NF{for(i=1;i<=NF;i++)printf "%s",$i;print " ["NF"]"}' foo.sprite`.
 - Palette keys must be unique RGB (the per-agent recolor pass substitutes by RGB equality — see `embedded_pack.rs` header comment).
-- Reuse existing palette keys when possible; new keys go in `crates/ascii-agents/sprites/default/pack.toml` `[palette]` section.
+- Reuse existing palette keys when possible; new keys go in `crates/pixtuoid/sprites/default/pack.toml` `[palette]` section.
 
 ### 7. Layout integration checklist
 
@@ -109,13 +109,13 @@ When a sprite **changes size**:
 
 1. Update the walkable-mask footprint in `core::layout::build_walkable_mask` — there's a per-WaypointKind match arm with hardcoded `(w, h)` tuples.
 2. If the obstacle is a non-waypoint (plant, wall decor, pod decor), update the corresponding mark_blocked call too.
-3. Run `cargo test -p ascii-agents-core` — the `walkable_mask_is_fully_connected_across_buffer_sizes` test catches mask/sprite mismatches by trying multiple buffer sizes and asserting BFS reach from the door.
+3. Run `cargo test -p pixtuoid-core` — the `walkable_mask_is_fully_connected_across_buffer_sizes` test catches mask/sprite mismatches by trying multiple buffer sizes and asserting BFS reach from the door.
 4. If the connectivity test fails on the smallest buffer (96×70), the sprite is too big for that pantry. Add a `_small` variant + conditional pick (see `pantry_counter_size` in `SceneLayout` for the pattern).
-5. Update animation list in `crates/ascii-agents/sprites/default/pack.toml` and `embedded_pack.rs` to include both `foo.sprite` and `foo_small.sprite` if you added a variant.
+5. Update animation list in `crates/pixtuoid/sprites/default/pack.toml` and `embedded_pack.rs` to include both `foo.sprite` and `foo_small.sprite` if you added a variant.
 
 ### 8. Live binary uses different binary than snapshot
 
-`./target/release/ascii-agents run` uses the main binary. `examples/snapshot` uses its own binary. **Both** need `cargo build --release --example snapshot` (or `cargo build --release --workspace --example snapshot`) when iterating on snapshot — and `cargo build --release` is fine for the live TUI binary.
+`./target/release/pixtuoid run` uses the main binary. `examples/snapshot` uses its own binary. **Both** need `cargo build --release --example snapshot` (or `cargo build --release --workspace --example snapshot`) when iterating on snapshot — and `cargo build --release` is fine for the live TUI binary.
 
 ## Self-critique checklist — MANDATORY before every SendUserFile
 
@@ -127,7 +127,7 @@ You **must** run this checklist explicitly before each `SendUserFile` in a beaut
 | Visually differs | Diff is noticeable, not a sub-pixel tweak. If hash-identical to last attempt, you didn't actually rebuild. |
 | Subzone width | Each new sub-element ≥ 5 **display** cells wide (horizontal cells = buffer px; vertical cells = buffer px / 2 due to half-block). |
 | Color distinctness | New elements use colors distinct from immediate neighbours. |
-| `cargo test` | Connectivity test passes (`cargo test --workspace --features ascii-agents-core/test-renderer`). |
+| `cargo test` | Connectivity test passes (`cargo test --workspace --features pixtuoid-core/test-renderer`). |
 | `--debug-walkable` | Rendered the overlay and visually checked no narrow / isolated walkable pockets near the new element. |
 
 Skipping this checklist defeats the point of the skill — the whole reason it exists is that past sessions shipped invisible / unverified changes.
@@ -142,7 +142,7 @@ Skipping this checklist defeats the point of the skill — the whole reason it e
 6. Decide where it lives in the layout — add a `Point` placement in `SceneLayout::compute`.
 7. Add the obstacle footprint to `build_walkable_mask` (or a waypoint kind if it's interactive).
 8. Add a `DrawableKind::Foo` variant + `paint_drawable` arm if z-sorting matters.
-9. Run `cargo test -p ascii-agents-core`.
+9. Run `cargo test -p pixtuoid-core`.
 10. Snapshot + iterate.
 
 ## Recap of the pantry session (case study)

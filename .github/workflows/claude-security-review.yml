@@ -4,10 +4,10 @@ on:
   pull_request:
     types: [opened, reopened, synchronize]
     paths:
-      - "crates/ascii-agents-hook/**"
-      - "crates/ascii-agents/install/**"
-      - "crates/ascii-agents/runtime.rs"
-      - "crates/ascii-agents-core/source/**"
+      - "crates/pixtuoid-hook/**"
+      - "crates/pixtuoid/install/**"
+      - "crates/pixtuoid/runtime.rs"
+      - "crates/pixtuoid-core/source/**"
 
 permissions:
   contents: read

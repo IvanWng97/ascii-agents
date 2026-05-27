@@ -58,9 +58,9 @@ Add missing fields (authors, description, homepage, keywords, categories) to wor
 
 **Files:**
 - Modify: `Cargo.toml` (workspace)
-- Modify: `crates/ascii-agents-core/Cargo.toml`
-- Modify: `crates/ascii-agents/Cargo.toml`
-- Modify: `crates/ascii-agents-hook/Cargo.toml`
+- Modify: `crates/pixtuoid-core/Cargo.toml`
+- Modify: `crates/pixtuoid/Cargo.toml`
+- Modify: `crates/pixtuoid-hook/Cargo.toml`
 
 - [ ] **Step 1: Add metadata to workspace Cargo.toml**
 
@@ -69,23 +69,23 @@ Add these fields to `[workspace.package]`:
 ```toml
 authors      = ["Ivan Wang <ivanwng97@icloud.com>"]
 description  = "Terminal pixel-art office for AI coding agents"
-homepage     = "https://github.com/IvanWng97/ascii-agents"
+homepage     = "https://github.com/IvanWng97/pixtuoid"
 keywords     = ["terminal", "tui", "pixel-art", "ai-agents", "claude"]
 categories   = ["command-line-utilities", "visualization"]
 ```
 
 - [ ] **Step 2: Add per-crate descriptions and inherit new workspace fields**
 
-In `crates/ascii-agents-core/Cargo.toml`, add:
+In `crates/pixtuoid-core/Cargo.toml`, add:
 ```toml
-description = "Headless engine for ascii-agents — state, sprites, layout"
+description = "Headless engine for pixtuoid — state, sprites, layout"
 authors.workspace    = true
 homepage.workspace   = true
 keywords.workspace   = true
 categories.workspace = true
 ```
 
-In `crates/ascii-agents/Cargo.toml`, add:
+In `crates/pixtuoid/Cargo.toml`, add:
 ```toml
 description = "Terminal pixel-art office for AI coding agents"
 authors.workspace    = true
@@ -94,9 +94,9 @@ keywords.workspace   = true
 categories.workspace = true
 ```
 
-In `crates/ascii-agents-hook/Cargo.toml`, add:
+In `crates/pixtuoid-hook/Cargo.toml`, add:
 ```toml
-description = "Lightweight hook shim for ascii-agents"
+description = "Lightweight hook shim for pixtuoid"
 authors.workspace    = true
 homepage.workspace   = true
 keywords.workspace   = true
@@ -114,7 +114,7 @@ Expected: success, no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Cargo.toml crates/ascii-agents-core/Cargo.toml crates/ascii-agents/Cargo.toml crates/ascii-agents-hook/Cargo.toml
+git add Cargo.toml crates/pixtuoid-core/Cargo.toml crates/pixtuoid/Cargo.toml crates/pixtuoid-hook/Cargo.toml
 git commit -m "chore: add Cargo.toml metadata (authors, description, homepage, keywords)"
 ```
 
@@ -236,10 +236,10 @@ jobs:
       - name: Package
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          DIR="ascii-agents-${VERSION}-${{ matrix.target }}"
+          DIR="pixtuoid-${VERSION}-${{ matrix.target }}"
           mkdir "$DIR"
-          cp "target/${{ matrix.target }}/release/ascii-agents" "$DIR/"
-          cp "target/${{ matrix.target }}/release/ascii-agents-hook" "$DIR/"
+          cp "target/${{ matrix.target }}/release/pixtuoid" "$DIR/"
+          cp "target/${{ matrix.target }}/release/pixtuoid-hook" "$DIR/"
           cp LICENSE "$DIR/"
           tar czf "${DIR}.tar.gz" "$DIR"
 
@@ -308,68 +308,68 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
 
-          SHA_MACOS_ARM=$(sha256sum "artifacts/ascii-agents-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
-          SHA_MACOS_INTEL=$(sha256sum "artifacts/ascii-agents-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)
-          SHA_LINUX_ARM=$(sha256sum "artifacts/ascii-agents-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
-          SHA_LINUX_INTEL=$(sha256sum "artifacts/ascii-agents-${TAG}-x86_64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
+          SHA_MACOS_ARM=$(sha256sum "artifacts/pixtuoid-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
+          SHA_MACOS_INTEL=$(sha256sum "artifacts/pixtuoid-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)
+          SHA_LINUX_ARM=$(sha256sum "artifacts/pixtuoid-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
+          SHA_LINUX_INTEL=$(sha256sum "artifacts/pixtuoid-${TAG}-x86_64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
 
           FORMULA=$(cat <<RUBY
-          class AsciiAgents < Formula
+          class Pixtuoid < Formula
             desc "Terminal pixel-art office for AI coding agents"
-            homepage "https://github.com/IvanWng97/ascii-agents"
+            homepage "https://github.com/IvanWng97/pixtuoid"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_MACOS_ARM}"
               end
               on_intel do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_MACOS_INTEL}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_LINUX_ARM}"
               end
               on_intel do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_LINUX_INTEL}"
               end
             end
 
             def install
-              bin.install "ascii-agents"
-              bin.install "ascii-agents-hook"
+              bin.install "pixtuoid"
+              bin.install "pixtuoid-hook"
             end
 
             def caveats
               <<~EOS
                 To start visualizing your Claude Code sessions:
-                  ascii-agents install-hooks
-                  ascii-agents run
+                  pixtuoid install-hooks
+                  pixtuoid run
               EOS
             end
 
             test do
-              assert_match "ascii-agents", shell_output("#{bin}/ascii-agents --version")
+              assert_match "pixtuoid", shell_output("#{bin}/pixtuoid --version")
             end
           end
           RUBY
           )
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/IvanWng97/homebrew-ascii-agents.git" tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/IvanWng97/homebrew-pixtuoid.git" tap
           mkdir -p tap/Formula
-          echo "$FORMULA" > tap/Formula/ascii-agents.rb
+          echo "$FORMULA" > tap/Formula/pixtuoid.rb
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ascii-agents.rb
-          git commit -m "ascii-agents ${VERSION}"
+          git add Formula/pixtuoid.rb
+          git commit -m "pixtuoid ${VERSION}"
           git push
 ```
 
@@ -403,7 +403,7 @@ POSIX-sh shell installer that detects OS/arch, downloads the matching tarball fr
 #!/bin/sh
 set -eu
 
-REPO="IvanWng97/ascii-agents"
+REPO="IvanWng97/pixtuoid"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 main() {
@@ -424,7 +424,7 @@ parse_args() {
             --help|-h)
                 echo "Usage: install.sh [--global]"
                 echo ""
-                echo "Install ascii-agents to \$INSTALL_DIR (default: ~/.local/bin)"
+                echo "Install pixtuoid to \$INSTALL_DIR (default: ~/.local/bin)"
                 echo "  --global    Install to /usr/local/bin"
                 echo ""
                 echo "Environment variables:"
@@ -481,7 +481,7 @@ resolve_version() {
             err "Could not determine latest release. Set VERSION= to install a specific version."
         fi
     fi
-    echo "Installing ascii-agents ${TAG}..."
+    echo "Installing pixtuoid ${TAG}..."
 }
 
 download_and_verify() {
@@ -489,7 +489,7 @@ download_and_verify() {
     trap 'rm -rf "$TMPDIR"' EXIT
 
     BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
-    TARBALL="ascii-agents-${TAG}-${TARGET}.tar.gz"
+    TARBALL="pixtuoid-${TAG}-${TARGET}.tar.gz"
 
     echo "Downloading ${TARBALL}..."
     $FETCH "${BASE_URL}/${TARBALL}" > "${TMPDIR}/${TARBALL}"
@@ -520,15 +520,15 @@ download_and_verify() {
 install_binaries() {
     mkdir -p "$INSTALL_DIR"
 
-    EXTRACT_DIR="${TMPDIR}/ascii-agents-${TAG}-${TARGET}"
-    cp "${EXTRACT_DIR}/ascii-agents" "${INSTALL_DIR}/ascii-agents"
-    cp "${EXTRACT_DIR}/ascii-agents-hook" "${INSTALL_DIR}/ascii-agents-hook"
-    chmod +x "${INSTALL_DIR}/ascii-agents" "${INSTALL_DIR}/ascii-agents-hook"
+    EXTRACT_DIR="${TMPDIR}/pixtuoid-${TAG}-${TARGET}"
+    cp "${EXTRACT_DIR}/pixtuoid" "${INSTALL_DIR}/pixtuoid"
+    cp "${EXTRACT_DIR}/pixtuoid-hook" "${INSTALL_DIR}/pixtuoid-hook"
+    chmod +x "${INSTALL_DIR}/pixtuoid" "${INSTALL_DIR}/pixtuoid-hook"
 }
 
 print_success() {
     echo ""
-    echo "ascii-agents installed successfully to ${INSTALL_DIR}"
+    echo "pixtuoid installed successfully to ${INSTALL_DIR}"
 
     case ":${PATH}:" in
         *":${INSTALL_DIR}:"*) ;;
@@ -542,8 +542,8 @@ print_success() {
 
     echo ""
     echo "Get started:"
-    echo "  ascii-agents install-hooks"
-    echo "  ascii-agents run"
+    echo "  pixtuoid install-hooks"
+    echo "  pixtuoid run"
 }
 
 err() {
@@ -587,7 +587,7 @@ Final sanity check — make sure nothing was broken.
 
 ```bash
 cargo check --workspace
-cargo test --workspace --features ascii-agents-core/test-renderer
+cargo test --workspace --features pixtuoid-core/test-renderer
 ```
 
 Expected: all pass, no warnings.

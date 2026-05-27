@@ -14,24 +14,24 @@
 
 | File | Responsibility |
 |---|---|
-| `crates/ascii-agents/src/tui/floor.rs` (NEW) | `FloorCtx`, `FloorTransition`, `FloorScene`, floor math helpers |
-| `crates/ascii-agents/src/tui/tui_renderer.rs` | Multi-buffer ownership, floor navigation, transition state |
-| `crates/ascii-agents/src/tui/renderer.rs` | `flush_buffer_to_term_at_offset`, floor indicator in footer + wall display |
-| `crates/ascii-agents/src/tui/mod.rs` | PageUp/PageDown key events, `pub mod floor` |
-| `crates/ascii-agents/src/tui/pixel_painter/mod.rs` | `render_to_rgb_buffer` signature: accept agent slice instead of `&SceneState` |
-| `crates/ascii-agents-core/src/state/mod.rs` | `MAX_FLOORS` constant, `next_free_desk` range extended |
+| `crates/pixtuoid/src/tui/floor.rs` (NEW) | `FloorCtx`, `FloorTransition`, `FloorScene`, floor math helpers |
+| `crates/pixtuoid/src/tui/tui_renderer.rs` | Multi-buffer ownership, floor navigation, transition state |
+| `crates/pixtuoid/src/tui/renderer.rs` | `flush_buffer_to_term_at_offset`, floor indicator in footer + wall display |
+| `crates/pixtuoid/src/tui/mod.rs` | PageUp/PageDown key events, `pub mod floor` |
+| `crates/pixtuoid/src/tui/pixel_painter/mod.rs` | `render_to_rgb_buffer` signature: accept agent slice instead of `&SceneState` |
+| `crates/pixtuoid-core/src/state/mod.rs` | `MAX_FLOORS` constant, `next_free_desk` range extended |
 
 ---
 
 ### Task 1: Create `floor.rs` with FloorCtx, FloorTransition, FloorScene, and math helpers
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/floor.rs`
-- Modify: `crates/ascii-agents/src/tui/mod.rs` (add `pub mod floor;`)
+- Create: `crates/pixtuoid/src/tui/floor.rs`
+- Modify: `crates/pixtuoid/src/tui/mod.rs` (add `pub mod floor;`)
 
 - [ ] **Step 1: Write the failing tests for floor math**
 
-Add to `crates/ascii-agents/src/tui/floor.rs`:
+Add to `crates/pixtuoid/src/tui/floor.rs`:
 
 ```rust
 //! Multi-floor office infrastructure — per-floor render context,
@@ -39,9 +39,9 @@ Add to `crates/ascii-agents/src/tui/floor.rs`:
 
 use std::time::SystemTime;
 
-use ascii_agents_core::state::{AgentSlot, SceneState};
-use ascii_agents_core::sprite::{Rgb, RgbBuffer};
-use ascii_agents_core::walkable::OccupancyOverlay;
+use pixtuoid_core::state::{AgentSlot, SceneState};
+use pixtuoid_core::sprite::{Rgb, RgbBuffer};
+use pixtuoid_core::walkable::OccupancyOverlay;
 
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::pathfind::AStarRouter;
@@ -154,8 +154,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use ascii_agents_core::state::ActivityState;
-    use ascii_agents_core::AgentId;
+    use pixtuoid_core::state::ActivityState;
+    use pixtuoid_core::AgentId;
 
     fn make_scene(n: usize, max_desks: usize) -> SceneState {
         let mut s = SceneState::new(max_desks);
@@ -258,7 +258,7 @@ mod tests {
 
 - [ ] **Step 2: Add `pub mod floor;` to `tui/mod.rs`**
 
-In `crates/ascii-agents/src/tui/mod.rs`, add after the existing module declarations:
+In `crates/pixtuoid/src/tui/mod.rs`, add after the existing module declarations:
 
 ```rust
 pub mod floor;
@@ -266,13 +266,13 @@ pub mod floor;
 
 - [ ] **Step 3: Run tests to verify they pass**
 
-Run: `cargo test -p ascii-agents -- tui::floor::tests -v`
+Run: `cargo test -p pixtuoid -- tui::floor::tests -v`
 Expected: All 7 tests pass.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/floor.rs crates/ascii-agents/src/tui/mod.rs
+git add crates/pixtuoid/src/tui/floor.rs crates/pixtuoid/src/tui/mod.rs
 git commit -m "feat(floor): add FloorCtx, FloorTransition, FloorScene with tests"
 ```
 
@@ -281,12 +281,12 @@ git commit -m "feat(floor): add FloorCtx, FloorTransition, FloorScene with tests
 ### Task 2: Extend `next_free_desk` range for multi-floor
 
 **Files:**
-- Modify: `crates/ascii-agents-core/src/state/mod.rs:79-84`
-- Test: `crates/ascii-agents-core/src/state/mod.rs` (inline tests)
+- Modify: `crates/pixtuoid-core/src/state/mod.rs:79-84`
+- Test: `crates/pixtuoid-core/src/state/mod.rs` (inline tests)
 
 - [ ] **Step 1: Write the failing test**
 
-Add to the `mod tests` block in `crates/ascii-agents-core/src/state/mod.rs`:
+Add to the `mod tests` block in `crates/pixtuoid-core/src/state/mod.rs`:
 
 ```rust
 #[test]
@@ -327,12 +327,12 @@ fn next_free_desk_overflows_to_second_floor() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p ascii-agents-core -- next_free_desk_overflows -v`
+Run: `cargo test -p pixtuoid-core -- next_free_desk_overflows -v`
 Expected: FAIL — current range is `0..max_desks` (0..4), so `next_free_desk` returns `None`.
 
 - [ ] **Step 3: Update `next_free_desk`**
 
-In `crates/ascii-agents-core/src/state/mod.rs`, change:
+In `crates/pixtuoid-core/src/state/mod.rs`, change:
 
 ```rust
 pub const MAX_FLOORS: usize = 5;
@@ -355,13 +355,13 @@ impl SceneState {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p ascii-agents-core -- next_free_desk -v`
+Run: `cargo test -p pixtuoid-core -- next_free_desk -v`
 Expected: All 3 desk tests pass (existing 2 + new overflow).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents-core/src/state/mod.rs
+git add crates/pixtuoid-core/src/state/mod.rs
 git commit -m "feat(core): extend next_free_desk range to max_desks * MAX_FLOORS"
 ```
 
@@ -370,7 +370,7 @@ git commit -m "feat(core): extend next_free_desk range to max_desks * MAX_FLOORS
 ### Task 3: Refactor TuiRenderer to use per-floor contexts
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/tui_renderer.rs`
+- Modify: `crates/pixtuoid/src/tui/tui_renderer.rs`
 
 - [ ] **Step 1: Replace single buf/cache/router/overlay/history with floor vectors**
 
@@ -386,7 +386,7 @@ pub struct TuiRenderer<B: Backend> {
     current_floor: usize,
     transition: Option<FloorTransition>,
     mouse_pos: Option<(u16, u16)>,
-    pinned_agent: Option<ascii_agents_core::AgentId>,
+    pinned_agent: Option<pixtuoid_core::AgentId>,
     pub ticker: crate::tui::renderer::TickerQueue,
     theme: &'static crate::tui::theme::Theme,
     theme_picker: Option<usize>,
@@ -528,7 +528,7 @@ Note: `draw_scene` gets a new parameter `floor_info: Option<(usize, usize)>` —
 
 - [ ] **Step 6: Run full test suite**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: Compilation errors from `draw_scene` signature change. Fix in next task.
 
 - [ ] **Step 7: Commit (WIP — compiles after Task 4)**
@@ -540,13 +540,13 @@ Hold commit until Task 4 updates `draw_scene` signature.
 ### Task 4: Update `draw_scene` signature and add floor indicator to footer
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/renderer.rs`
-- Modify: `crates/ascii-agents/tests/snapshot_regression.rs`
-- Modify: `crates/ascii-agents/examples/snapshot.rs`
+- Modify: `crates/pixtuoid/src/tui/renderer.rs`
+- Modify: `crates/pixtuoid/tests/snapshot_regression.rs`
+- Modify: `crates/pixtuoid/examples/snapshot.rs`
 
 - [ ] **Step 1: Add `floor_info` parameter to `draw_scene`**
 
-In `crates/ascii-agents/src/tui/renderer.rs`, update the signature:
+In `crates/pixtuoid/src/tui/renderer.rs`, update the signature:
 
 ```rust
 pub fn draw_scene<B: Backend>(
@@ -606,7 +606,7 @@ In `paint_wall_display`, add floor to the top line when `floor_info` is `Some`:
     };
     let top_line = Line::from(vec![
         Span::styled(
-            format!("ascii-agents v{version}"),
+            format!("pixtuoid v{version}"),
             Style::default()
                 .fg(to_color(theme.ui.neon_brand))
                 .add_modifier(Modifier::BOLD),
@@ -619,9 +619,9 @@ In `paint_wall_display`, add floor to the top line when `floor_info` is `Some`:
 
 - [ ] **Step 4: Update all `draw_scene` callers to pass `None` for floor_info**
 
-In `crates/ascii-agents/tests/snapshot_regression.rs`, add `None,` as the last arg to all 3 `draw_scene` calls.
+In `crates/pixtuoid/tests/snapshot_regression.rs`, add `None,` as the last arg to all 3 `draw_scene` calls.
 
-In `crates/ascii-agents/examples/snapshot.rs`, add `None,` as the last arg to both `draw_scene` calls.
+In `crates/pixtuoid/examples/snapshot.rs`, add `None,` as the last arg to both `draw_scene` calls.
 
 - [ ] **Step 5: Update `build_status_summary` test callers**
 
@@ -629,16 +629,16 @@ All tests calling `build_status_summary(&s, width)` need the new third arg: `bui
 
 - [ ] **Step 6: Run full test suite**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: All pass. `cargo clippy` clean.
 
 - [ ] **Step 7: Commit Tasks 3 + 4 together**
 
 ```bash
-git add crates/ascii-agents/src/tui/tui_renderer.rs \
-       crates/ascii-agents/src/tui/renderer.rs \
-       crates/ascii-agents/tests/snapshot_regression.rs \
-       crates/ascii-agents/examples/snapshot.rs
+git add crates/pixtuoid/src/tui/tui_renderer.rs \
+       crates/pixtuoid/src/tui/renderer.rs \
+       crates/pixtuoid/tests/snapshot_regression.rs \
+       crates/pixtuoid/examples/snapshot.rs
 git commit -m "feat(floor): per-floor render contexts + floor indicator in footer/wall"
 ```
 
@@ -647,11 +647,11 @@ git commit -m "feat(floor): per-floor render contexts + floor indicator in foote
 ### Task 5: Add PageUp/PageDown key handling
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/mod.rs`
+- Modify: `crates/pixtuoid/src/tui/mod.rs`
 
 - [ ] **Step 1: Add floor navigation to key event handler**
 
-In `crates/ascii-agents/src/tui/mod.rs`, inside the `match (k.code, k.modifiers)` block (after the `Char('-')` arm), add:
+In `crates/pixtuoid/src/tui/mod.rs`, inside the `match (k.code, k.modifiers)` block (after the `Char('-')` arm), add:
 
 ```rust
                                 (KeyCode::PageDown, _) => {
@@ -694,13 +694,13 @@ And add `cancel_transition` to `TuiRenderer`:
 - [ ] **Step 3: Run and test manually**
 
 Run: `cargo build --release --workspace`
-Run: `./target/release/ascii-agents run`
+Run: `./target/release/pixtuoid run`
 Test: With 16+ agents, press PageDown/PageUp. Floor indicator should update in footer and neon display.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/mod.rs crates/ascii-agents/src/tui/tui_renderer.rs
+git add crates/pixtuoid/src/tui/mod.rs crates/pixtuoid/src/tui/tui_renderer.rs
 git commit -m "feat(floor): PageUp/PageDown floor navigation"
 ```
 
@@ -709,12 +709,12 @@ git commit -m "feat(floor): PageUp/PageDown floor navigation"
 ### Task 6: Implement slide transition compositing
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/renderer.rs`
-- Modify: `crates/ascii-agents/src/tui/tui_renderer.rs`
+- Modify: `crates/pixtuoid/src/tui/renderer.rs`
+- Modify: `crates/pixtuoid/src/tui/tui_renderer.rs`
 
 - [ ] **Step 1: Add `flush_buffer_to_term_at_offset`**
 
-In `crates/ascii-agents/src/tui/renderer.rs`, after the existing `flush_buffer_to_term`:
+In `crates/pixtuoid/src/tui/renderer.rs`, after the existing `flush_buffer_to_term`:
 
 ```rust
 fn flush_buffer_to_term_at_offset(
@@ -800,13 +800,13 @@ The exact wiring requires accessing both floor contexts mutably, which means spl
 - [ ] **Step 4: Build and visually verify**
 
 Run: `cargo build --release --workspace`
-Run: `./target/release/ascii-agents run` with 16+ agents
+Run: `./target/release/pixtuoid run` with 16+ agents
 Test: PageDown should show a smooth slide transition.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/renderer.rs crates/ascii-agents/src/tui/tui_renderer.rs
+git add crates/pixtuoid/src/tui/renderer.rs crates/pixtuoid/src/tui/tui_renderer.rs
 git commit -m "feat(floor): slide transition compositing between floors"
 ```
 
@@ -817,7 +817,7 @@ git commit -m "feat(floor): slide transition compositing between floors"
 **Files:**
 - Modify: `CLAUDE.md`
 - Modify: `README.md`
-- Modify: `crates/ascii-agents/src/tui/renderer.rs` (keyboard shortcut string)
+- Modify: `crates/pixtuoid/src/tui/renderer.rs` (keyboard shortcut string)
 
 - [ ] **Step 1: Update keyboard shortcuts in footer**
 
@@ -845,15 +845,15 @@ Add to "Where to look":
 
 - [ ] **Step 4: Run full test suite and preflight**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
-Run: `cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
+Run: `cargo clippy --workspace --all-targets --features pixtuoid-core/test-renderer -- -D warnings`
 Run: `cargo fmt --all --check`
 Expected: All clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add CLAUDE.md README.md crates/ascii-agents/src/tui/renderer.rs
+git add CLAUDE.md README.md crates/pixtuoid/src/tui/renderer.rs
 git commit -m "docs: multi-floor office — keyboard shortcuts, README, CLAUDE.md"
 ```
 

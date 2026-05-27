@@ -7,14 +7,14 @@ Instructions for Claude Code (or any AI coding agent) working in this repo.
 Terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each running CC (Claude Code) session shows up as an animated half-block sprite in an ASCII office. Built in Rust as a Cargo workspace of three crates.
 
 User-facing overview: [`README.md`](README.md).
-v1 spec: [`docs/superpowers/specs/2026-05-20-ascii-agents-design.md`](docs/superpowers/specs/2026-05-20-ascii-agents-design.md).
-v1 plan (28 TDD-shaped tasks): [`docs/superpowers/plans/2026-05-20-ascii-agents-v1.md`](docs/superpowers/plans/2026-05-20-ascii-agents-v1.md).
+v1 spec: [`docs/superpowers/specs/2026-05-20-pixtuoid-design.md`](docs/superpowers/specs/2026-05-20-pixtuoid-design.md).
+v1 plan (28 TDD-shaped tasks): [`docs/superpowers/plans/2026-05-20-pixtuoid-v1.md`](docs/superpowers/plans/2026-05-20-pixtuoid-v1.md).
 
 ## Layout
 
 ```
 crates/
-├── ascii-agents-core/      headless lib — no terminal deps (ratatui/crossterm forbidden here)
+├── pixtuoid-core/      headless lib — no terminal deps (ratatui/crossterm forbidden here)
 │   ├── source/             Source trait, hook+jsonl decoders, listeners, SourceManager
 │   ├── state/              SceneState + Reducer (with Transport-tagged dedup + Active→Idle debounce)
 │   ├── sprite/             .sprite parser, pack.toml loader, half-block blitter, animator
@@ -27,9 +27,9 @@ crates/
 │   ├── pose.rs             pure state→pose derivation + wander state machine (no terminal deps)
 │   ├── walkable.rs         WalkableMask (static bool grid) + OccupancyOverlay (dynamic per-frame)
 │   └── tests/              one integration test per concern
-├── ascii-agents/           binary — ratatui + crossterm + tokio + clap
+├── pixtuoid/           binary — ratatui + crossterm + tokio + clap
 │   ├── cli.rs              clap subcommands (run / install-hooks / uninstall-hooks / validate-pack / init-pack)
-│   ├── config.rs           AppConfig persistence (~/.config/ascii-agents/config.toml), XDG-aware
+│   ├── config.rs           AppConfig persistence (~/.config/pixtuoid/config.toml), XDG-aware
 │   ├── runtime.rs          tokio task wiring (source ── (Transport, AgentEvent) ──► reducer ──► renderer)
 │   ├── install/            settings.json merge, atomic write, advisory lock, stow-symlink safe
 │   └── tui/                ratatui App + TuiRenderer (Renderer trait impl)
@@ -50,7 +50,7 @@ crates/
 │                           drawable.rs (y-sort), effects.rs (glow/z's/dots/steam/dust/bubble),
 │                           palette.rs (tool_glow_tint), anchors.rs (breath, walk position, character_anchor),
 │                           furniture.rs (coffee table, area rug, side table, pantry table/chair)
-└── ascii-agents-hook/      tiny shim CC invokes — stdin JSON → Unix socket, 200ms write timeout
+└── pixtuoid-hook/      tiny shim CC invokes — stdin JSON → Unix socket, 200ms write timeout
 │   └── sprites/
 │       ├── default/        coworking-lounge pack (embedded via include_str!)
 │       ├── robot/          proof-of-concept robot character pack (loadable via --pack-dir)
@@ -63,9 +63,9 @@ scripts/                    preflight.sh (CI mirror), crop-snapshot.py (visual v
 ```
 cargo build --workspace                                              # debug build
 cargo build --release --workspace                                    # release build
-cargo test --workspace --features ascii-agents-core/test-renderer    # all tests (200+)
+cargo test --workspace --features pixtuoid-core/test-renderer    # all tests (200+)
 cargo run --release --example snapshot -- /tmp/snap.png              # render TUI to PNG
-./target/release/ascii-agents run --headless --projects-root ~/.claude/projects   # live test against real CC
+./target/release/pixtuoid run --headless --projects-root ~/.claude/projects   # live test against real CC
 ```
 
 The `test-renderer` feature is needed for the `e2e.rs` integration test. The dev workspace test alias is just `cargo test`.
@@ -115,7 +115,7 @@ Bypass in an emergency with `git commit --no-verify` or `SKIP_PREFLIGHT=1 git pu
 
 These are load-bearing; don't break them without updating the spec.
 
-1. **`ascii-agents-core` has no terminal dependencies.** No `ratatui`, no `crossterm`, no `stdout` writes. If you need one, the abstraction belongs behind the `Renderer` trait.
+1. **`pixtuoid-core` has no terminal dependencies.** No `ratatui`, no `crossterm`, no `stdout` writes. If you need one, the abstraction belongs behind the `Renderer` trait.
 2. **Events flow through ONE channel** typed `mpsc::Sender<(Transport, AgentEvent)>`. The `Transport` tag is load-bearing — the reducer uses it for hook-wins dedup. Do not hardcode `Transport::Hook` on the consumer side; the producer (each Source impl) tags its own events.
 3. **`Source` trait is the only seam for adding agent CLIs** (Codex / Cursor / Copilot). Don't bypass it. Per-source JSONL format knowledge lives in the source's own decoder fn (injected into `JsonlWatcher` via fn pointers), not in a shared decoder.
 4. **`install-hooks` writes through symlinks.** `resolve_symlink` in `install/io.rs` is critical for stow-managed `~/.claude/settings.json`. Don't replace it with `fs::rename` on the symlink path.
@@ -136,7 +136,7 @@ These are load-bearing; don't break them without updating the spec.
 
 ## Things NOT to do
 
-- Don't add `ratatui` / `crossterm` / terminal anything to `ascii-agents-core`.
+- Don't add `ratatui` / `crossterm` / terminal anything to `pixtuoid-core`.
 - Don't write to `~/.claude/settings.json` directly. Always go through `install/io.rs::write_settings_atomic` (advisory lock + atomic rename + symlink resolution).
 - Don't add `println!` / `eprintln!` to any production path other than the headless summary and explicit user-facing CLI output. Use `tracing::{info, warn, error}` instead.
 - Don't relax the hook shim's "always exit 0" contract. Blocking CC = breaking the user's primary workflow.
@@ -155,13 +155,13 @@ These are load-bearing; don't break them without updating the spec.
 - "How does multi-source decoding work?" → `JsonlWatcher` takes `LineDecoder` and `LabelDeriver` fn pointers (Strategy pattern via fn pointers, not traits). CC wires `claude_code::decode_cc_line` + `cc_derive_label`; Antigravity wires `antigravity::decode_ag_line` + `derive_ag_label`. `decoder.rs` holds shared utilities (`describe_tool_target`, `make_tool_detail`, `decode_hook_payload`). Each source owns its own JSONL format knowledge. `AgentId::from_parts(source, path)` namespaces IDs per source. Labels show source prefix: `cc·project` / `ag·project`.
 - "Why don't old idle sessions show on startup?" → `source::jsonl::initial_seed_walk`. Checks `check_session_ended` (tail-scans last 8KB for `session_end`/`SessionEnd` markers) and skips files not modified in 5+ min. mtime > `DEFAULT_INITIAL_WINDOW` (1 hour) → cursor seeded at EOF, no `SessionStart`.
 - "How does the default character pack get into the binary?" → `tui::embedded_pack` does the `include_str!` at compile time; `sprite::format::load_pack_from_strings` parses it.
-- "How do custom sprite packs work?" → `ascii-agents init-pack ./dir` extracts the skeleton template from `sprites/skeleton/` (embedded via `include_str!`). `ascii-agents validate-pack ./dir` loads the pack and checks against `REQUIRED_CHARACTER_ANIMATIONS` / `OPTIONAL_*` registries in `sprite::format`. `--pack-dir` CLI flag or `pack-dir` config key loads a custom pack at runtime. Custom packs only need character sprites — furniture/environment animations are merged from the embedded default via `Pack::merge_from()` (only `OPTIONAL_FURNITURE_ANIMATIONS`, never character poses). The robot pack at `sprites/robot/` is a TV-head character set (10×12 sprites).
+- "How do custom sprite packs work?" → `pixtuoid init-pack ./dir` extracts the skeleton template from `sprites/skeleton/` (embedded via `include_str!`). `pixtuoid validate-pack ./dir` loads the pack and checks against `REQUIRED_CHARACTER_ANIMATIONS` / `OPTIONAL_*` registries in `sprite::format`. `--pack-dir` CLI flag or `pack-dir` config key loads a custom pack at runtime. Custom packs only need character sprites — furniture/environment animations are merged from the embedded default via `Pack::merge_from()` (only `OPTIONAL_FURNITURE_ANIMATIONS`, never character poses). The robot pack at `sprites/robot/` is a TV-head character set (10×12 sprites).
 - "How do hooks get installed?" → `install::merge::merge_install` for the JSON merge logic, `install::io::write_settings_atomic` for the safe filesystem write.
 - "How does the neon wall display work?" → `pixel_painter/background/lighting.rs::paint_neon_panel` paints the dark panel with pulsing cyan border in the pixel buffer; `widgets/hud.rs::paint_wall_display` overlays ratatui text (branding, state dots, scrolling ticker); `widgets/mod.rs::TickerQueue` manages the persistent scrolling message buffer.
 - "How do pets work?" → `tui/pet.rs::PetKind` enum (Cat, Dog) with per-kind static data (sprite names, hitboxes, behavior). One pet per floor selected via `select_pet_for_floor(floor_seed, enabled_pets)`. Config: `enabled-pets = ["cat", "dog"]` (absent = all, empty = none). `pixel_painter/drawable.rs::pet_position` — 40s cycle, picks a destination from all spots (desks, pantry, sofas, couch, corridor), walks there (35%), sits/sleeps (65%). Cat sleeps with z's near idle agents; both pets sleep when all agents are idle. Sprites per kind: `*_walk` (8×6), `*_sit` (6×6), `*_sleep` (6×4). Click to pet → hearts animation via `PetState` on `TuiRenderer`. `hit_test_pet` / `paint_pet_tooltip` parameterized on `PetKind`.
 - "How does desk personalization work?" → `drawable.rs::paint_desk_personalization` — procedural pixel items appear on desks based on `session_age_secs`: coffee cup (event-driven, after pantry visit), plant (30min), photo frame (1hr).
 - "How does the coffee run work?" → `Pose::Walking.carrying_coffee` set in `idle_pose` walk-back from Pantry → `walking_coffee` sprite selected in pixel_painter → `coffee_holders: HashSet<AgentId>` on `TuiRenderer` tracks which agents have visited the pantry (inserted when the pixel pass sees `carrying_coffee: true`) → cup persists on desk until agent exits → exit walk overrides `carrying_coffee` from `coffee_holders` in the pixel painter → `coffee_fetched_at` timestamps drive 120s steam window.
-- "How does the crash log work?" → `main.rs::install_crash_hook` sets a panic hook that restores the terminal, writes a timestamped backtrace to `~/.cache/ascii-agents/crash.log`.
+- "How does the crash log work?" → `main.rs::install_crash_hook` sets a panic hook that restores the terminal, writes a timestamped backtrace to `~/.cache/pixtuoid/crash.log`.
 - "How does the theme system work?" → `tui/theme/mod.rs` defines the `Theme` struct (~100 color roles in 7 groups). Each theme is a `pub static Theme` in its own file (e.g. `theme/cyberpunk.rs`). `ALL_THEMES` is the registry slice. `--theme` CLI flag resolves via `theme_by_name()`. The `&'static Theme` threads through `TuiRenderer` → `draw_scene` → `render_to_rgb_buffer` → all paint functions. Press `[t]` in the TUI for a live preview picker (j/k or ↑↓ to navigate). `set_theme()` flushes the `FrameCache` so character recolors update immediately. 6 themes: normal, cyberpunk, dracula, tokyo-night, catppuccin, gruvbox.
 - "How does weather work?" → `pixel_painter/background/time_of_day.rs::weather_state` picks from 7 variants (Clear/Rain/Storm/Snow/Fog/Overcast/Windy) via splitmix64 hash of `wallclock / 600` (changes every 10 min). Effects paint on window glass after the skyline. `sunset_strength()` adds a time-based golden-hour tint at ~6am/6pm, scaled down by existing twilight intensity to avoid double-orange. City light twinkle is 6–14s cycles at 70% lit.
 - "How does the thinking pose work?" → `core::pose::derive` returns `Pose::SeatedThinking` when an Idle agent's `last_event_at` is within `THINKING_WINDOW_SECS = 20s` AND `last_event_at > created_at` (excludes freshly spawned agents). Renders as `seated` sprite + screen glow + animated `···` dots (3-phase, 800ms cycle via `effects::paint_thinking_dots`). Screen glow only paints when the agent's derived pose is seated (precomputed pose map avoids double A*).
@@ -169,7 +169,7 @@ These are load-bearing; don't break them without updating the spec.
 - "How does the coffee machine Easter egg work?" → `hit_test.rs::hit_test_coffee_machine` checks if a click falls on the coffee machine section of the pantry counter sprite (x offset 11–18 for large, 8–13 for small). Hover shows `widgets/tooltip.rs::paint_coffee_tooltip` ("☕ Buy Ivan a coffee"), click opens BMC via `open::that`. Both take `&Layout` (cached on `TuiRenderer`).
 - "How do furniture hover tooltips work?" → `hit_test.rs::hit_test_furniture` tests mouse coords against all layout positions (desks, waypoints, plants, wall decor, pod decor, meeting sofas/table, coat rack, doormat, water cooler, trash bin, elevator). Returns `Option<&'static str>` label. `widgets/tooltip.rs::paint_furniture_tooltip` renders it. Checked after agent tooltip and coffee machine in the draw closure priority chain.
 - "How do the corridor appliances work?" → Vending machine (4×6) and printer (5×4) are painted as y-sorted `Drawable` variants in `pixel_painter/drawable.rs`. Both are `WaypointKind` variants so idle agents can wander to them. Placement is conditional on corridor height (vending ≥10px, printer ≥9px). Positions stored as centre-point waypoints (same convention as Pantry/Couch).
-- "How does config persistence work?" → `config.rs` defines `AppConfig` (theme + optional max-desks cap), `config_path()` (XDG-aware: `$XDG_CONFIG_HOME/ascii-agents/config.toml` or `~/.config/ascii-agents/config.toml`), `load()` (never crashes — logs warning on malformed TOML), `save()` (advisory-locked atomic tmp+rename), `resolve_theme()` (CLI > config > default). Theme saved on `[t]` picker Enter confirm in `tui/mod.rs`. `max-desks` is an optional cap — when set, auto-compute clamps each floor's capacity to `min(layout_capacity, cap)`. When absent, fully auto-computed from terminal size.
+- "How does config persistence work?" → `config.rs` defines `AppConfig` (theme + optional max-desks cap), `config_path()` (XDG-aware: `$XDG_CONFIG_HOME/pixtuoid/config.toml` or `~/.config/pixtuoid/config.toml`), `load()` (never crashes — logs warning on malformed TOML), `save()` (advisory-locked atomic tmp+rename), `resolve_theme()` (CLI > config > default). Theme saved on `[t]` picker Enter confirm in `tui/mod.rs`. `max-desks` is an optional cap — when set, auto-compute clamps each floor's capacity to `min(layout_capacity, cap)`. When absent, fully auto-computed from terminal size.
 - "How do multi-floor offices work?" → `tui/floor.rs` defines `FloorCtx` (per-floor render state), `FloorTransition` (slide animation), `build_floor_scene()` (agent projection). `tui_renderer.rs` owns `Vec<FloorCtx>` + `Vec<RgbBuffer>` and switches between them. Floor membership is stored on `AgentSlot.floor_idx` (set once by the reducer at desk assignment, immutable thereafter). Each floor's capacity is auto-computed per-frame: `tui/mod.rs` calls `SceneLayout::compute_with_seed` for each floor's seed and writes the result via per-floor `AtomicUsize::fetch_max` (monotone growth). The reducer syncs all 5 capacities into `scene.floor_capacities: [usize; MAX_FLOORS]` each tick. `next_free_desk` in `state/mod.rs` scans `0..total_capacity()`. On terminal shrink, agents beyond the layout's capacity become invisible but stay alive; they reappear when the terminal grows back. PageUp/PageDown/↑↓/jk in `tui/mod.rs`. Slide transition composites two buffers via `flush_buffer_to_term_at_offset`.
 
 ## When refactoring

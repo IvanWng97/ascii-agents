@@ -207,7 +207,7 @@ Extend `build_status_summary` to include floor info:
 Add floor number to the top line of `paint_wall_display`:
 
 ```
-ascii-agents v0.2.0 ★ Star  Floor 2/3
+pixtuoid v0.2.0 ★ Star  Floor 2/3
 ●●●●●  ↑5m
 [scrolling ticker...]
 ```

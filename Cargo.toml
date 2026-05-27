@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members  = [
-    "crates/ascii-agents-core",
-    "crates/ascii-agents",
-    "crates/ascii-agents-hook",
+    "crates/pixtuoid-core",
+    "crates/pixtuoid",
+    "crates/pixtuoid-hook",
 ]
 
 [workspace.package]
-version      = "0.3.0"
+version      = "0.4.0"
 edition      = "2021"
 rust-version = "1.78"
 license      = "MIT"
-repository   = "https://github.com/IvanWng97/ascii-agents"
+repository   = "https://github.com/IvanWng97/pixtuoid"
 authors      = ["Ivan Wang <ivanwng97@icloud.com>"]
 description  = "Terminal pixel-art office for AI coding agents"
-homepage     = "https://github.com/IvanWng97/ascii-agents"
+homepage     = "https://github.com/IvanWng97/pixtuoid"
 keywords     = ["terminal", "tui", "pixel-art", "ai-agents", "claude"]
 categories   = ["command-line-utilities", "visualization"]
 

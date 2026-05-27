@@ -5,7 +5,7 @@
 
 ## Goal
 
-Ship `ascii-agents` as a pre-built binary for macOS and Linux via three
+Ship `pixtuoid` as a pre-built binary for macOS and Linux via three
 distribution channels: GitHub Releases, Homebrew tap, and a `curl|sh`
 installer. Triggered by git tag push (`v*`).
 
@@ -23,23 +23,23 @@ installer. Triggered by git tag push (`v*`).
 ## 1. Artifact Matrix
 
 Each release produces **4 tarballs**, each containing both binaries
-(`ascii-agents` + `ascii-agents-hook`):
+(`pixtuoid` + `pixtuoid-hook`):
 
 | Rust target                  | Runner / tooling              | Tarball name                                          |
 |------------------------------|-------------------------------|-------------------------------------------------------|
-| `aarch64-apple-darwin`       | `macos-14` (native ARM)       | `ascii-agents-v{ver}-aarch64-apple-darwin.tar.gz`     |
-| `x86_64-apple-darwin`        | `macos-13` (native Intel)     | `ascii-agents-v{ver}-x86_64-apple-darwin.tar.gz`      |
-| `x86_64-unknown-linux-gnu`   | `ubuntu-latest` (native)      | `ascii-agents-v{ver}-x86_64-unknown-linux-gnu.tar.gz` |
-| `aarch64-unknown-linux-gnu`  | `ubuntu-latest` + `cross`     | `ascii-agents-v{ver}-aarch64-unknown-linux-gnu.tar.gz`|
+| `aarch64-apple-darwin`       | `macos-14` (native ARM)       | `pixtuoid-v{ver}-aarch64-apple-darwin.tar.gz`     |
+| `x86_64-apple-darwin`        | `macos-13` (native Intel)     | `pixtuoid-v{ver}-x86_64-apple-darwin.tar.gz`      |
+| `x86_64-unknown-linux-gnu`   | `ubuntu-latest` (native)      | `pixtuoid-v{ver}-x86_64-unknown-linux-gnu.tar.gz` |
+| `aarch64-unknown-linux-gnu`  | `ubuntu-latest` + `cross`     | `pixtuoid-v{ver}-aarch64-unknown-linux-gnu.tar.gz`|
 
 A `sha256sums.txt` file is attached to every release alongside the tarballs.
 
 ### Tarball layout
 
 ```
-ascii-agents-v0.2.0-aarch64-apple-darwin/
-├── ascii-agents
-├── ascii-agents-hook
+pixtuoid-v0.2.0-aarch64-apple-darwin/
+├── pixtuoid
+├── pixtuoid-hook
 └── LICENSE
 ```
 
@@ -110,7 +110,7 @@ Each job:
 
 1. Computes SHA256 for each tarball from `sha256sums.txt`.
 2. Renders the Homebrew formula template with the new version + hashes.
-3. Pushes the updated formula to `IvanWng97/homebrew-ascii-agents` via
+3. Pushes the updated formula to `IvanWng97/homebrew-pixtuoid` via
    a repository dispatch or direct commit using a deploy key / PAT.
 
 ---
@@ -150,54 +150,54 @@ commit_parsers = [
 
 ## 4. Homebrew Tap
 
-### Repository: `IvanWng97/homebrew-ascii-agents`
+### Repository: `IvanWng97/homebrew-pixtuoid`
 
-Single formula: `Formula/ascii-agents.rb`
+Single formula: `Formula/pixtuoid.rb`
 
 ```ruby
-class AsciiAgents < Formula
+class Pixtuoid < Formula
   desc "Terminal pixel-art office for AI coding agents"
-  homepage "https://github.com/IvanWng97/ascii-agents"
+  homepage "https://github.com/IvanWng97/pixtuoid"
   version "VERSION"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/IvanWng97/ascii-agents/releases/download/vVERSION/ascii-agents-vVERSION-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/IvanWng97/pixtuoid/releases/download/vVERSION/pixtuoid-vVERSION-aarch64-apple-darwin.tar.gz"
       sha256 "SHA256"
     end
     on_intel do
-      url "https://github.com/IvanWng97/ascii-agents/releases/download/vVERSION/ascii-agents-vVERSION-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/IvanWng97/pixtuoid/releases/download/vVERSION/pixtuoid-vVERSION-x86_64-apple-darwin.tar.gz"
       sha256 "SHA256"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/IvanWng97/ascii-agents/releases/download/vVERSION/ascii-agents-vVERSION-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/IvanWng97/pixtuoid/releases/download/vVERSION/pixtuoid-vVERSION-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "SHA256"
     end
     on_intel do
-      url "https://github.com/IvanWng97/ascii-agents/releases/download/vVERSION/ascii-agents-vVERSION-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/IvanWng97/pixtuoid/releases/download/vVERSION/pixtuoid-vVERSION-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "SHA256"
     end
   end
 
   def install
-    bin.install "ascii-agents"
-    bin.install "ascii-agents-hook"
+    bin.install "pixtuoid"
+    bin.install "pixtuoid-hook"
   end
 
   def caveats
     <<~EOS
       To start visualizing your Claude Code sessions:
-        ascii-agents install-hooks
-        ascii-agents run
+        pixtuoid install-hooks
+        pixtuoid run
     EOS
   end
 
   test do
-    assert_match "ascii-agents", shell_output("#{bin}/ascii-agents --version")
+    assert_match "pixtuoid", shell_output("#{bin}/pixtuoid --version")
   end
 end
 ```
@@ -213,7 +213,7 @@ sufficient.
 
 The release workflow authenticates to the tap repo using a GitHub PAT
 stored as a repository secret (`HOMEBREW_TAP_TOKEN`) with `repo` scope on
-the `IvanWng97/homebrew-ascii-agents` repository. The PAT is used in a
+the `IvanWng97/homebrew-pixtuoid` repository. The PAT is used in a
 `git push` or via the GitHub API to commit the updated formula.
 
 ### Promotion to homebrew-core
@@ -234,16 +234,16 @@ Fill in missing fields across all three crates:
 # Workspace Cargo.toml [package] section
 authors = ["Ivan Wang <ivanwng97@icloud.com>"]
 description = "Terminal pixel-art office for AI coding agents"
-homepage = "https://github.com/IvanWng97/ascii-agents"
+homepage = "https://github.com/IvanWng97/pixtuoid"
 keywords = ["terminal", "tui", "pixel-art", "ai-agents", "claude"]
 categories = ["command-line-utilities", "visualization"]
 ```
 
 Per-crate descriptions:
 
-- **ascii-agents-core**: `"Headless engine for ascii-agents — state, sprites, layout"`
-- **ascii-agents**: `"Terminal pixel-art office for AI coding agents"`
-- **ascii-agents-hook**: `"Lightweight hook shim for ascii-agents"`
+- **pixtuoid-core**: `"Headless engine for pixtuoid — state, sprites, layout"`
+- **pixtuoid**: `"Terminal pixel-art office for AI coding agents"`
+- **pixtuoid-hook**: `"Lightweight hook shim for pixtuoid"`
 
 ---
 
@@ -283,4 +283,4 @@ External (separate repo):
 
 | File                              | Action  | Purpose                          |
 |-----------------------------------|---------|----------------------------------|
-| `IvanWng97/homebrew-ascii-agents` | Create  | New repo with formula template   |
+| `IvanWng97/homebrew-pixtuoid` | Create  | New repo with formula template   |

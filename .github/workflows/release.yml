@@ -31,8 +31,8 @@ jobs:
             exit 1
           fi
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings
-      - run: cargo test --workspace --features ascii-agents-core/test-renderer
+      - run: cargo clippy --workspace --all-targets --features pixtuoid-core/test-renderer -- -D warnings
+      - run: cargo test --workspace --features pixtuoid-core/test-renderer
 
   build:
     name: build (${{ matrix.target }})
@@ -81,10 +81,10 @@ jobs:
       - name: Package
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          DIR="ascii-agents-${VERSION}-${{ matrix.target }}"
+          DIR="pixtuoid-${VERSION}-${{ matrix.target }}"
           mkdir "$DIR"
-          cp "target/${{ matrix.target }}/release/ascii-agents" "$DIR/"
-          cp "target/${{ matrix.target }}/release/ascii-agents-hook" "$DIR/"
+          cp "target/${{ matrix.target }}/release/pixtuoid" "$DIR/"
+          cp "target/${{ matrix.target }}/release/pixtuoid-hook" "$DIR/"
           cp LICENSE "$DIR/"
           tar czf "${DIR}.tar.gz" "$DIR"
 
@@ -131,11 +131,11 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
 
-      - name: Build deb (ascii-agents)
-        run: cargo deb -p ascii-agents --no-build --target ${{ matrix.target }}
+      - name: Build deb (pixtuoid)
+        run: cargo deb -p pixtuoid --no-build --target ${{ matrix.target }}
 
-      - name: Build deb (ascii-agents-hook)
-        run: cargo deb -p ascii-agents-hook --no-build --target ${{ matrix.target }}
+      - name: Build deb (pixtuoid-hook)
+        run: cargo deb -p pixtuoid-hook --no-build --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -198,7 +198,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          for crate in ascii-agents-core ascii-agents-hook ascii-agents; do
+          for crate in pixtuoid-core pixtuoid-hook pixtuoid; do
             cargo publish -p "$crate" || echo "::warning::$crate already published, skipping"
           done
 
@@ -220,69 +220,69 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           TAG="${GITHUB_REF_NAME}"
 
-          SHA_MACOS_ARM=$(sha256sum "artifacts/ascii-agents-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
-          SHA_MACOS_INTEL=$(sha256sum "artifacts/ascii-agents-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)
-          SHA_LINUX_ARM=$(sha256sum "artifacts/ascii-agents-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
-          SHA_LINUX_INTEL=$(sha256sum "artifacts/ascii-agents-${TAG}-x86_64-unknown-linux-musl.tar.gz" | cut -d' ' -f1)
+          SHA_MACOS_ARM=$(sha256sum "artifacts/pixtuoid-${TAG}-aarch64-apple-darwin.tar.gz" | cut -d' ' -f1)
+          SHA_MACOS_INTEL=$(sha256sum "artifacts/pixtuoid-${TAG}-x86_64-apple-darwin.tar.gz" | cut -d' ' -f1)
+          SHA_LINUX_ARM=$(sha256sum "artifacts/pixtuoid-${TAG}-aarch64-unknown-linux-gnu.tar.gz" | cut -d' ' -f1)
+          SHA_LINUX_INTEL=$(sha256sum "artifacts/pixtuoid-${TAG}-x86_64-unknown-linux-musl.tar.gz" | cut -d' ' -f1)
 
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/IvanWng97/homebrew-ascii-agents.git" tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/IvanWng97/homebrew-pixtuoid.git" tap
           mkdir -p tap/Formula
 
-          cat > tap/Formula/ascii-agents.rb <<RUBY
-          class AsciiAgents < Formula
+          cat > tap/Formula/pixtuoid.rb <<RUBY
+          class Pixtuoid < Formula
             desc "Terminal pixel-art office for AI coding agents"
-            homepage "https://github.com/IvanWng97/ascii-agents"
+            homepage "https://github.com/IvanWng97/pixtuoid"
             version "${VERSION}"
             license "MIT"
 
             on_macos do
               on_arm do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_MACOS_ARM}"
               end
               on_intel do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_MACOS_INTEL}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_LINUX_ARM}"
               end
               on_intel do
-                url "https://github.com/IvanWng97/ascii-agents/releases/download/${TAG}/ascii-agents-${TAG}-x86_64-unknown-linux-musl.tar.gz"
+                url "https://github.com/IvanWng97/pixtuoid/releases/download/${TAG}/pixtuoid-${TAG}-x86_64-unknown-linux-musl.tar.gz"
                 sha256 "${SHA_LINUX_INTEL}"
               end
             end
 
             def install
-              bin.install "ascii-agents"
-              bin.install "ascii-agents-hook"
+              bin.install "pixtuoid"
+              bin.install "pixtuoid-hook"
             end
 
             def caveats
               <<~EOS
                 To start visualizing your Claude Code sessions:
-                  ascii-agents install-hooks
-                  ascii-agents run
+                  pixtuoid install-hooks
+                  pixtuoid run
 
                 Before uninstalling, remove hooks from Claude Code:
-                  ascii-agents uninstall-hooks
+                  pixtuoid uninstall-hooks
               EOS
             end
 
             test do
-              assert_match "ascii-agents", shell_output("#{bin}/ascii-agents --version")
+              assert_match "pixtuoid", shell_output("#{bin}/pixtuoid --version")
             end
           end
           RUBY
-          sed -i 's/^          //' tap/Formula/ascii-agents.rb
+          sed -i 's/^          //' tap/Formula/pixtuoid.rb
 
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ascii-agents.rb
-          git commit -m "ascii-agents ${VERSION}"
+          git add Formula/pixtuoid.rb
+          git commit -m "pixtuoid ${VERSION}"
           git push

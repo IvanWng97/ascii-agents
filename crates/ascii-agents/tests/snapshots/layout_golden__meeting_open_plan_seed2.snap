@@ -1,5 +1,0 @@
----
-source: crates/ascii-agents/tests/layout_golden.rs
-expression: l.meeting_room
----
-None

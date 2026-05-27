@@ -13,8 +13,8 @@
 ## File Structure
 
 **Create:**
-- `crates/ascii-agents/src/tui/layout.rs` — `Layout` struct + `Layout::compute()` zone math, with `#[cfg(test)] mod tests` inline.
-- `crates/ascii-agents/src/tui/pose.rs` — `Pose` enum + `pose::derive(slot, now, &layout)` + wander state machine constants, with `#[cfg(test)] mod tests` inline.
+- `crates/pixtuoid/src/tui/layout.rs` — `Layout` struct + `Layout::compute()` zone math, with `#[cfg(test)] mod tests` inline.
+- `crates/pixtuoid/src/tui/pose.rs` — `Pose` enum + `pose::derive(slot, now, &layout)` + wander state machine constants, with `#[cfg(test)] mod tests` inline.
 - `assets/sprites/default/seated.sprite` (8×10)
 - `assets/sprites/default/standing.sprite` (6×12)
 - `assets/sprites/default/walking_0.sprite` (6×12)
@@ -26,10 +26,10 @@
 - `assets/sprites/default/pack.toml` — palette gains `C` and `K`; animations rewritten.
 - `assets/sprites/default/typing_0.sprite` — rewrite at 8×10.
 - `assets/sprites/default/typing_1.sprite` — rewrite at 8×10.
-- `crates/ascii-agents/src/tui/mod.rs` — `pub mod layout; pub mod pose;`
-- `crates/ascii-agents/src/tui/embedded_pack.rs` — update `include_str!` list.
-- `crates/ascii-agents/src/tui/renderer.rs` — gut `cubicle_grid` etc., delegate layout/pose, add `paint_lounge_decor`, refactor character drawing.
-- `crates/ascii-agents-core/tests/sprite_format.rs` — update `default_pack_loads_with_required_animations`.
+- `crates/pixtuoid/src/tui/mod.rs` — `pub mod layout; pub mod pose;`
+- `crates/pixtuoid/src/tui/embedded_pack.rs` — update `include_str!` list.
+- `crates/pixtuoid/src/tui/renderer.rs` — gut `cubicle_grid` etc., delegate layout/pose, add `paint_lounge_decor`, refactor character drawing.
+- `crates/pixtuoid-core/tests/sprite_format.rs` — update `default_pack_loads_with_required_animations`.
 
 **Delete:**
 - `assets/sprites/default/idle.sprite` — `seated.sprite` covers idle.
@@ -43,8 +43,8 @@ Sprite art is drawn in tasks 8–11 *after* the wiring tasks land green with pla
 ## Task 1: Scaffold `layout.rs` with empty `Layout` struct
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/layout.rs`
-- Modify: `crates/ascii-agents/src/tui/mod.rs:1-4`
+- Create: `crates/pixtuoid/src/tui/layout.rs`
+- Modify: `crates/pixtuoid/src/tui/mod.rs:1-4`
 
 - [ ] **Step 1: Create the module file with a placeholder type**
 
@@ -97,7 +97,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module in tui/mod.rs**
 
-Open `crates/ascii-agents/src/tui/mod.rs`, change line 1 from:
+Open `crates/pixtuoid/src/tui/mod.rs`, change line 1 from:
 ```rust
 pub mod embedded_pack;
 pub mod renderer;
@@ -117,7 +117,7 @@ Expected: `Finished dev profile` with no errors. The `unused` warning on `Layout
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/layout.rs crates/ascii-agents/src/tui/mod.rs
+git add crates/pixtuoid/src/tui/layout.rs crates/pixtuoid/src/tui/mod.rs
 git commit -m "scaffold: tui::layout module for coworking-lounge"
 ```
 
@@ -126,7 +126,7 @@ git commit -m "scaffold: tui::layout module for coworking-lounge"
 ## Task 2: Implement `Layout::compute` (TDD)
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/layout.rs`
+- Modify: `crates/pixtuoid/src/tui/layout.rs`
 
 - [ ] **Step 1: Write the failing tests inside the `tests` module**
 
@@ -186,7 +186,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test --workspace --lib --features ascii-agents-core/test-renderer layout::`
+Run: `cargo test --workspace --lib --features pixtuoid-core/test-renderer layout::`
 Expected: 5 failures with "called `Option::unwrap()` on a `None` value" / "fits".
 
 - [ ] **Step 3: Implement `Layout::compute`**
@@ -252,13 +252,13 @@ Replace the body of `pub fn compute` with:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test --workspace --lib --features ascii-agents-core/test-renderer layout::`
+Run: `cargo test --workspace --lib --features pixtuoid-core/test-renderer layout::`
 Expected: 5 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/layout.rs
+git add crates/pixtuoid/src/tui/layout.rs
 git commit -m "feat(tui): Layout::compute with zone math + tests"
 ```
 
@@ -267,8 +267,8 @@ git commit -m "feat(tui): Layout::compute with zone math + tests"
 ## Task 3: Scaffold `pose.rs` with `Pose` enum + constants
 
 **Files:**
-- Create: `crates/ascii-agents/src/tui/pose.rs`
-- Modify: `crates/ascii-agents/src/tui/mod.rs`
+- Create: `crates/pixtuoid/src/tui/pose.rs`
+- Modify: `crates/pixtuoid/src/tui/mod.rs`
 
 - [ ] **Step 1: Create the module file**
 
@@ -281,7 +281,7 @@ git commit -m "feat(tui): Layout::compute with zone math + tests"
 
 use std::time::{Duration, SystemTime};
 
-use ascii_agents_core::state::{ActivityState, AgentSlot};
+use pixtuoid_core::state::{ActivityState, AgentSlot};
 
 use crate::tui::layout::{Layout, Point};
 
@@ -329,7 +329,7 @@ mod tests {
 
 - [ ] **Step 2: Wire in tui/mod.rs**
 
-Add `pub mod pose;` to `crates/ascii-agents/src/tui/mod.rs` so it reads:
+Add `pub mod pose;` to `crates/pixtuoid/src/tui/mod.rs` so it reads:
 
 ```rust
 pub mod embedded_pack;
@@ -346,7 +346,7 @@ Expected: clean build (warnings on unused items are fine while scaffolding).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/pose.rs crates/ascii-agents/src/tui/mod.rs
+git add crates/pixtuoid/src/tui/pose.rs crates/pixtuoid/src/tui/mod.rs
 git commit -m "scaffold: tui::pose module with Pose enum + constants"
 ```
 
@@ -355,7 +355,7 @@ git commit -m "scaffold: tui::pose module with Pose enum + constants"
 ## Task 4: Implement `pose::derive` (TDD)
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/pose.rs`
+- Modify: `crates/pixtuoid/src/tui/pose.rs`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -367,8 +367,8 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration;
-    use ascii_agents_core::source::Activity;
-    use ascii_agents_core::AgentId;
+    use pixtuoid_core::source::Activity;
+    use pixtuoid_core::AgentId;
 
     fn slot(state: ActivityState, age_ms: u64) -> (AgentSlot, SystemTime) {
         let id = AgentId::from_transcript_path("/p/a.jsonl");
@@ -482,7 +482,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test --workspace --lib --features ascii-agents-core/test-renderer pose::`
+Run: `cargo test --workspace --lib --features pixtuoid-core/test-renderer pose::`
 Expected: 8 failures, all from `derive` returning `None`.
 
 - [ ] **Step 3: Implement `derive` and remove the `_unused` stub**
@@ -533,13 +533,13 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &Layout, elapsed_ms: u64) ->
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test --workspace --lib --features ascii-agents-core/test-renderer pose::`
+Run: `cargo test --workspace --lib --features pixtuoid-core/test-renderer pose::`
 Expected: 8 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/pose.rs
+git add crates/pixtuoid/src/tui/pose.rs
 git commit -m "feat(tui): pose::derive + wander state machine + tests"
 ```
 
@@ -769,17 +769,17 @@ git commit -m "feat(pack): placeholder sprites for coworking-lounge poses"
 ## Task 7: Update `embedded_pack.rs` include list
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/embedded_pack.rs`
+- Modify: `crates/pixtuoid/src/tui/embedded_pack.rs`
 
 - [ ] **Step 1: Replace the file contents**
 
-Open `crates/ascii-agents/src/tui/embedded_pack.rs`. Replace the body of `load_default_pack`:
+Open `crates/pixtuoid/src/tui/embedded_pack.rs`. Replace the body of `load_default_pack`:
 
 ```rust
 //! Embeds the bundled top-down sprite pack into the binary at compile time.
 
 use anyhow::Result;
-use ascii_agents_core::sprite::format::{load_pack_from_strings, Pack};
+use pixtuoid_core::sprite::format::{load_pack_from_strings, Pack};
 
 pub fn load_default_pack() -> Result<Pack> {
     let pack_toml = include_str!("../../../../assets/sprites/default/pack.toml");
@@ -817,12 +817,12 @@ pub fn load_default_pack() -> Result<Pack> {
 Run: `cargo build --workspace`
 Expected: clean build.
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer sprite_format::tests::default_pack_loads`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer sprite_format::tests::default_pack_loads`
 Expected: still fails because the test asserts old animation names.
 
 - [ ] **Step 3: Update the sprite_format test**
 
-Open `crates/ascii-agents-core/tests/sprite_format.rs`. Replace the `default_pack_loads_with_required_animations` test body:
+Open `crates/pixtuoid-core/tests/sprite_format.rs`. Replace the `default_pack_loads_with_required_animations` test body:
 
 ```rust
 #[test]
@@ -849,14 +849,14 @@ fn default_pack_loads_with_required_animations() {
 
 - [ ] **Step 4: Verify the pack test passes**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer sprite_format`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer sprite_format`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/embedded_pack.rs \
-        crates/ascii-agents-core/tests/sprite_format.rs
+git add crates/pixtuoid/src/tui/embedded_pack.rs \
+        crates/pixtuoid-core/tests/sprite_format.rs
 git commit -m "feat(pack): wire coworking-lounge animations into embedded loader"
 ```
 
@@ -867,11 +867,11 @@ git commit -m "feat(pack): wire coworking-lounge animations into embedded loader
 ## Task 8: Gut `renderer.rs` and rebuild around `Layout` + `Pose`
 
 **Files:**
-- Modify: `crates/ascii-agents/src/tui/renderer.rs` (substantial rewrite)
+- Modify: `crates/pixtuoid/src/tui/renderer.rs` (substantial rewrite)
 
 - [ ] **Step 1: Replace the entire file**
 
-Overwrite `crates/ascii-agents/src/tui/renderer.rs` with:
+Overwrite `crates/pixtuoid/src/tui/renderer.rs` with:
 
 ```rust
 //! Top-down coworking-lounge renderer.
@@ -885,11 +885,11 @@ use std::io::{stdout, Stdout};
 use std::time::SystemTime;
 
 use anyhow::Result;
-use ascii_agents_core::sprite::blit::blit_frame;
-use ascii_agents_core::sprite::format::Pack;
-use ascii_agents_core::sprite::{Frame, Palette, Pixel, Rgb, RgbBuffer};
-use ascii_agents_core::state::ActivityState;
-use ascii_agents_core::{AgentSlot, SceneState};
+use pixtuoid_core::sprite::blit::blit_frame;
+use pixtuoid_core::sprite::format::Pack;
+use pixtuoid_core::sprite::{Frame, Palette, Pixel, Rgb, RgbBuffer};
+use pixtuoid_core::state::ActivityState;
+use pixtuoid_core::{AgentSlot, SceneState};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -1166,7 +1166,7 @@ pub fn draw_scene<B: Backend>(
         let size = f.area();
 
         let title = Paragraph::new(Line::from(vec![
-            Span::raw(" ascii-agents — "),
+            Span::raw(" pixtuoid — "),
             Span::raw(format!(
                 "{} session{} ",
                 agents.len(),
@@ -1320,7 +1320,7 @@ fn summarize_state(state: &ActivityState) -> &'static str {
 
 - [ ] **Step 2: Verify all tests pass**
 
-Run: `cargo test --workspace --features ascii-agents-core/test-renderer`
+Run: `cargo test --workspace --features pixtuoid-core/test-renderer`
 Expected: all green (60+ tests).
 
 - [ ] **Step 3: Verify the snapshot example renders**
@@ -1331,7 +1331,7 @@ Expected: writes `/tmp/lounge.png` with no error.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/ascii-agents/src/tui/renderer.rs
+git add crates/pixtuoid/src/tui/renderer.rs
 git commit -m "feat(tui): rewrite renderer around Layout + Pose with lounge zones"
 ```
 
@@ -1340,7 +1340,7 @@ git commit -m "feat(tui): rewrite renderer around Layout + Pose with lounge zone
 ## Task 9: Snapshot regression captures for each pose
 
 **Files:**
-- Modify: `crates/ascii-agents/examples/snapshot.rs:150-205` (the `sample_scene` function)
+- Modify: `crates/pixtuoid/examples/snapshot.rs:150-205` (the `sample_scene` function)
 
 - [ ] **Step 1: Replace `sample_scene` with one that covers every pose**
 
@@ -1395,7 +1395,7 @@ Expected: writes `/tmp/lounge.png`. Open it (`open /tmp/lounge.png`) and confirm
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/ascii-agents/examples/snapshot.rs
+git add crates/pixtuoid/examples/snapshot.rs
 git commit -m "test(snapshot): sample scene exercises every coworking pose"
 ```
 
@@ -1412,7 +1412,7 @@ Expected: `Finished release profile` clean.
 
 - [ ] **Step 2: Run the binary against a real CC session**
 
-In one terminal: `./target/release/ascii-agents run`
+In one terminal: `./target/release/pixtuoid run`
 In another terminal: start a CC session in any project and make it call a tool.
 
 Expected: the working agent appears seated (typing animation), then returns to seated-idle, then after ~3.5s starts walking to a lounge waypoint, stands there ~2.5s, walks back. Cycle repeats while idle. Title bar shows the live session count.

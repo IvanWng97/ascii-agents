@@ -4,7 +4,7 @@
 **Scope:** redesign the top-down office scene to feel like a real coworking
 floor with mixed seated/standing/walking characters in an asymmetric layout.
 **Supersedes:** the cubicle-grid `draw_scene` shipped in
-[`2026-05-20-ascii-agents-design.md`](2026-05-20-ascii-agents-design.md) §6.
+[`2026-05-20-pixtuoid-design.md`](2026-05-20-pixtuoid-design.md) §6.
 
 ## Motivation
 
@@ -277,7 +277,7 @@ assets/sprites/default/walking_1.sprite               (new)
 assets/sprites/default/idle.sprite                    (delete; seated.sprite covers it)
 assets/sprites/default/couch.sprite                   (new)
 assets/sprites/default/coffee.sprite                  (new)
-crates/ascii-agents/src/tui/renderer.rs               (significant rewrite)
-crates/ascii-agents/src/tui/embedded_pack.rs          (update include_str! list)
-crates/ascii-agents-core/tests/sprite_format.rs       (update default_pack_loads_with_required_animations)
+crates/pixtuoid/src/tui/renderer.rs               (significant rewrite)
+crates/pixtuoid/src/tui/embedded_pack.rs          (update include_str! list)
+crates/pixtuoid-core/tests/sprite_format.rs       (update default_pack_loads_with_required_animations)
 ```

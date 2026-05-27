@@ -50,23 +50,23 @@ done
 
 # --- Phase 2: clippy (needs compile, runs before tests) -------------------
 
-step 'cargo clippy --workspace --all-targets --features ascii-agents-core/test-renderer -- -D warnings'
+step 'cargo clippy --workspace --all-targets --features pixtuoid-core/test-renderer -- -D warnings'
 cargo clippy --workspace --all-targets \
-    --features ascii-agents-core/test-renderer \
+    --features pixtuoid-core/test-renderer \
     -- -D warnings \
     || fail 'clippy: fix the warnings above and recommit'
 
 # --- Phase 3: tests (parallel via nextest if available) -------------------
 
 if command -v cargo-nextest &>/dev/null; then
-    step 'cargo nextest run --workspace --features ascii-agents-core/test-renderer'
+    step 'cargo nextest run --workspace --features pixtuoid-core/test-renderer'
     cargo nextest run --workspace \
-        --features ascii-agents-core/test-renderer \
+        --features pixtuoid-core/test-renderer \
         || fail 'tests: fix the failing tests above and recommit'
 else
-    step 'cargo test --workspace --features ascii-agents-core/test-renderer'
+    step 'cargo test --workspace --features pixtuoid-core/test-renderer'
     cargo test --workspace \
-        --features ascii-agents-core/test-renderer \
+        --features pixtuoid-core/test-renderer \
         || fail 'tests: fix the failing tests above and recommit'
 fi
 

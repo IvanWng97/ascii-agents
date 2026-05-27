@@ -1,0 +1,6 @@
+---
+source: crates/pixtuoid/src/tui/widgets/mod.rs
+assertion_line: 262
+expression: line
+---
+ 2 agents · 0 active · 0 waiting · 2 idle                                       F2/3 [↑↓] [p]ause [t]heme [q]uit
