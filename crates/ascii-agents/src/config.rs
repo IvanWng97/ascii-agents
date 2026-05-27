@@ -13,6 +13,12 @@ pub struct AppConfig {
     /// Custom sprite pack directory. Supports ~ expansion.
     #[serde(rename = "pack-dir")]
     pub pack_dir: Option<String>,
+    #[serde(
+        rename = "enabled-pets",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub enabled_pets: Option<Vec<String>>,
 }
 
 pub fn resolve_pack_dir(config: &AppConfig, cli_pack_dir: Option<PathBuf>) -> Option<PathBuf> {
@@ -107,6 +113,22 @@ pub fn resolve_theme(config: &AppConfig, cli_theme: Option<String>) -> String {
     cli_theme
         .or(config_theme)
         .unwrap_or_else(|| "normal".to_string())
+}
+
+pub fn resolve_pets(config: &AppConfig) -> Vec<crate::tui::pet::PetKind> {
+    match &config.enabled_pets {
+        None => crate::tui::pet::PetKind::ALL.to_vec(),
+        Some(names) => names
+            .iter()
+            .filter_map(|n| {
+                let kind = crate::tui::pet::PetKind::from_config_name(n);
+                if kind.is_none() {
+                    tracing::warn!(pet = %n, "unknown pet in config — skipping");
+                }
+                kind
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -311,5 +333,61 @@ mod tests {
         std::fs::write(&path, "pack-dir = \"/custom/sprites\"\n").unwrap();
         let cfg = load(&path);
         assert_eq!(cfg.pack_dir.as_deref(), Some("/custom/sprites"));
+    }
+
+    // --- enabled-pets -------------------------------------------------------
+
+    #[test]
+    fn enabled_pets_none_returns_all() {
+        let cfg = AppConfig::default();
+        let pets = resolve_pets(&cfg);
+        assert_eq!(pets.len(), crate::tui::pet::PetKind::ALL.len());
+    }
+
+    #[test]
+    fn enabled_pets_empty_returns_none() {
+        let cfg = AppConfig {
+            enabled_pets: Some(vec![]),
+            ..AppConfig::default()
+        };
+        let pets = resolve_pets(&cfg);
+        assert!(pets.is_empty());
+    }
+
+    #[test]
+    fn enabled_pets_filters_unknown() {
+        let cfg = AppConfig {
+            enabled_pets: Some(vec!["cat".into(), "hamster".into()]),
+            ..AppConfig::default()
+        };
+        let pets = resolve_pets(&cfg);
+        assert_eq!(pets, vec![crate::tui::pet::PetKind::Cat]);
+    }
+
+    #[test]
+    fn enabled_pets_loaded_from_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "enabled-pets = [\"dog\"]\n").unwrap();
+        let cfg = load(&path);
+        assert_eq!(cfg.enabled_pets, Some(vec!["dog".to_string()]));
+    }
+
+    #[test]
+    fn save_preserves_enabled_pets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "theme = \"normal\"\nenabled-pets = [\"cat\", \"dog\"]\n",
+        )
+        .unwrap();
+        save(&path, "cyberpunk").unwrap();
+        let cfg = load(&path);
+        assert_eq!(cfg.theme.as_deref(), Some("cyberpunk"));
+        assert_eq!(
+            cfg.enabled_pets,
+            Some(vec!["cat".to_string(), "dog".to_string()])
+        );
     }
 }
