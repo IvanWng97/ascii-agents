@@ -5,6 +5,7 @@ pub mod frame_cache;
 pub mod hit_test;
 pub mod layout;
 pub mod pathfind;
+pub mod pet;
 pub mod pixel_painter;
 pub mod pose;
 pub mod renderer;
