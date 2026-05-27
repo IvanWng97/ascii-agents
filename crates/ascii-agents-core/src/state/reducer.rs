@@ -70,6 +70,9 @@ impl Reducer {
         self.sweep_exited(scene, now);
         self.expire_pending_idles(scene, now);
         self.sweep_stale(scene, now);
+        // Clean up active_tasks entries for agents that never got a
+        // SessionStart (Task event arrived before JSONL created the slot).
+        self.active_tasks.retain(|id, _| scene.agents.contains_key(id));
     }
 
     pub fn apply(
@@ -146,11 +149,11 @@ impl Reducer {
                 detail: Some(d),
                 ..
             } if d.is_task() => {
+                self.active_tasks
+                    .entry(*agent_id)
+                    .or_default()
+                    .insert(tuid.clone());
                 if let Some(slot) = scene.agents.get_mut(agent_id) {
-                    self.active_tasks
-                        .entry(*agent_id)
-                        .or_default()
-                        .insert(tuid.clone());
                     slot.state = ActivityState::Active {
                         activity: crate::source::Activity::Typing,
                         tool_use_id: Some(Arc::<str>::from(tuid.as_str())),
