@@ -63,7 +63,7 @@ Download from [GitHub Releases](https://github.com/IvanWng97/pixtuoid/releases/l
 ### Cargo
 
 ```bash
-cargo install pixtuoid
+cargo install pixtuoid pixtuoid-hook
 ```
 
 ### From source
@@ -195,7 +195,7 @@ Three Rust crates:
    ```bash
    brew untap IvanWng97/ascii-agents 2>/dev/null
    brew install IvanWng97/pixtuoid/pixtuoid
-   # or: cargo install pixtuoid
+   # or: cargo install pixtuoid pixtuoid-hook
    ```
 
 2. **Re-register hooks** (replaces old `ascii-agents-hook` entries automatically):
