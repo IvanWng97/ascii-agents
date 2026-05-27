@@ -28,6 +28,7 @@ use ratatui::Terminal;
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point};
 use crate::tui::pathfind::Router;
+use crate::tui::pet::PetKind;
 use crate::tui::pixel_painter::{render_to_rgb_buffer, PixelCtx};
 use crate::tui::pose;
 
@@ -47,15 +48,16 @@ pub(super) use crate::tui::widgets::{
 /// Duration (ms) the cat stays frozen in place after being petted.
 pub const PET_DURATION_MS: u64 = 2000;
 
-/// State for the "pet the cat" interaction. Lives on `TuiRenderer`
+/// State for the "pet the animal" interaction. Lives on `TuiRenderer`
 /// (render-side only) — petting is a local visual effect, not a data
 /// model concern. Same pattern as `mouse_pos` and `pinned_agent`.
-pub struct CatPetState {
+pub struct PetState {
     pub petted_at: SystemTime,
     pub pet_pos: Point,
+    pub kind: PetKind,
 }
 
-impl CatPetState {
+impl PetState {
     pub fn is_active(&self, now: SystemTime) -> bool {
         now.duration_since(self.petted_at)
             .map(|d| d.as_millis() as u64)
@@ -85,8 +87,8 @@ pub struct DrawCtx<'a> {
     pub theme_picker: Option<usize>,
     pub floor_info: Option<(usize, usize)>,
     pub floor: crate::tui::floor::FloorMeta,
-    pub cat_pet: Option<&'a CatPetState>,
-    pub last_cat_pos: Option<(Point, &'static str)>,
+    pub active_pet: Option<&'a PetState>,
+    pub last_pet_pos: Option<(Point, &'static str, PetKind)>,
     pub chitchat_state:
         &'a mut std::collections::HashMap<(usize, usize), crate::tui::chitchat::ActiveChitchat>,
     pub chitchat_bubbles: Vec<crate::tui::chitchat::ChitchatBubble>,
@@ -221,12 +223,12 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         history: ctx.history,
         theme,
         floor,
-        cat_pet: ctx.cat_pet,
+        cat_pet: ctx.active_pet,
         chitchat_state: ctx.chitchat_state,
         coffee_holders: ctx.coffee_holders,
         coffee_fetched_at: ctx.coffee_fetched_at,
     });
-    ctx.last_cat_pos = pixel_result.cat_pos;
+    ctx.last_pet_pos = pixel_result.cat_pos.map(|(p, a)| (p, a, PetKind::Cat));
     ctx.chitchat_bubbles = pixel_result.chitchat_bubbles;
     ctx.new_coffee_carriers = pixel_result.new_coffee_carriers;
 
@@ -298,9 +300,9 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
             if let Some((mx, my)) = mouse_pos {
                 if hit_test_coffee_machine(&layout, mx, my) {
                     paint_coffee_tooltip(f, mx, my, actual_scene, theme);
-                } else if let Some((cat_pos, anim)) = ctx.last_cat_pos {
-                    if hit_test_cat(cat_pos, anim, mx, my) {
-                        let on_cooldown = ctx.cat_pet.is_some_and(|p| p.is_active(now));
+                } else if let Some((pet_pos, anim, _kind)) = ctx.last_pet_pos {
+                    if hit_test_cat(pet_pos, anim, mx, my) {
+                        let on_cooldown = ctx.active_pet.is_some_and(|p| p.is_active(now));
                         paint_cat_tooltip(f, anim, on_cooldown, mx, my, actual_scene, theme);
                     } else if let Some(label) = hit_test_furniture(&layout, mx, my) {
                         paint_furniture_tooltip(f, label, mx, my, actual_scene, theme);

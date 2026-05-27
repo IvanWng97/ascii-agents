@@ -35,7 +35,7 @@ pub async fn run_tui(
 ) -> Result<()> {
     let pack = embedded_pack::load_sprite_pack(pack_dir)?;
     let term = setup_terminal()?;
-    let mut renderer = TuiRenderer::new(term, theme);
+    let mut renderer = TuiRenderer::new(term, theme, crate::tui::pet::PetKind::ALL.to_vec());
     let mut last_layout_sig: Option<(u16, u16)> = None;
     let mut paused = false;
     let mut frozen_now: Option<SystemTime> = None;
@@ -174,13 +174,16 @@ pub async fn run_tui(
                                 renderer::hit_test_coffee_machine(layout, m.column, m.row)
                             }) {
                                 let _ = open::that("https://buymeacoffee.com/IvanWng97");
-                            } else if let Some((cat_pos, anim)) = renderer.cached_cat_pos() {
-                                if renderer.cat_pet().map_or(true, |p| !p.is_active(now))
-                                    && renderer::hit_test_cat(cat_pos, anim, m.column, m.row)
+                            } else if let Some((pet_pos, anim, kind)) = renderer.cached_pet_pos() {
+                                if renderer
+                                    .active_pet_ref()
+                                    .map_or(true, |p| !p.is_active(now))
+                                    && renderer::hit_test_cat(pet_pos, anim, m.column, m.row)
                                 {
-                                    renderer.set_cat_pet(Some(renderer::CatPetState {
+                                    renderer.set_active_pet(Some(renderer::PetState {
                                         petted_at: now,
-                                        pet_pos: cat_pos,
+                                        pet_pos,
+                                        kind,
                                     }));
                                 } else {
                                     let pinned = renderer.pinned_agent();

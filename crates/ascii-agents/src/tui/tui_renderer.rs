@@ -23,8 +23,9 @@ use ratatui::layout::Rect;
 use crate::tui::floor::{build_floor_scene, num_floors, FloorCtx, FloorMeta, FloorTransition};
 use crate::tui::layout::{Layout, Point, MAX_VISIBLE_DESKS};
 use crate::tui::pathfind::Router;
+use crate::tui::pet::PetKind;
 use crate::tui::pixel_painter::{render_to_rgb_buffer, PixelCtx};
-use crate::tui::renderer::{draw_scene, flush_buffer_to_term_at_offset, CatPetState, DrawCtx};
+use crate::tui::renderer::{draw_scene, flush_buffer_to_term_at_offset, DrawCtx, PetState};
 
 pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     pub terminal: Terminal<B>,
@@ -38,8 +39,9 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     theme: &'static crate::tui::theme::Theme,
     theme_picker: Option<usize>,
     cached_layout: Option<Layout>,
-    cat_pet: Option<CatPetState>,
-    last_cat_pos: Option<(Point, &'static str)>,
+    active_pet: Option<PetState>,
+    last_pet_pos: Option<(Point, &'static str, PetKind)>,
+    enabled_pets: Vec<PetKind>,
     chitchat_state: std::collections::HashMap<(usize, usize), crate::tui::chitchat::ActiveChitchat>,
     /// Persistent set of agents that have visited the pantry and carry a
     /// coffee cup back to their desk. Replaces the stateless
@@ -50,7 +52,11 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
 }
 
 impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
-    pub fn new(terminal: Terminal<B>, theme: &'static crate::tui::theme::Theme) -> Self {
+    pub fn new(
+        terminal: Terminal<B>,
+        theme: &'static crate::tui::theme::Theme,
+        enabled_pets: Vec<PetKind>,
+    ) -> Self {
         Self {
             terminal,
             floor_bufs: vec![RgbBuffer::filled(0, 0, Rgb(0, 0, 0))],
@@ -63,8 +69,9 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             theme,
             theme_picker: None,
             cached_layout: None,
-            cat_pet: None,
-            last_cat_pos: None,
+            active_pet: None,
+            last_pet_pos: None,
+            enabled_pets,
             chitchat_state: std::collections::HashMap::new(),
             coffee_holders: std::collections::HashSet::new(),
             coffee_fetched_at: std::collections::HashMap::new(),
@@ -129,16 +136,16 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
         self.theme_picker = picker;
     }
 
-    pub fn set_cat_pet(&mut self, pet: Option<CatPetState>) {
-        self.cat_pet = pet;
+    pub fn set_active_pet(&mut self, pet: Option<PetState>) {
+        self.active_pet = pet;
     }
 
-    pub fn cat_pet(&self) -> Option<&CatPetState> {
-        self.cat_pet.as_ref()
+    pub fn active_pet_ref(&self) -> Option<&PetState> {
+        self.active_pet.as_ref()
     }
 
-    pub fn cached_cat_pos(&self) -> Option<(Point, &'static str)> {
-        self.last_cat_pos
+    pub fn cached_pet_pos(&self) -> Option<(Point, &'static str, PetKind)> {
+        self.last_pet_pos
     }
 
     /// Drop the cached frame entries for agents no longer in `scene`.
@@ -160,9 +167,9 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
 
 impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
     fn render(&mut self, scene: &SceneState, pack: &Pack, now: SystemTime) -> Result<()> {
-        // Auto-expire cat pet state.
-        if self.cat_pet.as_ref().is_some_and(|p| !p.is_active(now)) {
-            self.cat_pet = None;
+        // Auto-expire pet state.
+        if self.active_pet.as_ref().is_some_and(|p| !p.is_active(now)) {
+            self.active_pet = None;
         }
 
         self.ticker.update(scene);
@@ -396,8 +403,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             theme_picker: self.theme_picker,
             floor_info,
             floor: FloorMeta::for_floor(self.current_floor, nf),
-            cat_pet: self.cat_pet.as_ref(),
-            last_cat_pos: None,
+            active_pet: self.active_pet.as_ref(),
+            last_pet_pos: None,
             chitchat_state: &mut self.chitchat_state,
             chitchat_bubbles: Vec::new(),
             coffee_holders: &self.coffee_holders,
@@ -405,7 +412,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             new_coffee_carriers: Vec::new(),
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
-        self.last_cat_pos = draw_ctx.last_cat_pos;
+        self.last_pet_pos = draw_ctx.last_pet_pos;
         // Persist newly detected coffee carriers.
         for id in draw_ctx.new_coffee_carriers {
             if self.coffee_holders.insert(id) {

@@ -75,7 +75,7 @@ pub struct PixelCtx<'a> {
     pub history: &'a mut pose::PoseHistory,
     pub theme: &'a crate::tui::theme::Theme,
     pub floor: crate::tui::floor::FloorMeta,
-    pub cat_pet: Option<&'a crate::tui::renderer::CatPetState>,
+    pub cat_pet: Option<&'a crate::tui::renderer::PetState>,
     pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<ascii_agents_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<ascii_agents_core::AgentId, SystemTime>,
