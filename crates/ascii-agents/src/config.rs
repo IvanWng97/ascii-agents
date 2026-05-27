@@ -73,11 +73,7 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
     // Resolve symlinks so atomic rename targets the real file,
     // not the symlink itself (critical for stow-managed configs).
     // canonicalize handles relative symlink targets correctly.
-    let real_path = if path.is_symlink() {
-        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-    } else {
-        path.to_path_buf()
-    };
+    let real_path = crate::install::io::resolve_symlink(path);
     if let Some(parent) = real_path.parent() {
         std::fs::create_dir_all(parent)?;
     }

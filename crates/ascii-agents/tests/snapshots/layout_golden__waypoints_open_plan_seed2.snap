@@ -1,6 +1,5 @@
 ---
 source: crates/ascii-agents/tests/layout_golden.rs
-assertion_line: 80
 expression: l.waypoints
 ---
 [

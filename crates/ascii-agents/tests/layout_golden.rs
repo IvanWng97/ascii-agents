@@ -66,54 +66,56 @@ fn layout_standard_192x160_room_walls() {
     insta::assert_debug_snapshot!("room_walls_192x160", l.room_walls);
 }
 
-// ── Open plan: seed 1 (no meeting room, open pantry) ────────────────
+// ── Open plan: seed 2 (no meeting room, open pantry) ────────────────
+// Seed 2 hashes to floor_variant=1 after the Fibonacci decorrelation.
 
 #[test]
-fn layout_open_plan_seed1_desks() {
-    let l = SceneLayout::compute_with_seed(160, 120, 4, 1).unwrap();
-    insta::assert_debug_snapshot!("desks_open_plan_seed1", l.home_desks);
+fn layout_open_plan_seed2_desks() {
+    let l = SceneLayout::compute_with_seed(160, 120, 4, 2).unwrap();
+    insta::assert_debug_snapshot!("desks_open_plan_seed2", l.home_desks);
 }
 
 #[test]
-fn layout_open_plan_seed1_waypoints() {
-    let l = SceneLayout::compute_with_seed(160, 120, 4, 1).unwrap();
-    insta::assert_debug_snapshot!("waypoints_open_plan_seed1", l.waypoints);
+fn layout_open_plan_seed2_waypoints() {
+    let l = SceneLayout::compute_with_seed(160, 120, 4, 2).unwrap();
+    insta::assert_debug_snapshot!("waypoints_open_plan_seed2", l.waypoints);
 }
 
 #[test]
-fn layout_open_plan_seed1_meeting() {
-    let l = SceneLayout::compute_with_seed(160, 120, 4, 1).unwrap();
-    insta::assert_debug_snapshot!("meeting_open_plan_seed1", l.meeting_room);
+fn layout_open_plan_seed2_meeting() {
+    let l = SceneLayout::compute_with_seed(160, 120, 4, 2).unwrap();
+    insta::assert_debug_snapshot!("meeting_open_plan_seed2", l.meeting_room);
 }
 
 #[test]
-fn layout_open_plan_seed1_room_walls() {
-    let l = SceneLayout::compute_with_seed(160, 120, 4, 1).unwrap();
-    insta::assert_debug_snapshot!("room_walls_open_plan_seed1", l.room_walls);
+fn layout_open_plan_seed2_room_walls() {
+    let l = SceneLayout::compute_with_seed(160, 120, 4, 2).unwrap();
+    insta::assert_debug_snapshot!("room_walls_open_plan_seed2", l.room_walls);
 }
 
-// ── Dense layout: seed 2 (dual meeting rooms if tall enough) ────────
+// ── Dense layout: seed 6 (dual meeting rooms if tall enough) ────────
+// Seed 6 hashes to floor_variant=2 after the Fibonacci decorrelation.
 
 #[test]
-fn layout_dense_seed2_desks() {
-    let l = SceneLayout::compute_with_seed(192, 160, 4, 2).unwrap();
-    insta::assert_debug_snapshot!("desks_dense_seed2", l.home_desks);
-}
-
-#[test]
-fn layout_dense_seed2_waypoints() {
-    let l = SceneLayout::compute_with_seed(192, 160, 4, 2).unwrap();
-    insta::assert_debug_snapshot!("waypoints_dense_seed2", l.waypoints);
+fn layout_dense_seed6_desks() {
+    let l = SceneLayout::compute_with_seed(192, 160, 4, 6).unwrap();
+    insta::assert_debug_snapshot!("desks_dense_seed6", l.home_desks);
 }
 
 #[test]
-fn layout_dense_seed2_meeting() {
-    let l = SceneLayout::compute_with_seed(192, 160, 4, 2).unwrap();
-    insta::assert_debug_snapshot!("meeting_dense_seed2", l.meeting_room);
+fn layout_dense_seed6_waypoints() {
+    let l = SceneLayout::compute_with_seed(192, 160, 4, 6).unwrap();
+    insta::assert_debug_snapshot!("waypoints_dense_seed6", l.waypoints);
 }
 
 #[test]
-fn layout_dense_seed2_room_walls() {
-    let l = SceneLayout::compute_with_seed(192, 160, 4, 2).unwrap();
-    insta::assert_debug_snapshot!("room_walls_dense_seed2", l.room_walls);
+fn layout_dense_seed6_meeting() {
+    let l = SceneLayout::compute_with_seed(192, 160, 4, 6).unwrap();
+    insta::assert_debug_snapshot!("meeting_dense_seed6", l.meeting_room);
+}
+
+#[test]
+fn layout_dense_seed6_room_walls() {
+    let l = SceneLayout::compute_with_seed(192, 160, 4, 6).unwrap();
+    insta::assert_debug_snapshot!("room_walls_dense_seed6", l.room_walls);
 }

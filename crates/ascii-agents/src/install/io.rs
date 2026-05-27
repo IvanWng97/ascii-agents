@@ -97,7 +97,7 @@ pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
 /// Follow symlink chain to the final target, even if that target doesn't exist
 /// yet (stow creates the link before the dotfiles repo is fully set up).
 /// `canonicalize` fails on a dangling symlink, so we walk `read_link` manually.
-fn resolve_symlink(path: &Path) -> PathBuf {
+pub fn resolve_symlink(path: &Path) -> PathBuf {
     let mut cur = path.to_path_buf();
     for _ in 0..32 {
         match std::fs::symlink_metadata(&cur) {

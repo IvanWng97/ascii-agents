@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::Value;
 
 const WRITE_TIMEOUT: Duration = Duration::from_millis(200);
@@ -23,9 +23,13 @@ fn main() -> Result<()> {
     let socket = default_socket_path();
 
     let mut buf = String::new();
-    std::io::stdin()
+    if std::io::stdin()
+        .take(1 << 20)
         .read_to_string(&mut buf)
-        .context("read stdin")?;
+        .is_err()
+    {
+        return Ok(());
+    }
     let mut payload: Value = match serde_json::from_str(&buf) {
         Ok(v) => v,
         // If we can't parse, exit 0 silently so CC isn't blocked.

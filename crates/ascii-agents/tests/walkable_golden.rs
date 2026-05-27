@@ -32,6 +32,6 @@ fn walkable_mask_standard_96x70() {
 
 #[test]
 fn walkable_mask_open_plan_96x70() {
-    let l = SceneLayout::compute_with_seed(96, 70, 2, 1).unwrap();
+    let l = SceneLayout::compute_with_seed(96, 70, 2, 2).unwrap();
     insta::assert_snapshot!("walkable_mask_open_plan_96x70", mask_to_ascii(&l));
 }

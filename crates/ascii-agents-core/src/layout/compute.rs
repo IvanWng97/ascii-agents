@@ -23,7 +23,7 @@ pub(super) fn compute_with_seed(
     // Per-floor layout variant: floor_seed encodes floor_idx via
     // wrapping_mul, so floor_idx = 0 gives seed=0 (F1), etc.
     // We derive a stable floor index from the seed for variant selection.
-    let floor_variant = (floor_seed % 5) as u8;
+    let floor_variant = ((floor_seed.wrapping_mul(0x517cc1b727220a95)) % 5) as u8;
 
     // F1(0): Standard — meeting + pantry, vertical wall between them
     //        and the cubicle area, horizontal wall between meeting/pantry.
