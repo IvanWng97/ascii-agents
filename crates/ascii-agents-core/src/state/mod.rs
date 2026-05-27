@@ -306,4 +306,18 @@ mod tests {
         let oob = s.floor_range(MAX_FLOORS + 10);
         assert_eq!(last, oob);
     }
+
+    #[test]
+    fn floor_local_desk_oob_lands_on_last_nonempty_floor() {
+        let s = SceneState::new([4, 8, 6, 4, 2]);
+        let total = s.total_capacity(); // 24
+                                        // desk_index 100 is beyond capacity — floor_of returns the last
+                                        // floor with nonzero capacity (floor 4, offset 22).
+        let oob = total + 76; // 100
+        let floor = s.floor_of(oob);
+        assert_eq!(floor, 4, "OOB desk lands on last nonempty floor");
+        let local = s.floor_local_desk(oob);
+        // offsets[4] = 22, so local = 100 - 22 = 78
+        assert_eq!(local, oob - 22);
+    }
 }

@@ -1381,3 +1381,108 @@ fn session_start_overflows_to_floor1_with_heterogeneous_capacity() {
     );
     assert_eq!(scene.floor_of(2), 1);
 }
+
+#[test]
+fn session_start_dropped_when_all_desks_occupied() {
+    let mut r = Reducer::new();
+    let mut scene = SceneState::new([2, 0, 0, 0, 0]);
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    for i in 0..2 {
+        let id = AgentId::from_transcript_path(&format!("/proj/{i}.jsonl"));
+        r.apply(
+            &mut scene,
+            AgentEvent::SessionStart {
+                agent_id: id,
+                source: "cc".into(),
+                session_id: format!("s{i}"),
+                cwd: PathBuf::from("/repo"),
+                parent_id: None,
+            },
+            t0,
+            Transport::Hook,
+        );
+    }
+    assert_eq!(scene.agents.len(), 2);
+    assert!(scene.next_free_desk().is_none());
+
+    let overflow_id = AgentId::from_transcript_path("/proj/overflow.jsonl");
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: overflow_id,
+            source: "cc".into(),
+            session_id: "s-overflow".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    assert_eq!(
+        scene.agents.len(),
+        2,
+        "third SessionStart must be silently dropped when desks are full"
+    );
+    assert!(
+        !scene.agents.contains_key(&overflow_id),
+        "overflow agent should not exist"
+    );
+}
+
+#[test]
+fn activity_end_while_waiting_does_not_arm_pending_idle() {
+    let mut scene = SceneState::uniform(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/wait.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    start(&mut r, &mut scene, id);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t1".into()),
+            detail: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+
+    r.apply(
+        &mut scene,
+        AgentEvent::Waiting {
+            agent_id: id,
+            reason: "permission".into(),
+        },
+        t0 + Duration::from_millis(500),
+        Transport::Hook,
+    );
+    assert!(matches!(
+        scene.agents.get(&id).unwrap().state,
+        ActivityState::Waiting { .. }
+    ));
+
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        t0 + Duration::from_millis(1000),
+        Transport::Jsonl,
+    );
+
+    let slot = scene.agents.get(&id).unwrap();
+    assert!(
+        matches!(slot.state, ActivityState::Waiting { .. }),
+        "state should remain Waiting, got {:?}",
+        slot.state
+    );
+    assert!(
+        slot.pending_idle_at.is_none(),
+        "pending_idle_at must not be armed when state is Waiting"
+    );
+}

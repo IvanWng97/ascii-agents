@@ -601,4 +601,42 @@ mod tests {
         overlay.add(20, 20, CELL_SIZE, CELL_SIZE);
         assert!(!cell_walkable(&mask, &overlay, 5, 5));
     }
+
+    #[test]
+    fn find_path_returns_none_when_target_completely_surrounded() {
+        let mask = WalkableMask::new_open(100, 100);
+        let mut overlay = OccupancyOverlay::new();
+        // Wall off a region around the target so snap_to_walkable can't
+        // find any walkable cell within MAX_SNAP_RADIUS.
+        let target = Point { x: 50, y: 50 };
+        let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
+        let wall_origin = 50u16.saturating_sub(wall_size / 2);
+        overlay.add(wall_origin, wall_origin, wall_size, wall_size);
+
+        let from = Point { x: 4, y: 4 };
+        let result = find_path(&mask, &overlay, None, from, target);
+        assert!(
+            result.is_none(),
+            "completely surrounded target should return None, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn router_falls_back_to_straight_line_when_path_is_none() {
+        let mask = WalkableMask::new_open(100, 100);
+        let mut overlay = OccupancyOverlay::new();
+        let from = Point { x: 4, y: 4 };
+        let to = Point { x: 50, y: 50 };
+        let wall_size = (MAX_SNAP_RADIUS + 1) * CELL_SIZE * 2;
+        let wall_origin = 50u16.saturating_sub(wall_size / 2);
+        overlay.add(wall_origin, wall_origin, wall_size, wall_size);
+
+        let mut router = AStarRouter::new();
+        let path = router.route(&mask, &overlay, from, to);
+        assert_eq!(
+            path,
+            vec![from, to],
+            "router should fall back to [from, to] when find_path returns None"
+        );
+    }
 }

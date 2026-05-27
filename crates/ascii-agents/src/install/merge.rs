@@ -142,4 +142,22 @@ mod tests {
         let cleaned = merge_uninstall(installed);
         assert!(cleaned.get("hooks").is_none(), "got {cleaned}");
     }
+
+    #[test]
+    fn uninstall_non_array_hook_value_does_not_panic() {
+        let doc = json!({
+            "hooks": {
+                "PreToolUse": "not-an-array",
+                "PostToolUse": 42
+            }
+        });
+        let cleaned = merge_uninstall(doc);
+        let hooks = cleaned["hooks"].as_object().unwrap();
+        assert_eq!(
+            hooks["PreToolUse"],
+            json!("not-an-array"),
+            "non-array values should pass through unchanged"
+        );
+        assert_eq!(hooks["PostToolUse"], json!(42));
+    }
 }

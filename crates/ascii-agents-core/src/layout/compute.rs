@@ -372,7 +372,7 @@ pub(super) fn compute_with_seed(
         wall_decor.push((
             WallDecor::MeetingScreen,
             Point {
-                x: mr.x + mr.width / 2 - 7,
+                x: mr.x + (mr.width / 2).saturating_sub(7),
                 y: top_margin.saturating_sub(12),
             },
         ));

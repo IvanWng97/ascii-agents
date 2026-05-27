@@ -403,6 +403,44 @@ async fn stale_file_emits_session_start_when_written_to() {
     handle.abort();
 }
 
+/// A recent file (within the initial window) that has a session_end marker
+/// at its tail must NOT produce a SessionStart on startup — the watcher
+/// must detect the ended session and seed the cursor at EOF.
+#[tokio::test]
+async fn watcher_skips_recent_file_with_session_end_marker() {
+    let dir = TempDir::new().unwrap();
+    let projects_root = dir.path().to_path_buf();
+    let project_dir = projects_root.join("proj-ended");
+    tokio::fs::create_dir_all(&project_dir).await.unwrap();
+
+    let ended = project_dir.join("ended.jsonl");
+    let content = r#"{"type":"system","subtype":"session_start","sessionId":"ended","cwd":"/repo"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"system","subtype":"session_end","sessionId":"ended"}
+"#;
+    tokio::fs::write(&ended, content).await.unwrap();
+    // mtime is "now" — well within the initial window.
+
+    let (tx, mut rx) = mpsc::channel::<(Transport, AgentEvent)>(32);
+    let watcher = cc_watcher(projects_root.clone()).with_initial_window(Duration::from_secs(3600));
+    let handle = tokio::spawn(async move { watcher.run(tx).await });
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut events = Vec::new();
+    while let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
+        events.push(ev);
+    }
+    let has_session_start = events
+        .iter()
+        .any(|(_, ev)| matches!(ev, AgentEvent::SessionStart { .. }));
+    assert!(
+        !has_session_start,
+        "recent file with session_end marker must not produce SessionStart, got {events:?}"
+    );
+    handle.abort();
+}
+
 fn custom_label(_path: &std::path::Path, _source: &str, _cwd: &std::path::Path) -> String {
     "custom-label-ok".to_string()
 }
