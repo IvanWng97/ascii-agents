@@ -265,15 +265,7 @@ pub const REQUIRED_CHARACTER_ANIMATIONS: &[&str] = &[
     "back_couch",
 ];
 
-pub const OPTIONAL_CHARACTER_ANIMATIONS: &[&str] = &[
-    "walking_coffee",
-    "sitting_couch",
-    "sitting_couch_sleeping",
-    "seated_floor",
-    "seated_floor_sleeping",
-    "working_couch",
-    "working_floor",
-];
+pub const OPTIONAL_CHARACTER_ANIMATIONS: &[&str] = &["walking_coffee"];
 
 pub const OPTIONAL_FURNITURE_ANIMATIONS: &[&str] = &[
     "desk",
@@ -290,8 +282,6 @@ pub const OPTIONAL_FURNITURE_ANIMATIONS: &[&str] = &[
     "cat_sleep",
     "meeting_sofa",
     "meeting_screen",
-    "coffee",
-    "couch",
     "pantry",
     "pantry_small",
     "whiteboard",
@@ -310,8 +300,6 @@ const MULTI_FRAME_REQUIREMENTS: &[(&str, usize)] = &[
     ("walking_back", 2),
     ("door", 3),
     ("cat_walk", 2),
-    ("working_couch", 2),
-    ("working_floor", 2),
 ];
 
 #[derive(Debug, Default)]

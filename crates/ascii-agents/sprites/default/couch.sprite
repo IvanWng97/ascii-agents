@@ -1,9 +1,0 @@
-# 14x5 top-down couch. Top row is the BACK ridge (cushion line) — visually
-# distinct from the seat side so mirror_vertical produces an obvious facing
-# flip. Bottom rows: armrest curves + base shadow line.
-@frame 0
-. n n n n n n n n n n n n .
-n C C C C C C C C C C C C n
-n C C C C C C C C C C C C n
-n n C C C C C C C C C C n n
-. . n n n n n n n n n n . .

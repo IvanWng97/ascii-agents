@@ -1,8 +1,0 @@
-# 8x6 floor-sitter with closed eyes — overflow workstation, agent idle.
-@frame 0
-. n H H H H n .
-n H H H H H H n
-H e e S e e S H
-. S S S m S S .
-. B B B B B B .
-. K K K K K K .

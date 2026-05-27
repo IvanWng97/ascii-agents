@@ -69,8 +69,6 @@ fn default_pack_loads_with_required_animations() {
         "walking",
         "desk",
         "plant",
-        "couch",
-        "coffee",
         "pantry",
         "whiteboard",
         "bookshelf",
