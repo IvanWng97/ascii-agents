@@ -26,6 +26,11 @@ impl HookSocketListener {
         }
         let listener = UnixListener::bind(&path)
             .with_context(|| format!("binding hook socket at {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700));
+        }
         Ok(Self { listener, path })
     }
 

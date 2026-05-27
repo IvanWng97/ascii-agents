@@ -140,10 +140,13 @@ pub fn build_floor_scene(scene: &SceneState, floor_idx: usize) -> Vec<AgentSlot>
         .agents
         .values()
         .filter(|a| a.floor_idx == floor_idx)
-        .map(|a| {
+        .filter_map(|a| {
+            if a.desk_index < offset {
+                return None;
+            }
             let mut slot = a.clone();
-            slot.desk_index = a.desk_index.saturating_sub(offset);
-            slot
+            slot.desk_index = a.desk_index - offset;
+            Some(slot)
         })
         .collect()
 }

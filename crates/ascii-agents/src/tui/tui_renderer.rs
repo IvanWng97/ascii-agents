@@ -189,6 +189,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         if let Some(ref tr) = self.transition {
             if tr.from_floor >= nf || tr.to_floor >= nf {
                 self.transition = None;
+                self.cached_layout = None;
             }
         }
 
@@ -247,8 +248,12 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 height: full_rect.height.saturating_sub(1),
             };
 
+            if scene_rect.width < 20 || scene_rect.height < 12 {
+                return Ok(());
+            }
+
             let buf_w = scene_rect.width;
-            let buf_h = scene_rect.height * 2;
+            let buf_h = scene_rect.height.saturating_mul(2);
 
             // Render both floors into their respective buffers.
             // Use split_at_mut to get mutable access to two different indices.

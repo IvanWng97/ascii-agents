@@ -564,7 +564,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         let bot_sofa = ctx.layout.meeting_sofas.get(sofa_start + 1);
         if let (Some(&ts), Some(&bs)) = (top_sofa, bot_sofa) {
             let rug_w = 18u16;
-            let rug_h = (bs.y - ts.y + 8).min(ctx.layout.buf_h - table.y + 8);
+            let rug_h =
+                bs.y.saturating_sub(ts.y)
+                    .saturating_add(8)
+                    .min(ctx.layout.buf_h.saturating_sub(table.y).saturating_add(8));
             drawables.push(Drawable {
                 anchor_y: table.y.saturating_sub(rug_h / 2),
                 kind: DrawableKind::AreaRug {
