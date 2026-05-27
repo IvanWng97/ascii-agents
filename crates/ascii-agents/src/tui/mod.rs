@@ -32,10 +32,11 @@ pub async fn run_tui(
     theme: &'static theme::Theme,
     config_path: std::path::PathBuf,
     desk_cap: Option<usize>,
+    enabled_pets: Vec<pet::PetKind>,
 ) -> Result<()> {
     let pack = embedded_pack::load_sprite_pack(pack_dir)?;
     let term = setup_terminal()?;
-    let mut renderer = TuiRenderer::new(term, theme, crate::tui::pet::PetKind::ALL.to_vec());
+    let mut renderer = TuiRenderer::new(term, theme, enabled_pets);
     let mut last_layout_sig: Option<(u16, u16)> = None;
     let mut paused = false;
     let mut frozen_now: Option<SystemTime> = None;
