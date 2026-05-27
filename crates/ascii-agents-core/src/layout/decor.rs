@@ -38,6 +38,18 @@ pub enum WallDecor {
     MeetingScreen,
 }
 
+impl WallDecor {
+    pub fn size(self) -> (u16, u16) {
+        match self {
+            WallDecor::Whiteboard => (14, 11),
+            WallDecor::Bookshelf => (8, 12),
+            WallDecor::BulletinBoard => (10, 6),
+            WallDecor::ExitSign => (5, 3),
+            WallDecor::MeetingScreen => (14, 12),
+        }
+    }
+}
+
 /// Variety of potted plants — each renders a different sprite. Spread
 /// these around the lounge so it doesn't feel like one ficus repeated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +58,17 @@ pub enum PlantKind {
     Tall,
     Flower,
     Succulent,
+}
+
+impl PlantKind {
+    pub fn size(self) -> (u16, u16) {
+        match self {
+            PlantKind::Ficus => (6, 7),
+            PlantKind::Tall => (6, 10),
+            PlantKind::Flower => (6, 6),
+            PlantKind::Succulent => (5, 4),
+        }
+    }
 }
 
 /// Decor placed in the aisles BETWEEN 2×2 desk pods. Picked at random

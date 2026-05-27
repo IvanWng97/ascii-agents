@@ -584,7 +584,7 @@ pub(super) fn paint_drawable(
             let py = pos.y.saturating_sub(final_frame.height / 2);
             blit_frame(&final_frame, px, py, buf);
             if let Some(elapsed) = pet_elapsed_ms {
-                paint_pet_hearts(buf, *pos, *elapsed, theme);
+                paint_pet_hearts(buf, *pos, *elapsed);
             } else if *anim_name == kind.sleep_anim() {
                 paint_sleep_z(buf, *pos, now, 0xCAFE, theme);
             }

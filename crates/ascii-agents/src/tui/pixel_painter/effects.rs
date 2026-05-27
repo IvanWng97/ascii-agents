@@ -163,12 +163,7 @@ pub(super) fn paint_thinking_dots(
 /// 4 hearts, staggered 150ms apart, each rising 6px over 1550ms and
 /// fading via alpha blend toward the background. Last heart starts at
 /// 450ms so all 4 complete within PET_DURATION_MS (2000ms).
-pub(super) fn paint_pet_hearts(
-    buf: &mut RgbBuffer,
-    cat_pos: Point,
-    elapsed_ms: u64,
-    _theme: &Theme,
-) {
+pub(super) fn paint_pet_hearts(buf: &mut RgbBuffer, cat_pos: Point, elapsed_ms: u64) {
     const STAGGER_MS: u64 = 150;
     const HEART_LIFE_MS: u64 = 1550;
     let heart_color = Rgb(255, 100, 100);

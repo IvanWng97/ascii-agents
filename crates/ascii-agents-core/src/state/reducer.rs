@@ -143,6 +143,7 @@ impl Reducer {
         // skipped — otherwise it would redundantly re-arm
         // pending_idle_at or arm it while tasks are still in flight.
         let mut handled_by_task_tracking = false;
+        let mut handled_by_task_start = false;
         match &event {
             AgentEvent::ActivityStart {
                 agent_id,
@@ -150,6 +151,7 @@ impl Reducer {
                 detail: Some(d),
                 ..
             } if d.is_task() => {
+                handled_by_task_start = true;
                 self.active_tasks
                     .entry(*agent_id)
                     .or_default()
@@ -260,25 +262,27 @@ impl Reducer {
                 tool_use_id,
                 detail,
             } => {
-                if let Some(slot) = scene.agents.get_mut(&agent_id) {
-                    if !detail.as_ref().is_some_and(|d| d.is_task()) {
-                        slot.tool_call_count += 1;
+                if !handled_by_task_start {
+                    if let Some(slot) = scene.agents.get_mut(&agent_id) {
+                        if !detail.as_ref().is_some_and(|d| d.is_task()) {
+                            slot.tool_call_count += 1;
+                        }
+                        if matches!(slot.state, ActivityState::Active { .. }) {
+                            let elapsed = now
+                                .duration_since(slot.state_started_at)
+                                .unwrap_or_default()
+                                .as_millis() as u64;
+                            slot.active_ms += elapsed;
+                        }
+                        slot.state = ActivityState::Active {
+                            activity,
+                            tool_use_id: tool_use_id.map(|s| Arc::<str>::from(s.as_str())),
+                            detail: detail.map(|d| Arc::<str>::from(d.display())),
+                        };
+                        slot.state_started_at = now;
+                        slot.last_event_at = now;
+                        slot.pending_idle_at = None;
                     }
-                    if matches!(slot.state, ActivityState::Active { .. }) {
-                        let elapsed = now
-                            .duration_since(slot.state_started_at)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        slot.active_ms += elapsed;
-                    }
-                    slot.state = ActivityState::Active {
-                        activity,
-                        tool_use_id: tool_use_id.map(|s| Arc::<str>::from(s.as_str())),
-                        detail: detail.map(|d| Arc::<str>::from(d.display())),
-                    };
-                    slot.state_started_at = now;
-                    slot.last_event_at = now;
-                    slot.pending_idle_at = None;
                 }
             }
             AgentEvent::ActivityEnd { agent_id, .. } => {

@@ -195,13 +195,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
 
     // Wall decor
     for (kind, pos) in &layout.wall_decor {
-        let (w, h) = match kind {
-            WallDecor::Whiteboard => (14, 11),
-            WallDecor::Bookshelf => (8, 12),
-            WallDecor::BulletinBoard => (10, 6),
-            WallDecor::ExitSign => (5, 3),
-            WallDecor::MeetingScreen => (14, 12),
-        };
+        let (w, h) = kind.size();
         if hit(pos.x, pos.y, w, h) {
             return Some(match kind {
                 WallDecor::Whiteboard => "Whiteboard",

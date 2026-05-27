@@ -45,33 +45,7 @@ pub(super) use crate::tui::widgets::{
     paint_wall_display,
 };
 
-/// Duration (ms) the cat stays frozen in place after being petted.
-pub const PET_DURATION_MS: u64 = 2000;
-
-/// State for the "pet the animal" interaction. Lives on `TuiRenderer`
-/// (render-side only) — petting is a local visual effect, not a data
-/// model concern. Same pattern as `mouse_pos` and `pinned_agent`.
-pub struct PetState {
-    pub petted_at: SystemTime,
-    pub pet_pos: Point,
-    pub kind: PetKind,
-    pub floor_idx: usize,
-}
-
-impl PetState {
-    pub fn is_active(&self, now: SystemTime) -> bool {
-        now.duration_since(self.petted_at)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(PET_DURATION_MS + 1)
-            < PET_DURATION_MS
-    }
-
-    pub fn elapsed_ms(&self, now: SystemTime) -> u64 {
-        now.duration_since(self.petted_at)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
-    }
-}
+pub use crate::tui::pet::PetState;
 
 /// Mutable per-frame render state, borrowed from `TuiRenderer`. Replaces
 /// the 14-parameter `draw_scene` signature with a single struct pass.

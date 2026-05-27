@@ -93,7 +93,8 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
     let tmp = real_path.with_extension("toml.tmp");
     std::fs::write(&tmp, &contents)?;
     std::fs::rename(&tmp, &real_path)?;
-    // Lock released on drop
+    fs2::FileExt::unlock(&lock_file).ok();
+    let _ = std::fs::remove_file(&lock_path);
     Ok(())
 }
 
