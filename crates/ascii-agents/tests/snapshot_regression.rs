@@ -11,16 +11,16 @@
 //! check together catch the most likely regressions (nondeterminism,
 //! broken time wiring) without needing per-machine goldens.
 
+mod test_helpers;
+
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use ascii_agents::tui::embedded_pack::load_sprite_pack;
-use ascii_agents::tui::frame_cache::FrameCache;
-use ascii_agents::tui::renderer::{draw_scene, DrawCtx, TickerQueue};
+use ascii_agents::tui::renderer::draw_scene;
 use ascii_agents_core::source::Activity;
-use ascii_agents_core::sprite::{Rgb, RgbBuffer};
 use ascii_agents_core::state::ActivityState;
 use ascii_agents_core::{AgentId, AgentSlot, SceneState};
 use ratatui::backend::TestBackend;
@@ -81,36 +81,8 @@ fn render_pixel_hash(now: SystemTime) -> u64 {
     let scene = fixture_scene(now);
     let backend = TestBackend::new(96, 36);
     let mut term = Terminal::new(backend).expect("terminal");
-    let mut buf = RgbBuffer::filled(0, 0, Rgb(0, 0, 0));
     let pack = load_sprite_pack(None).expect("pack");
-    let mut cache = FrameCache::new();
-    let mut router = ascii_agents::tui::pathfind::AStarRouter::new();
-    let mut overlay = ascii_agents_core::walkable::OccupancyOverlay::new();
-    let ticker = TickerQueue::new();
-    let mut history = ascii_agents::tui::pose::PoseHistory::new();
-    let mut chitchat_state = std::collections::HashMap::new();
-    let mut draw_ctx = DrawCtx {
-        buf: &mut buf,
-        cache: &mut cache,
-        router: &mut router,
-        overlay: &mut overlay,
-        history: &mut history,
-        mouse_pos: None,
-        pinned_agent: None,
-        ticker: &ticker,
-        theme: &ascii_agents::tui::theme::NORMAL,
-        theme_picker: None,
-        floor_info: None,
-        floor: ascii_agents::tui::floor::FloorMeta::ground(),
-        active_pet: None,
-        last_pet_pos: None,
-        floor_pet_kind: None,
-        chitchat_state: &mut chitchat_state,
-        chitchat_bubbles: Vec::new(),
-        coffee_holders: &std::collections::HashSet::new(),
-        coffee_fetched_at: &std::collections::HashMap::new(),
-        new_coffee_carriers: Vec::new(),
-    };
+    make_draw_ctx!(draw_ctx);
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx).expect("render");
 
     let mut hasher = DefaultHasher::new();
@@ -160,36 +132,8 @@ fn render_produces_distinct_wall_band_and_floor_regions() {
     let scene = fixture_scene(now);
     let backend = TestBackend::new(96, 36);
     let mut term = Terminal::new(backend).expect("terminal");
-    let mut buf = RgbBuffer::filled(0, 0, Rgb(0, 0, 0));
     let pack = load_sprite_pack(None).expect("pack");
-    let mut cache = FrameCache::new();
-    let mut router = ascii_agents::tui::pathfind::AStarRouter::new();
-    let mut overlay = ascii_agents_core::walkable::OccupancyOverlay::new();
-    let ticker = TickerQueue::new();
-    let mut history = ascii_agents::tui::pose::PoseHistory::new();
-    let mut chitchat_state = std::collections::HashMap::new();
-    let mut draw_ctx = DrawCtx {
-        buf: &mut buf,
-        cache: &mut cache,
-        router: &mut router,
-        overlay: &mut overlay,
-        history: &mut history,
-        mouse_pos: None,
-        pinned_agent: None,
-        ticker: &ticker,
-        theme: &ascii_agents::tui::theme::NORMAL,
-        theme_picker: None,
-        floor_info: None,
-        floor: ascii_agents::tui::floor::FloorMeta::ground(),
-        active_pet: None,
-        last_pet_pos: None,
-        floor_pet_kind: None,
-        chitchat_state: &mut chitchat_state,
-        chitchat_bubbles: Vec::new(),
-        coffee_holders: &std::collections::HashSet::new(),
-        coffee_fetched_at: &std::collections::HashMap::new(),
-        new_coffee_carriers: Vec::new(),
-    };
+    make_draw_ctx!(draw_ctx);
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx).expect("render");
     let buf = &*draw_ctx.buf;
 
@@ -254,36 +198,8 @@ fn render_changes_when_an_agent_state_changes() {
     }
     let backend = TestBackend::new(96, 36);
     let mut term = Terminal::new(backend).expect("terminal");
-    let mut buf = RgbBuffer::filled(0, 0, Rgb(0, 0, 0));
     let pack = load_sprite_pack(None).expect("pack");
-    let mut cache = FrameCache::new();
-    let mut router = ascii_agents::tui::pathfind::AStarRouter::new();
-    let mut overlay = ascii_agents_core::walkable::OccupancyOverlay::new();
-    let ticker = TickerQueue::new();
-    let mut history = ascii_agents::tui::pose::PoseHistory::new();
-    let mut chitchat_state = std::collections::HashMap::new();
-    let mut draw_ctx = DrawCtx {
-        buf: &mut buf,
-        cache: &mut cache,
-        router: &mut router,
-        overlay: &mut overlay,
-        history: &mut history,
-        mouse_pos: None,
-        pinned_agent: None,
-        ticker: &ticker,
-        theme: &ascii_agents::tui::theme::NORMAL,
-        theme_picker: None,
-        floor_info: None,
-        floor: ascii_agents::tui::floor::FloorMeta::ground(),
-        active_pet: None,
-        last_pet_pos: None,
-        floor_pet_kind: None,
-        chitchat_state: &mut chitchat_state,
-        chitchat_bubbles: Vec::new(),
-        coffee_holders: &std::collections::HashSet::new(),
-        coffee_fetched_at: &std::collections::HashMap::new(),
-        new_coffee_carriers: Vec::new(),
-    };
+    make_draw_ctx!(draw_ctx);
     draw_scene(&mut term, &scene_idle, &pack, now, &mut draw_ctx).expect("render");
     let mut hasher = DefaultHasher::new();
     for px in &draw_ctx.buf.pixels {

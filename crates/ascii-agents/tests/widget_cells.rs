@@ -4,21 +4,17 @@
 //! cells to verify that footer, elevator indicator, and wall-display branding
 //! widgets wrote the expected text at the expected positions.
 
+mod test_helpers;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use ascii_agents::tui::embedded_pack::load_sprite_pack;
-use ascii_agents::tui::floor::FloorMeta;
-use ascii_agents::tui::frame_cache::FrameCache;
-use ascii_agents::tui::pathfind::AStarRouter;
-use ascii_agents::tui::pose::PoseHistory;
-use ascii_agents::tui::renderer::{draw_scene, DrawCtx, TickerQueue};
+use ascii_agents::tui::renderer::draw_scene;
 use ascii_agents::tui::theme;
 use ascii_agents_core::source::Activity;
-use ascii_agents_core::sprite::{Rgb, RgbBuffer};
 use ascii_agents_core::state::ActivityState;
-use ascii_agents_core::walkable::OccupancyOverlay;
 use ascii_agents_core::{AgentId, AgentSlot, SceneState};
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -92,36 +88,8 @@ fn render_and_get_buffer(
     let scene = fixture_scene(now);
     let backend = TestBackend::new(w, h);
     let mut term = Terminal::new(backend).unwrap();
-    let mut buf = RgbBuffer::filled(0, 0, Rgb(0, 0, 0));
     let pack = load_sprite_pack(None).unwrap();
-    let mut cache = FrameCache::new();
-    let mut router = AStarRouter::new();
-    let mut overlay = OccupancyOverlay::new();
-    let ticker = TickerQueue::new();
-    let mut history = PoseHistory::new();
-    let mut chitchat_state = std::collections::HashMap::new();
-    let mut draw_ctx = DrawCtx {
-        buf: &mut buf,
-        cache: &mut cache,
-        router: &mut router,
-        overlay: &mut overlay,
-        history: &mut history,
-        mouse_pos: None,
-        pinned_agent: None,
-        ticker: &ticker,
-        theme: &theme::NORMAL,
-        theme_picker: None,
-        floor_info,
-        floor: FloorMeta::ground(),
-        active_pet: None,
-        last_pet_pos: None,
-        floor_pet_kind: None,
-        chitchat_state: &mut chitchat_state,
-        chitchat_bubbles: Vec::new(),
-        coffee_holders: &std::collections::HashSet::new(),
-        coffee_fetched_at: &std::collections::HashMap::new(),
-        new_coffee_carriers: Vec::new(),
-    };
+    make_draw_ctx!(draw_ctx, floor_info: floor_info);
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx).unwrap();
     let buffer = term.backend().buffer().clone();
     (buffer, w, h)
