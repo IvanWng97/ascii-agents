@@ -81,7 +81,7 @@ fn fixture_scene(now: SystemTime) -> SceneState {
 /// Render a scene and return the `TestBackend` buffer plus dimensions.
 fn render_and_get_buffer(
     now: SystemTime,
-    floor_info: Option<(usize, usize)>,
+    floor_info: Option<pixtuoid::tui::renderer::FloorInfo>,
 ) -> (Buffer, u16, u16) {
     let w = 96u16;
     let h = 48u16;
@@ -132,7 +132,14 @@ fn footer_shows_agent_count() {
 #[test]
 fn elevator_indicator_visible() {
     // Pass floor_info so the elevator door is placed and the indicator paints.
-    let (buf, w, h) = render_and_get_buffer(now(), Some((1, 2)));
+    let (buf, w, h) = render_and_get_buffer(
+        now(),
+        Some(pixtuoid::tui::renderer::FloorInfo {
+            current: 1,
+            total_floors: 2,
+            total_agents: 0,
+        }),
+    );
     // Scan all rows for "F1" -- the elevator indicator renders " ▲ F1 ▼ ".
     let mut found = false;
     for y in 0..h {

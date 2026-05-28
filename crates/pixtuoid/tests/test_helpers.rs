@@ -21,7 +21,7 @@ macro_rules! make_draw_ctx {
         // Defaults
         let mut _theme: &pixtuoid::tui::theme::Theme = &pixtuoid::tui::theme::NORMAL;
         let mut _floor = pixtuoid::tui::floor::FloorMeta::ground();
-        let mut _floor_info: Option<(usize, usize)> = None;
+        let mut _floor_info: Option<pixtuoid::tui::renderer::FloorInfo> = None;
 
         // Apply overrides
         $(

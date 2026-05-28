@@ -61,7 +61,7 @@ pub(in crate::tui) fn paint_footer(
     scene: &SceneState,
     full_rect: Rect,
     theme: &crate::tui::theme::Theme,
-    floor_info: Option<(usize, usize)>,
+    floor_info: Option<crate::tui::renderer::FloorInfo>,
 ) {
     let summary = build_status_summary(scene, full_rect.width, floor_info);
     let footer = Paragraph::new(Span::raw(summary))
@@ -93,9 +93,15 @@ pub(in crate::tui) fn paint_footer(
 pub(in crate::tui) fn build_status_summary(
     scene: &SceneState,
     term_width: u16,
-    floor_info: Option<(usize, usize)>,
+    floor_info: Option<crate::tui::renderer::FloorInfo>,
 ) -> String {
     let n = scene.agents.len();
+    // Multi-floor view always shows `n/total` so the total stays visible
+    // even when an agent migrates and per-floor matches total transiently.
+    let count_str = match floor_info {
+        Some(fi) => format!("{n}/{}", fi.total_agents),
+        None => format!("{n}"),
+    };
     let mut active = 0usize;
     let mut waiting = 0usize;
     let mut idle = 0usize;
@@ -117,8 +123,8 @@ pub(in crate::tui) fn build_status_summary(
     }
 
     let floor_suffix = match floor_info {
-        Some((current, total)) if total > 1 => format!(" F{current}/{total} [\u{2191}\u{2193}]"),
-        _ => String::new(),
+        Some(fi) => format!(" F{}/{} [\u{2191}\u{2193}]", fi.current, fi.total_floors),
+        None => String::new(),
     };
     let quit_base = " [p]ause [t]heme [q]uit ";
     let quit = format!("{floor_suffix}{quit_base}");
@@ -133,9 +139,10 @@ pub(in crate::tui) fn build_status_summary(
             .join(" ")
     };
     let stats_full = if n == 0 {
-        " 0 agents ".to_string()
+        format!(" {count_str} agents ")
     } else {
-        let mut s = format!(" {n} agents · {active} active · {waiting} waiting · {idle} idle");
+        let mut s =
+            format!(" {count_str} agents · {active} active · {waiting} waiting · {idle} idle");
         if !tools_str.is_empty() {
             s.push_str(" · ");
             s.push_str(&tools_str);
@@ -143,6 +150,7 @@ pub(in crate::tui) fn build_status_summary(
         s.push(' ');
         s
     };
+    // Narrow tiers use bare `n` — "5/12a" parses as "5 slash 12a" at a glance.
     let stats_medium = format!(" {n}a · {active}A · {waiting}W · {idle}I ");
     let stats_min = format!(" {n}a ");
 
@@ -163,7 +171,6 @@ pub(in crate::tui) fn build_status_summary(
     quit
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(in crate::tui) fn paint_wall_display(
     f: &mut ratatui::Frame<'_>,
     scene: &SceneState,
@@ -171,7 +178,6 @@ pub(in crate::tui) fn paint_wall_display(
     now: SystemTime,
     ticker: &TickerQueue,
     theme: &crate::tui::theme::Theme,
-    floor_info: Option<(usize, usize)>,
 ) {
     use ratatui::style::Modifier;
     use ratatui::text::Line;
@@ -195,7 +201,7 @@ pub(in crate::tui) fn paint_wall_display(
     let idle = live.len() - active - waiting;
 
     let version = env!("CARGO_PKG_VERSION");
-    let mut top_spans = vec![
+    let top_spans = vec![
         Span::styled(
             format!("pixtuoid v{version}"),
             Style::default()
@@ -210,15 +216,6 @@ pub(in crate::tui) fn paint_wall_display(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    if let Some((current, total)) = floor_info {
-        if total > 1 {
-            top_spans.push(Span::raw("  "));
-            top_spans.push(Span::styled(
-                format!("Floor {current}/{total}"),
-                Style::default().fg(to_color(theme.ui.neon_brand)),
-            ));
-        }
-    }
     let top_line = Line::from(top_spans);
 
     let oldest = live
