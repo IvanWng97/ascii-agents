@@ -60,6 +60,13 @@ pub fn release_notes(version: &str) -> Option<&'static [&'static str]> {
             "New env vars: PIXTUOID_SOCKET/HOOK/LOG",
             "Flaky startup test fixed + 250ms rescan",
         ]),
+        "0.4.1" => Some(&[
+            "Per-floor boot capacity fixes invisible-agent edge case",
+            "install-hooks now strips legacy `_ascii_agents` entries again",
+            "Resize mid-slide lands on destination floor, not source",
+            "Version popup URL no longer mis-clicks on narrow terminals",
+            "Corrupted last_seen_version self-heals on next launch",
+        ]),
         _ => None,
     }
 }
