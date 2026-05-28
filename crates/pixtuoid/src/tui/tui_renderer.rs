@@ -50,6 +50,7 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     /// Timestamp when each agent first returned with coffee (for steam).
     coffee_fetched_at: std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
     version_popup: bool,
+    version_popup_started_at: Option<SystemTime>,
 }
 
 impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
@@ -77,6 +78,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             coffee_holders: std::collections::HashSet::new(),
             coffee_fetched_at: std::collections::HashMap::new(),
             version_popup: false,
+            version_popup_started_at: None,
         }
     }
 
@@ -144,8 +146,15 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
         self.theme_picker = picker;
     }
 
-    pub fn set_version_popup(&mut self, v: bool) {
-        self.version_popup = v;
+    pub fn set_version_popup(&mut self, v: bool, now: SystemTime) {
+        if v != self.version_popup {
+            self.version_popup_started_at = Some(now);
+            self.version_popup = v;
+        }
+    }
+
+    pub fn version_popup_started_at(&self) -> Option<SystemTime> {
+        self.version_popup_started_at
     }
 
     pub fn set_active_pet(&mut self, pet: Option<PetState>) {

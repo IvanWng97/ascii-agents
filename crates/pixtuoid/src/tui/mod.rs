@@ -81,7 +81,7 @@ pub async fn run_tui(
                 last_layout_sig = Some(sig);
             }
             renderer.set_theme_picker(theme_picker);
-            renderer.set_version_popup(version_popup);
+            renderer.set_version_popup(version_popup, now);
             renderer.render(&snapshot, &pack, now)?;
 
             // Auto-compute per-floor desk capacity from the current

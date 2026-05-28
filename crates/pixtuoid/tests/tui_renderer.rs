@@ -180,6 +180,52 @@ fn tui_renderer_transition_paints_pets_and_coffee() {
     );
 }
 
+#[test]
+fn set_version_popup_records_timestamp_on_edge() {
+    use std::time::{Duration, SystemTime};
+
+    let backend = TestBackend::new(96, 36);
+    let terminal = Terminal::new(backend).expect("terminal");
+    let mut renderer = TuiRenderer::new(
+        terminal,
+        &pixtuoid::tui::theme::NORMAL,
+        pixtuoid::tui::pet::PetKind::ALL.to_vec(),
+    );
+
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let t1 = t0 + Duration::from_millis(50);
+
+    assert_eq!(renderer.version_popup_started_at(), None);
+
+    renderer.set_version_popup(false, t0);
+    assert_eq!(
+        renderer.version_popup_started_at(),
+        None,
+        "no edge from false → false"
+    );
+
+    renderer.set_version_popup(true, t0);
+    assert_eq!(
+        renderer.version_popup_started_at(),
+        Some(t0),
+        "false → true edge records timestamp"
+    );
+
+    renderer.set_version_popup(true, t1);
+    assert_eq!(
+        renderer.version_popup_started_at(),
+        Some(t0),
+        "true → true is not an edge; timestamp unchanged"
+    );
+
+    renderer.set_version_popup(false, t1);
+    assert_eq!(
+        renderer.version_popup_started_at(),
+        Some(t1),
+        "true → false edge records new timestamp"
+    );
+}
+
 /// Regression: a resize mid-slide previously left `current_floor` at
 /// `from_floor`, silently reverting a user-initiated navigation with no UI
 /// signal. `cancel_transition` must now land the user on `to_floor`.
