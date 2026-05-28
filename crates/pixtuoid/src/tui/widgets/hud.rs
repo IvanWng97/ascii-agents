@@ -300,8 +300,8 @@ pub(in crate::tui) fn paint_version_popup(
     }
     let w_full = needed_w.min(bounds.width);
     let h_full = (notes.len() as u16 + 6).min(bounds.height);
-    let w = ((w_full as f32 * scale).round() as u16).max(4);
-    let h = ((h_full as f32 * scale).round() as u16).max(3);
+    let w = ((w_full as f32 * scale).round() as u16).max(2);
+    let h = ((h_full as f32 * scale).round() as u16).max(2);
     let x = bounds.x + bounds.width.saturating_sub(w) / 2;
     let y = bounds.y + bounds.height.saturating_sub(h) / 2;
     let area = Rect {
@@ -359,8 +359,8 @@ pub(in crate::tui) fn version_popup_url_rect(
     scale: f32,
 ) -> Option<Rect> {
     let scale = scale.clamp(0.0, 1.0);
-    if scale < 0.99 {
-        return None; // URL not clickable until popup is fully shown
+    if scale < 0.7 {
+        return None; // URL not clickable until popup reaches 70% scale
     }
     let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
     let w = needed_w.min(bounds.width);

@@ -275,6 +275,43 @@ fn version_popup_animation_starts_small_then_grows() {
     );
 }
 
+/// Regression guard for Fix #5: dismissing mid-entrance must not snap the
+/// popup back to full scale before fading. Before the fix, `set_version_popup`
+/// overwrote `version_popup_started_at = Some(now)` without saving the current
+/// scale, so the dismissal formula evaluated to `1.0 - 0 ≈ 1.0` on the next
+/// frame — a visible flash to full size before fading.
+#[test]
+fn dismiss_mid_entrance_does_not_snap_to_full() {
+    let backend = TestBackend::new(96, 36);
+    let terminal = Terminal::new(backend).expect("terminal");
+    let mut renderer = TuiRenderer::new(
+        terminal,
+        &pixtuoid::tui::theme::NORMAL,
+        pixtuoid::tui::pet::PetKind::ALL.to_vec(),
+    );
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+    // Enter mid-entrance at 100ms (EaseOutCubic(0.5) ≈ 0.875)
+    renderer.set_version_popup(true, t0);
+    let mid_entrance = t0 + Duration::from_millis(100);
+    let scale_at_mid = renderer.version_popup_scale(mid_entrance);
+    assert!(
+        scale_at_mid > 0.7 && scale_at_mid < 1.0,
+        "expected mid-entrance scale 0.7..1.0; got {scale_at_mid}"
+    );
+
+    // Dismiss at the same moment
+    renderer.set_version_popup(false, mid_entrance);
+
+    // Immediately after the dismiss edge, scale should be ~scale_at_mid (no snap)
+    let just_after = mid_entrance + Duration::from_millis(1);
+    let scale_after = renderer.version_popup_scale(just_after);
+    assert!(
+        scale_after < scale_at_mid + 0.05,
+        "scale should NOT snap up after dismiss; got {scale_after} (was {scale_at_mid})"
+    );
+}
+
 /// Regression: a resize mid-slide previously left `current_floor` at
 /// `from_floor`, silently reverting a user-initiated navigation with no UI
 /// signal. `cancel_transition` must now land the user on `to_floor`.

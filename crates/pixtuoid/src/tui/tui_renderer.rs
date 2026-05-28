@@ -51,6 +51,14 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     coffee_fetched_at: std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
     version_popup: bool,
     version_popup_started_at: Option<SystemTime>,
+    /// Scale captured at the moment of the last visible↔hidden edge so that
+    /// an interrupted animation continues from its current position instead
+    /// of snapping back to the start/end.
+    version_popup_scale_at_edge: f32,
+    /// Scale computed during the most recent `render()` call. The mouse
+    /// handler reads this instead of re-computing with a fresh `SystemTime`
+    /// so both sides always agree on whether the popup is above a threshold.
+    last_popup_scale: f32,
 }
 
 impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
@@ -79,6 +87,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             coffee_fetched_at: std::collections::HashMap::new(),
             version_popup: false,
             version_popup_started_at: None,
+            version_popup_scale_at_edge: 0.0,
+            last_popup_scale: 0.0,
         }
     }
 
@@ -148,6 +158,9 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
 
     pub fn set_version_popup(&mut self, v: bool, now: SystemTime) {
         if v != self.version_popup {
+            // Capture current scale so the new animation starts from the
+            // visible position (no snap-back when interrupting mid-animation).
+            self.version_popup_scale_at_edge = self.version_popup_scale(now);
             self.version_popup_started_at = Some(now);
             self.version_popup = v;
         }
@@ -160,17 +173,37 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
     /// Compute the entrance/dismissal scale for the version popup based on
     /// the current state and the time since the last edge. Range 0.0..=1.0.
     ///
-    /// - false → true (entrance): EaseOutCubic over 200ms, 0 → 1
-    /// - true → false (dismissal): EaseInQuad over 120ms, 1 → 0
+    /// - false → true (entrance): EaseOutCubic over 200ms, scale_at_edge → 1
+    /// - true → false (dismissal): EaseInQuad over 120ms, scale_at_edge → 0
     /// - steady state: 1.0 if visible, 0.0 if hidden
+    ///
+    /// Using `scale_at_edge` as the interpolation start means an interrupted
+    /// animation continues from its current visual position rather than
+    /// snapping to 0 or 1 and re-animating from scratch.
     pub fn version_popup_scale(&self, now: SystemTime) -> f32 {
         use crate::tui::anim::{eased_progress, Easing};
         match (self.version_popup, self.version_popup_started_at) {
-            (true, Some(start)) => eased_progress(start, 200, Easing::EaseOutCubic, now),
-            (false, Some(start)) => 1.0 - eased_progress(start, 120, Easing::EaseInQuad, now),
+            (true, Some(start)) => {
+                let progress = eased_progress(start, 200, Easing::EaseOutCubic, now);
+                // Lerp from the scale at edge time to the target (1.0)
+                self.version_popup_scale_at_edge
+                    + (1.0 - self.version_popup_scale_at_edge) * progress
+            }
+            (false, Some(start)) => {
+                let progress = eased_progress(start, 120, Easing::EaseInQuad, now);
+                // Lerp from the scale at edge time to the target (0.0)
+                self.version_popup_scale_at_edge * (1.0 - progress)
+            }
             (true, None) => 1.0,
             (false, None) => 0.0,
         }
+    }
+
+    /// Returns the scale value computed during the most recent `render()`.
+    /// Prefer this over calling `version_popup_scale(SystemTime::now())` in
+    /// the mouse handler to keep click geometry in sync with what was painted.
+    pub fn last_popup_scale(&self) -> f32 {
+        self.last_popup_scale
     }
 
     pub fn set_active_pet(&mut self, pet: Option<PetState>) {
@@ -446,6 +479,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 }
             })?;
 
+            self.last_popup_scale = popup_scale;
             self.cached_layout = None;
             return Ok(());
         }
@@ -505,6 +539,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         if let Ok(ref layout_opt) = result {
             self.cached_layout = layout_opt.clone();
         }
+        self.last_popup_scale = popup_scale;
         result.map(|_| ())
     }
 }
