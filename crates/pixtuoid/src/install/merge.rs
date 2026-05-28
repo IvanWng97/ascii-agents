@@ -1,6 +1,13 @@
 use serde_json::{json, Map, Value};
 
 pub const SENTINEL_KEY: &str = "_pixtuoid";
+
+/// Legacy sentinel keys from previous tool names. Entries tagged with any of
+/// these are stripped on install/uninstall so a v0.3.x → v0.4.x upgrade does
+/// not leave orphan hooks pointing at missing binaries (or worse, a live
+/// legacy hook racing the new shim).
+pub const LEGACY_SENTINEL_KEYS: &[&str] = &["_ascii_agents"];
+
 pub const EVENTS: &[&str] = &[
     "SessionStart",
     "PreToolUse",
@@ -8,6 +15,15 @@ pub const EVENTS: &[&str] = &[
     "Notification",
     "SessionEnd",
 ];
+
+fn is_managed_entry(entry: &Value) -> bool {
+    if entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) == Some(true) {
+        return true;
+    }
+    LEGACY_SENTINEL_KEYS
+        .iter()
+        .any(|k| entry.get(*k).and_then(|v| v.as_bool()) == Some(true))
+}
 
 /// Merge pixtuoid hook entries into a CC settings.json document.
 /// Idempotent: re-running replaces existing pixtuoid entries.
@@ -35,7 +51,7 @@ pub fn merge_install(doc: Value, hook_command: &str) -> Value {
                 list.as_array_mut().expect("just stored Value::Array")
             }
         };
-        arr.retain(|entry| entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true));
+        arr.retain(|entry| !is_managed_entry(entry));
         arr.push(json!({
             SENTINEL_KEY: true,
             "matcher": ".*",
@@ -58,7 +74,7 @@ pub fn merge_uninstall(mut doc: Value) -> Value {
     };
     for (_ev, list) in hooks_obj.iter_mut() {
         if let Some(arr) = list.as_array_mut() {
-            arr.retain(|entry| entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) != Some(true));
+            arr.retain(|entry| !is_managed_entry(entry));
         }
     }
     let to_remove: Vec<String> = hooks_obj
@@ -140,6 +156,68 @@ mod tests {
         let installed = merge_install(json!({}), "/x");
         let cleaned = merge_uninstall(installed);
         assert!(cleaned.get("hooks").is_none(), "got {cleaned}");
+    }
+
+    // Regression for the v0.3.x → v0.4.x upgrade path: legacy entries tagged
+    // `_ascii_agents` must be stripped on install and uninstall. The previous
+    // PR #40 dropped the dual-sentinel cleanup, leaving stale hooks that
+    // point at a missing `ascii-agents-hook` binary.
+    #[test]
+    fn install_strips_legacy_ascii_agents_entries() {
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [
+                    { "_ascii_agents": true, "matcher": ".*", "hooks": [{"type":"command","command":"/old"}] },
+                    { "matcher": "Write", "hooks": [{"type":"command","command":"/keep"}] }
+                ]
+            }
+        });
+        let merged = merge_install(initial, "/new");
+        let arr = merged["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(
+            arr.len(),
+            2,
+            "legacy stripped, user entry kept, pixtuoid added"
+        );
+        let commands: Vec<&str> = arr
+            .iter()
+            .map(|e| e["hooks"][0]["command"].as_str().unwrap())
+            .collect();
+        assert!(commands.contains(&"/keep"));
+        assert!(commands.contains(&"/new"));
+        assert!(!commands.contains(&"/old"));
+    }
+
+    #[test]
+    fn uninstall_strips_legacy_ascii_agents_entries() {
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [
+                    { "_ascii_agents": true, "matcher": ".*", "hooks": [{"type":"command","command":"/old"}] }
+                ]
+            }
+        });
+        let cleaned = merge_uninstall(initial);
+        assert!(
+            cleaned.get("hooks").is_none(),
+            "legacy entry should be removed and empty hooks map dropped: {cleaned}"
+        );
+    }
+
+    #[test]
+    fn uninstall_strips_legacy_keeps_user_entries() {
+        let initial = json!({
+            "hooks": {
+                "PreToolUse": [
+                    { "_ascii_agents": true, "matcher": ".*", "hooks": [{"type":"command","command":"/old"}] },
+                    { "matcher": "Write", "hooks": [{"type":"command","command":"/keep"}] }
+                ]
+            }
+        });
+        let cleaned = merge_uninstall(initial);
+        let arr = cleaned["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["hooks"][0]["command"], json!("/keep"));
     }
 
     #[test]
