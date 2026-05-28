@@ -172,15 +172,33 @@ pub fn derive_with_routing(
     if let Some(last) = path.last_mut() {
         *last = to;
     }
+    // Global path-ease: apply EaseOutCubic to the walk's overall progress
+    // BEFORE leg dispatch, so the agent decelerates smoothly across the
+    // entire walk with no per-leg velocity discontinuity, and with
+    // consistent feel regardless of path length (2-point or 3+ point).
+    let normalized_t = t_x1000 as f32 / 1000.0;
+    let eased_t = crate::tui::anim::Easing::EaseOutCubic.apply(normalized_t);
+    let eased_t_x1000 = (eased_t * 1000.0).round() as u16;
+
     if path.len() <= 2 {
-        // Straight-line walk — record the interpolated position for
+        // Straight-line walk — record the eased interpolated position for
         // next frame's snap-back lookup.
-        history.record(slot.agent_id, walking_position(from, to, t_x1000), now);
-        return Some(pose);
+        history.record(
+            slot.agent_id,
+            walking_position(from, to, eased_t_x1000),
+            now,
+        );
+        return Some(Pose::Walking {
+            from,
+            to,
+            t_x1000: eased_t_x1000,
+            frame,
+            carrying_coffee,
+        });
     }
-    // Map global t to a (segment_idx, t_within_segment) using cumulative
-    // octile distance — same metric A* used to plan the path, so timing
-    // stays uniform along diagonals.
+    // Map global eased t to a (segment_idx, t_within_segment) using
+    // cumulative octile distance — same metric A* used to plan the path,
+    // so timing stays uniform along diagonals.
     let mut leg_lens: Vec<u32> = Vec::with_capacity(path.len() - 1);
     for w in path.windows(2) {
         leg_lens.push(octile_distance(w[0], w[1]));
@@ -189,27 +207,15 @@ pub fn derive_with_routing(
     if total == 0 {
         return Some(pose);
     }
-    let traveled = (t_x1000 as u32 * total) / 1000;
-    let last_leg = leg_lens.len() - 1;
+    let traveled = (eased_t_x1000 as u32 * total) / 1000;
     let mut acc: u32 = 0;
     for (i, &leg) in leg_lens.iter().enumerate() {
         if acc + leg >= traveled {
             let into_leg = traveled - acc;
-            let raw_seg_t = (into_leg * 1000)
+            let seg_t = (into_leg * 1000)
                 .checked_div(leg)
                 .map(|t| t.min(1000) as u16)
                 .unwrap_or(1000);
-            // Path-tail ease: slow the agent as it approaches the final
-            // destination. Only the final leg is eased; mid-route legs
-            // stay linear so the agent doesn't appear to hesitate at
-            // every turn. Spec: PR #52 (Motion & Easing).
-            let seg_t = if i == last_leg {
-                let normalized = raw_seg_t as f32 / 1000.0;
-                let eased = crate::tui::anim::Easing::EaseOutCubic.apply(normalized);
-                (eased * 1000.0).round() as u16
-            } else {
-                raw_seg_t
-            };
             // Record the walker's current position for the next frame's
             // snap-back lookup.
             let cur_pos = walking_position(path[i], path[i + 1], seg_t);
@@ -420,17 +426,15 @@ mod tests {
     fn multi_segment_path_maps_t_to_segment_via_octile_distance() {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let l = layout();
-        // Entry animation: ENTRY_ANIMATION_MS = 4000, since_spawn = 1000 →
-        // t_x1000 = 250. derive returns Walking { from: door, to: desk, t=250 }.
-        let slot = entry_slot(now - Duration::from_millis(1_000));
+        // Entry animation: ENTRY_ANIMATION_MS = 4000, since_spawn = 400 →
+        // raw t_x1000 = 100. With global ease: EaseOutCubic(0.1) ≈ 0.271 →
+        // eased_t_x1000 ≈ 271. For two ~equal legs, traveled ≈ 27.1% of
+        // total → agent is on leg 0 (door→mid), seg_t ≈ 54%.
+        let slot = entry_slot(now - Duration::from_millis(400));
         let mut history = PoseHistory::new();
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let door = l.door_threshold.expect("door");
         let desk = l.home_desks[0];
-        // `mid` placed on the straight line between door and desk so the
-        // two legs have ~equal octile distance after the last-point
-        // substitution. At t=250 (1/4 of the walk), `traveled` lands
-        // about halfway through segment 0 → seg_t ≈ 500.
         let mid = Point {
             x: (door.x + desk.x) / 2,
             y: (door.y + desk.y) / 2,
@@ -443,9 +447,11 @@ mod tests {
             }) => {
                 assert_eq!(from, door, "first segment starts at door, got {from:?}");
                 assert_eq!(to, mid, "first segment ends at mid, got {to:?}");
+                // eased(0.1) ≈ 0.271 → seg_t of first leg ≈ 0.271*2 = 0.542 → ~542.
+                // Accept a wider band to tolerate octile rounding.
                 assert!(
-                    (400..=600).contains(&t_x1000),
-                    "expected mid-segment ~500, got t_x1000={t_x1000}"
+                    (300..=700).contains(&t_x1000),
+                    "expected mid-first-segment seg_t in [300,700], got t_x1000={t_x1000}"
                 );
                 assert!(history.recent(slot.agent_id, 1_000, now).is_some());
             }
@@ -533,40 +539,60 @@ mod tests {
     }
 
     #[test]
-    fn final_leg_seg_t_is_eased() {
-        // Verify that EaseOutCubic is applied to seg_t on the FINAL leg of a
-        // multi-segment A* walk, and that non-final legs stay linear.
+    fn walk_progress_is_eased_globally() {
+        // Regression: EaseOutCubic is applied to the walk's GLOBAL progress
+        // before leg dispatch. This means:
+        //   1. No per-leg velocity discontinuity — all legs see the eased t.
+        //   2. Consistent deceleration on both 2-point and 3+ point paths.
         //
-        // We use t_x1000 = 990 (99% of entry animation) which guarantees
-        // `traveled` lands on the last segment regardless of how leg lengths
-        // split — the agent must be on the final leg at near-end progress.
-        // At that high raw_seg_t, EaseOutCubic approaches 1000 (>= raw), so
-        // seg_t > 900 is a reliable easing signal.
+        // Key property: EaseOutCubic(0.5) ≈ 0.875, so at t=50% of the walk
+        // the agent should be PAST the geometric midpoint (i.e. on the second
+        // of two equal-length legs, not the first).
         //
-        // For the non-final leg smoke-check we use t = 25% and a 4-point path
-        // where the first three legs together consume more than 50% of total
-        // distance, so at 25% we're provably on leg 0 (not the final leg) and
-        // seg_t == raw_seg_t (linear).
+        // At t=99% the agent must still be well inside [900, 1000] on the
+        // final leg (near-end correctness check).
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let l = layout();
         let door = l.door_threshold.expect("door");
         let desk = l.home_desks[0];
         let entry_ms = ENTRY_ANIMATION_MS;
 
-        // ── Final-leg check: t=99%, 3-point path ─────────────────────────
-        // At t_x1000 ≈ 990 the agent is deep into the last leg.
-        // raw_seg_t depends on octile ratios, but near-end means raw > 900.
-        // EaseOutCubic(x > 0.9) > x, so eased seg_t >= raw ≈ 900+.
-        // We assert seg_t >= 900 (verifying easing doesn't break near-end).
-        let since_990 = 990 * entry_ms / 1000;
-        let slot_990 = entry_slot(now - Duration::from_millis(since_990));
         let mid = Point {
             x: (door.x + desk.x) / 2,
             y: (door.y + desk.y) / 2,
         };
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+
+        // ── At t=50%, agent should be on the SECOND leg ──────────────────
+        // EaseOutCubic(0.5) ≈ 0.875 > 0.5, so eased traveled > half of
+        // total distance → agent is past mid-point → on leg 1 (from=mid).
+        let since_500 = 500 * entry_ms / 1000;
+        let slot_500 = entry_slot(now - Duration::from_millis(since_500));
+        let mut router_500 = StubRouter::corners(vec![door, mid, desk]);
+        let mut history_500 = PoseHistory::new();
+        let p_500 = derive_with_routing(
+            &slot_500,
+            now,
+            &l,
+            &mut router_500,
+            &overlay,
+            &mut history_500,
+        );
+        match p_500 {
+            Some(Pose::Walking { from, .. }) => {
+                assert_eq!(
+                    from, mid,
+                    "at t=50%, global ease puts agent past mid-point: should be on leg 1 (from=mid), got from={from:?}"
+                );
+            }
+            other => panic!("expected Walking at t=500, got {other:?}"),
+        }
+
+        // ── At t=99%, agent should be near end: seg_t in [900, 1000] ─────
+        let since_990 = 990 * entry_ms / 1000;
+        let slot_990 = entry_slot(now - Duration::from_millis(since_990));
         let mut router_990 = StubRouter::corners(vec![door, mid, desk]);
         let mut history_990 = PoseHistory::new();
-        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let p_990 = derive_with_routing(
             &slot_990,
             now,
@@ -579,55 +605,41 @@ mod tests {
             Some(Pose::Walking { t_x1000, .. }) => t_x1000,
             other => panic!("expected Walking at t=990, got {other:?}"),
         };
-        // At 99% progress on the final leg, easing brings seg_t close to 1000.
         assert!(
             seg_t_990 >= 900,
-            "final-leg seg_t at 99% should be >= 900 (eased), got {seg_t_990}"
+            "at t=99%, seg_t should be >= 900 (near end), got {seg_t_990}"
         );
         assert!(
             seg_t_990 <= 1000,
             "seg_t must not exceed 1000, got {seg_t_990}"
         );
 
-        // ── Non-final leg check: t=10%, 3-point path ─────────────────────
-        // At t_x1000 ≈ 100 (10%), traveled is near the start.
-        // For any 2-leg path, traveled < leg0 unless leg0 is negligibly small.
-        // For our door→mid→desk path both legs are tens of octile units, so
-        // at 10% the agent is on leg 0 (not the final leg) → seg_t is linear.
-        // Linear seg_t ≈ raw_seg_t. We just check it's <= 1000 and well below
-        // the eased value we'd get at the same raw_seg_t on the final leg.
-        let since_100 = 100 * entry_ms / 1000;
-        let slot_100 = entry_slot(now - Duration::from_millis(since_100));
-        let mut router_100 = StubRouter::corners(vec![door, mid, desk]);
-        let mut history_100 = PoseHistory::new();
-        let p_100 = derive_with_routing(
-            &slot_100,
+        // ── 2-point path: same global ease applies ────────────────────────
+        // A straight-line walk (path.len()==2) should also get global ease.
+        // At t=50%, eased_t_x1000 ≈ 875. Verify via a StubRouter::straight
+        // path and a matching entry_slot at t=500.
+        let slot_2pt = entry_slot(now - Duration::from_millis(since_500));
+        let mut router_2pt = StubRouter::straight();
+        let mut history_2pt = PoseHistory::new();
+        let p_2pt = derive_with_routing(
+            &slot_2pt,
             now,
             &l,
-            &mut router_100,
+            &mut router_2pt,
             &overlay,
-            &mut history_100,
+            &mut history_2pt,
         );
-        match p_100 {
-            Some(Pose::Walking { from, t_x1000, .. }) => {
-                // Non-final leg: from == door confirms we're on leg 0.
-                assert_eq!(
-                    from, door,
-                    "at 10% agent should be on first leg (from=door)"
-                );
-                // Non-final leg is linear: seg_t == raw_seg_t.
-                // EaseOutCubic(x) > x for 0 < x < 1, so if easing were
-                // mistakenly applied here, seg_t would be notably higher than
-                // raw. Verify seg_t is in the plausible linear range (not inflated).
-                // At 10% total with two roughly equal legs, seg_t ≈ 200.
-                // If easing were applied: EaseOutCubic(0.2)=0.488 → seg_t≈488.
-                // We assert seg_t < 400 to distinguish linear from eased.
+        match p_2pt {
+            Some(Pose::Walking { t_x1000, .. }) => {
+                // EaseOutCubic(0.5) ≈ 0.875 → t_x1000 ≈ 875.
+                // Without global ease, raw t_x1000 ≈ 500. Assert > 600 to
+                // distinguish eased from linear clearly.
                 assert!(
-                    t_x1000 < 400,
-                    "non-final leg seg_t should be linear (< 400), got {t_x1000}"
+                    t_x1000 > 600,
+                    "2-point walk at t=50% should have eased t_x1000 > 600 (EaseOutCubic(0.5)≈875), got {t_x1000}"
                 );
             }
-            other => panic!("expected Walking at t=100, got {other:?}"),
+            other => panic!("expected Walking for 2-point path at t=500, got {other:?}"),
         }
     }
 }
