@@ -212,7 +212,9 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
 
     // Live wall clock painted after the wall (so hands sit on top of it)
     // but before wall decor — the bookshelf etc. shouldn't cover it.
-    let clock_x = buf_w / 2 - 2;
+    // 9x9 sprite, center at clock_x+4; clamp so it never collides with
+    // the 30-wide neon panel on the left.
+    let clock_x = (buf_w / 2).saturating_sub(4).max(neon_w + 2);
     paint_clock(ctx.buf, clock_x, 1, ctx.now, ctx.theme);
     // Corridor runner — painted over the floor but BEFORE walls/decor
     // so walls cleanly overlap it where they cross.

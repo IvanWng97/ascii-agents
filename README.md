@@ -114,19 +114,31 @@ Press `t` to switch themes with live preview. Your choice persists across sessio
   <img src="docs/images/themes-composite.png" alt="6 themes: Normal, Cyberpunk, Dracula, Tokyo Night, Catppuccin, Gruvbox" width="800" />
 </p>
 
-Settings are stored in `~/.config/pixtuoid/config.toml` (respects `$XDG_CONFIG_HOME`):
+Settings are stored in `~/.config/pixtuoid/config.toml` (respects `$XDG_CONFIG_HOME`).
+The file is created on first launch. All user settings below are **optional** —
+omit any key to use its default.
 
 ```toml
 theme = "cyberpunk"
 max-desks = 8
 pack-dir = "~/.config/pixtuoid/packs/robot"
+enabled-pets = ["cat", "dog"]
 ```
+
+**User settings** (safe to edit):
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `theme` | `"normal"` | Color theme — `normal`, `cyberpunk`, `dracula`, `tokyo-night`, `catppuccin`, `gruvbox` |
 | `max-desks` | auto | Cap desks per floor. If unset, auto-computed from terminal size. Excess agents overflow to additional floors. |
 | `pack-dir` | — | Custom sprite pack directory. Supports `~` expansion. |
+| `enabled-pets` | `["cat", "dog"]` | Which pets appear in the office. Omit or list a subset (`["cat"]`) to disable some. |
+
+**System-managed** (don't edit — pixtuoid writes these for you):
+
+| Key | Purpose |
+|-----|---------|
+| `last-seen-version` | Tracks the highest version you've launched, so the "what's new" popup only fires once per upgrade. Pixtuoid overwrites this on every launch. |
 
 CLI flags override config: `pixtuoid run --theme dracula`
 

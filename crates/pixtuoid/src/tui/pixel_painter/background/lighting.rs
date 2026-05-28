@@ -138,8 +138,9 @@ pub(in crate::tui::pixel_painter) fn paint_neon_panel(
 }
 
 /// Live wall clock — reads system local time and renders hour + minute hands.
-/// 5x5 clock face. Hands quantize to 8 cardinal/intercardinal directions
-/// (the most a 5x5 sprite can express).
+/// 9x9 clock face with a circular rim. Hands quantize to 8 cardinal/inter-
+/// cardinal directions and are drawn as multi-pixel rays from the center
+/// (hour 2 px, minute 3 px) so they read clearly at this size.
 pub(in crate::tui::pixel_painter) fn paint_clock(
     buf: &mut RgbBuffer,
     x: u16,
@@ -152,35 +153,39 @@ pub(in crate::tui::pixel_painter) fn paint_clock(
     let hand_color = theme.office.clock_hand;
     let hand_min = hand_color;
 
-    // Face + rim background.
-    let bg: &[(u16, u16, Rgb)] = &[
-        (1, 0, rim),
-        (2, 0, rim),
-        (3, 0, rim),
-        (0, 1, rim),
-        (1, 1, face),
-        (2, 1, face),
-        (3, 1, face),
-        (4, 1, rim),
-        (0, 2, rim),
-        (1, 2, face),
-        (2, 2, face),
-        (3, 2, face),
-        (4, 2, rim),
-        (0, 3, rim),
-        (1, 3, face),
-        (2, 3, face),
-        (3, 3, face),
-        (4, 3, rim),
-        (1, 4, rim),
-        (2, 4, rim),
-        (3, 4, rim),
+    // 9x9 disc — `R` rim, `F` face, `.` transparent.
+    //   . . . R R R . . .   y=0
+    //   . R R F F F R R .   y=1
+    //   . R F F F F F R .   y=2
+    //   R F F F F F F F R   y=3
+    //   R F F F F F F F R   y=4 (center at x+4, y+4)
+    //   R F F F F F F F R   y=5
+    //   . R F F F F F R .   y=6
+    //   . R R F F F R R .   y=7
+    //   . . . R R R . . .   y=8
+    let rows: &[&[u8]] = &[
+        b"...RRR...",
+        b".RRFFFRR.",
+        b".RFFFFFR.",
+        b"RFFFFFFFR",
+        b"RFFFFFFFR",
+        b"RFFFFFFFR",
+        b".RFFFFFR.",
+        b".RRFFFRR.",
+        b"...RRR...",
     ];
-    for (dx, dy, c) in bg {
-        let px = x + dx;
-        let py = y + dy;
-        if px < buf.width && py < buf.height {
-            buf.put(px, py, *c);
+    for (dy, row) in rows.iter().enumerate() {
+        for (dx, ch) in row.iter().enumerate() {
+            let c = match ch {
+                b'R' => rim,
+                b'F' => face,
+                _ => continue,
+            };
+            let px = x + dx as u16;
+            let py = y + dy as u16;
+            if px < buf.width && py < buf.height {
+                buf.put(px, py, c);
+            }
         }
     }
 
@@ -198,8 +203,8 @@ pub(in crate::tui::pixel_painter) fn paint_clock(
     let min_turns = minute as f32 / 60.0;
 
     let put = |buf: &mut RgbBuffer, ox: i32, oy: i32, color: Rgb| {
-        let px = x as i32 + 2 + ox;
-        let py = y as i32 + 2 + oy;
+        let px = x as i32 + 4 + ox;
+        let py = y as i32 + 4 + oy;
         if px >= 0 && py >= 0 && (px as u16) < buf.width && (py as u16) < buf.height {
             buf.put(px as u16, py as u16, color);
         }
@@ -208,14 +213,17 @@ pub(in crate::tui::pixel_painter) fn paint_clock(
     // Center pin (always painted).
     put(buf, 0, 0, hand_color);
 
-    // Hour hand: 1 px from center along quantized angle.
+    // Hour hand: ray of length 2 from center.
     let (hdx, hdy) = octant_offset(hour_turns);
-    put(buf, hdx, hdy, hand_color);
+    for step in 1..=2 {
+        put(buf, hdx * step, hdy * step, hand_color);
+    }
 
-    // Minute hand: 2 px from center (longer than hour hand) along its angle.
+    // Minute hand: ray of length 3 from center (longer than hour hand).
     let (mdx, mdy) = octant_offset(min_turns);
-    put(buf, mdx, mdy, hand_min);
-    // (Don't put a 2nd pixel if it falls off the 5x5 — the rim handles it.)
+    for step in 1..=3 {
+        put(buf, mdx * step, mdy * step, hand_min);
+    }
 }
 
 /// Quantize a fractional turn (0.0..1.0, 0.0 = north) to one of 8 octant

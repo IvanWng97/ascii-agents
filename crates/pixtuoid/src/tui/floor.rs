@@ -40,7 +40,10 @@ impl FloorMeta {
             floor_idx,
             altitude,
             floor_seed: (floor_idx as u64).wrapping_mul(FLOOR_SEED_MULTIPLIER),
-            sunlight_boost: altitude * 0.3,
+            // Indoor lighting is uniform across floors — building interiors
+            // share the same overhead lighting regardless of altitude. The
+            // `altitude` field still drives skyline depth in the windows.
+            sunlight_boost: 0.0,
         }
     }
 
