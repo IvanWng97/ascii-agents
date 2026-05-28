@@ -1,19 +1,20 @@
 ---
 source: crates/pixtuoid/tests/layout_golden.rs
+assertion_line: 81
 expression: l.waypoints
 ---
 [
     Waypoint {
         pos: Point {
-            x: 74,
+            x: 93,
             y: 39,
         },
         kind: Couch,
     },
     Waypoint {
         pos: Point {
-            x: 16,
-            y: 86,
+            x: 28,
+            y: 105,
         },
         kind: Pantry,
     },

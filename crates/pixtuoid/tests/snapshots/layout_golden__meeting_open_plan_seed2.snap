@@ -1,5 +1,13 @@
 ---
 source: crates/pixtuoid/tests/layout_golden.rs
+assertion_line: 87
 expression: l.meeting_room
 ---
-None
+Some(
+    Bounds {
+        x: 0,
+        y: 36,
+        width: 56,
+        height: 42,
+    },
+)

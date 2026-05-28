@@ -21,9 +21,11 @@ pub(super) fn compute_with_seed(
     let usable_h = buf_h - top_margin;
 
     // Per-floor layout variant: floor_seed encodes floor_idx via
-    // wrapping_mul, so floor_idx = 0 gives seed=0 (F1), etc.
-    // We derive a stable floor index from the seed for variant selection.
-    let floor_variant = ((floor_seed.wrapping_mul(0x517cc1b727220a95)) % 5) as u8;
+    // Fibonacci hashing (wrapping_mul with golden-ratio constant).
+    // The variant hash constant was chosen so that the 5 standard
+    // floor seeds (0..5 × FLOOR_SEED_MULTIPLIER) each map to a
+    // unique variant in [0..5).
+    let floor_variant = (floor_seed.wrapping_mul(0x4737819096da1dad) % 5) as u8;
 
     // F1(0): Standard — meeting + pantry, vertical wall between them
     //        and the cubicle area, horizontal wall between meeting/pantry.
