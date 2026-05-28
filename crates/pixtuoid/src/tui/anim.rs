@@ -8,6 +8,8 @@
 //! LightingState, PoseHistory) for v2 daemon-split compatibility.
 //! See CLAUDE.md "Known sharp edges".
 
+use std::time::{Duration, SystemTime};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Easing {
     Linear,
@@ -44,9 +46,33 @@ impl Easing {
     }
 }
 
+/// Compute the eased progress of an animation `[0.0, 1.0]` given its
+/// `started_at` wall-clock time, total `duration_ms`, and `easing` curve.
+///
+/// Clamps to `0.0` if `now` is before `started_at`, and to `1.0` if
+/// `duration_ms` has fully elapsed.
+pub fn eased_progress(
+    started_at: SystemTime,
+    duration_ms: u32,
+    easing: Easing,
+    now: SystemTime,
+) -> f32 {
+    let elapsed = now
+        .duration_since(started_at)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as f32;
+    let raw = if duration_ms == 0 {
+        1.0
+    } else {
+        (elapsed / duration_ms as f32).clamp(0.0, 1.0)
+    };
+    easing.apply(raw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, SystemTime};
 
     fn approx_eq(a: f32, b: f32) -> bool {
         (a - b).abs() < 1e-4
@@ -113,5 +139,49 @@ mod tests {
         assert!(approx_eq(Easing::Linear.apply(2.0), 1.0));
         assert!(approx_eq(Easing::EaseOutCubic.apply(-0.5), 0.0));
         assert!(approx_eq(Easing::EaseInOutCubic.apply(1.5), 1.0));
+    }
+
+    #[test]
+    fn eased_progress_at_start_is_zero() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let p = eased_progress(start, 200, Easing::Linear, start);
+        assert!(approx_eq(p, 0.0));
+    }
+
+    #[test]
+    fn eased_progress_at_end_is_one() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let now = start + Duration::from_millis(200);
+        let p = eased_progress(start, 200, Easing::Linear, now);
+        assert!(approx_eq(p, 1.0));
+    }
+
+    #[test]
+    fn eased_progress_past_end_clamps_to_one() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let now = start + Duration::from_secs(60);
+        let p = eased_progress(start, 200, Easing::Linear, now);
+        assert!(approx_eq(p, 1.0));
+    }
+
+    #[test]
+    fn eased_progress_now_before_start_clamps_to_zero() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let now = start - Duration::from_secs(5);
+        let p = eased_progress(start, 200, Easing::Linear, now);
+        assert!(approx_eq(p, 0.0));
+    }
+
+    #[test]
+    fn eased_progress_applies_curve() {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let now = start + Duration::from_millis(100);
+        let linear = eased_progress(start, 200, Easing::Linear, now);
+        let eased = eased_progress(start, 200, Easing::EaseOutCubic, now);
+        assert!(approx_eq(linear, 0.5));
+        assert!(
+            eased > 0.8,
+            "expected ease-out to be past 80% at midpoint; got {eased}"
+        );
     }
 }
