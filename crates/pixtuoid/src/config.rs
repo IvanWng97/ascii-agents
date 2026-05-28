@@ -19,6 +19,12 @@ pub struct AppConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub enabled_pets: Option<Vec<String>>,
+    #[serde(
+        rename = "last-seen-version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_seen_version: Option<String>,
 }
 
 pub fn resolve_pack_dir(config: &AppConfig, cli_pack_dir: Option<PathBuf>) -> Option<PathBuf> {
@@ -88,6 +94,32 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
         AppConfig::default()
     };
     cfg.theme = Some(theme_name.to_string());
+
+    let contents = toml::to_string_pretty(&cfg)?;
+    let tmp = real_path.with_extension("toml.tmp");
+    std::fs::write(&tmp, &contents)?;
+    std::fs::rename(&tmp, &real_path)?;
+    fs2::FileExt::unlock(&lock_file).ok();
+    let _ = std::fs::remove_file(&lock_path);
+    Ok(())
+}
+
+pub fn save_version(path: &Path, version: &str) -> Result<()> {
+    let real_path = crate::install::io::resolve_symlink(path);
+    if let Some(parent) = real_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let lock_path = real_path.with_extension("toml.lock");
+    let lock_file = std::fs::File::create(&lock_path)?;
+    fs2::FileExt::try_lock_exclusive(&lock_file)
+        .map_err(|e| anyhow::anyhow!("config lock held by another process: {e}"))?;
+
+    let mut cfg = if real_path.exists() {
+        load(&real_path)
+    } else {
+        AppConfig::default()
+    };
+    cfg.last_seen_version = Some(version.to_string());
 
     let contents = toml::to_string_pretty(&cfg)?;
     let tmp = real_path.with_extension("toml.tmp");
@@ -402,5 +434,27 @@ mod tests {
         };
         let pets = resolve_pets(&cfg);
         assert!(pets.is_empty());
+    }
+
+    // --- save_version ---------------------------------------------------------
+
+    #[test]
+    fn save_version_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        save_version(&path, "0.4.0").unwrap();
+        let cfg = load(&path);
+        assert_eq!(cfg.last_seen_version.as_deref(), Some("0.4.0"));
+    }
+
+    #[test]
+    fn save_version_preserves_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "theme = \"cyberpunk\"\n").unwrap();
+        save_version(&path, "0.4.0").unwrap();
+        let cfg = load(&path);
+        assert_eq!(cfg.theme.as_deref(), Some("cyberpunk"));
+        assert_eq!(cfg.last_seen_version.as_deref(), Some("0.4.0"));
     }
 }

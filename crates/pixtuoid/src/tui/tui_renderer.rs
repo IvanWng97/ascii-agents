@@ -49,6 +49,7 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     coffee_holders: std::collections::HashSet<pixtuoid_core::AgentId>,
     /// Timestamp when each agent first returned with coffee (for steam).
     coffee_fetched_at: std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
+    version_popup: bool,
 }
 
 impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
@@ -75,6 +76,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             chitchat_state: std::collections::HashMap::new(),
             coffee_holders: std::collections::HashSet::new(),
             coffee_fetched_at: std::collections::HashMap::new(),
+            version_popup: false,
         }
     }
 
@@ -134,6 +136,10 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
 
     pub fn set_theme_picker(&mut self, picker: Option<usize>) {
         self.theme_picker = picker;
+    }
+
+    pub fn set_version_popup(&mut self, v: bool) {
+        self.version_popup = v;
     }
 
     pub fn set_active_pet(&mut self, pet: Option<PetState>) {
@@ -361,6 +367,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
             let theme = self.theme;
             let theme_picker = self.theme_picker;
+            let version_popup = self.version_popup;
 
             self.terminal.draw(|f| {
                 let actual_full = f.area();
@@ -376,6 +383,17 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
                 if let Some(idx) = theme_picker {
                     crate::tui::renderer::paint_theme_picker(f, idx, actual_full, theme);
+                }
+                if version_popup {
+                    if let Some(notes) = crate::version::release_notes(env!("CARGO_PKG_VERSION")) {
+                        crate::tui::renderer::paint_version_popup(
+                            f,
+                            env!("CARGO_PKG_VERSION"),
+                            notes,
+                            actual_full,
+                            theme,
+                        );
+                    }
                 }
             })?;
 
@@ -422,6 +440,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             coffee_holders: &self.coffee_holders,
             coffee_fetched_at: &self.coffee_fetched_at,
             new_coffee_carriers: Vec::new(),
+            version_popup: self.version_popup,
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
         self.last_pet_pos = draw_ctx.last_pet_pos;

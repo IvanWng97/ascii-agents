@@ -37,6 +37,17 @@ pub async fn run_tui(
     let pack = embedded_pack::load_sprite_pack(pack_dir)?;
     let term = setup_terminal()?;
     let mut renderer = TuiRenderer::new(term, theme, enabled_pets);
+    let mut version_popup = {
+        let current_ver = env!("CARGO_PKG_VERSION");
+        let cfg = crate::config::load(&config_path);
+        match &cfg.last_seen_version {
+            None => crate::version::release_notes(current_ver).is_some(),
+            Some(last) => {
+                crate::version::is_newer_version(current_ver, last)
+                    && crate::version::release_notes(current_ver).is_some()
+            }
+        }
+    };
     let mut last_layout_sig: Option<(u16, u16)> = None;
     let mut paused = false;
     let mut frozen_now: Option<SystemTime> = None;
@@ -64,6 +75,7 @@ pub async fn run_tui(
                 last_layout_sig = Some(sig);
             }
             renderer.set_theme_picker(theme_picker);
+            renderer.set_version_popup(version_popup);
             renderer.render(&snapshot, &pack, now)?;
 
             // Auto-compute per-floor desk capacity. Each floor uses its
@@ -100,7 +112,20 @@ pub async fn run_tui(
             while polled {
                 match event::read()? {
                     Event::Key(k) => {
-                        if let Some(idx) = theme_picker.as_mut() {
+                        if version_popup {
+                            match k.code {
+                                KeyCode::Esc | KeyCode::Enter => {
+                                    version_popup = false;
+                                    if let Err(e) = crate::config::save_version(
+                                        &config_path,
+                                        env!("CARGO_PKG_VERSION"),
+                                    ) {
+                                        tracing::warn!("failed to persist version: {e}");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else if let Some(idx) = theme_picker.as_mut() {
                             match k.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     if *idx > 0 {

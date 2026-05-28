@@ -182,6 +182,7 @@ fn main() -> Result<()> {
         coffee_holders: &std::collections::HashSet::new(),
         coffee_fetched_at: &std::collections::HashMap::new(),
         new_coffee_carriers: Vec::new(),
+        version_popup: false,
     };
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx)?;
 
@@ -637,6 +638,7 @@ fn save_as_gif(
             coffee_holders: &std::collections::HashSet::new(),
             coffee_fetched_at: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
+            version_popup: false,
         };
         draw_scene(term, scene, pack, now, &mut draw_ctx)?;
 

@@ -277,6 +277,53 @@ pub(in crate::tui) fn paint_wall_display(
     }
 }
 
+pub(in crate::tui) fn paint_version_popup(
+    f: &mut ratatui::Frame<'_>,
+    version: &str,
+    notes: &[&str],
+    bounds: Rect,
+    theme: &crate::tui::theme::Theme,
+) {
+    use ratatui::style::Modifier;
+    use ratatui::text::{Line, Span as TSpan};
+    use ratatui::widgets::{Block, Borders, Clear};
+
+    let w = 54u16;
+    let h = (notes.len() as u16 + 4).min(bounds.height);
+    let x = bounds.width.saturating_sub(w) / 2;
+    let y = bounds.height.saturating_sub(h) / 2;
+    let area = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+    f.render_widget(Clear, area);
+
+    let mut items: Vec<Line> = Vec::with_capacity(notes.len() + 1);
+    items.push(Line::from(""));
+    for note in notes {
+        items.push(Line::from(TSpan::styled(
+            format!("  \u{00b7} {note}"),
+            Style::default().fg(to_color(theme.ui.label_idle)),
+        )));
+    }
+
+    let title = format!(" What's new in v{version} \u{2014} Esc/Enter to close ");
+    let block = Block::default()
+        .title(TSpan::styled(
+            title,
+            Style::default()
+                .fg(to_color(theme.ui.neon_brand))
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(to_color(theme.ui.neon_brand)))
+        .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
+
+    f.render_widget(Paragraph::new(items).block(block), area);
+}
+
 pub(in crate::tui) fn paint_elevator_indicator(
     f: &mut ratatui::Frame<'_>,
     door: crate::tui::layout::Point,

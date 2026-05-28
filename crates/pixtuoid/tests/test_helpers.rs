@@ -49,6 +49,7 @@ macro_rules! make_draw_ctx {
             coffee_holders: &std::collections::HashSet::new(),
             coffee_fetched_at: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
+            version_popup: false,
         };
     };
 

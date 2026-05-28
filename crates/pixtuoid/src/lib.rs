@@ -9,3 +9,4 @@ pub mod install;
 pub mod runtime;
 pub mod tui;
 pub mod validate;
+pub mod version;

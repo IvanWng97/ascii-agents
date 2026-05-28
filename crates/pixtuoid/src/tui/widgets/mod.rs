@@ -5,7 +5,8 @@ mod hud;
 mod tooltip;
 
 pub(super) use hud::{
-    paint_elevator_indicator, paint_footer, paint_theme_picker, paint_wall_display,
+    paint_elevator_indicator, paint_footer, paint_theme_picker, paint_version_popup,
+    paint_wall_display,
 };
 pub use tooltip::paint_chitchat_bubbles;
 pub(super) use tooltip::{paint_coffee_tooltip, paint_furniture_tooltip, paint_pet_tooltip};
