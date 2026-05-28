@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  <sub><em><b>pix</b>el + <b>tu</b>i + (agent-)<b>oid</b></em></sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/IvanWng97/pixtuoid/stargazers"><img src="https://img.shields.io/github/stars/IvanWng97/pixtuoid?style=flat-square" alt="Stars" /></a>
   <a href="https://github.com/IvanWng97/pixtuoid/releases"><img src="https://img.shields.io/github/v/release/IvanWng97/pixtuoid?label=version&style=flat-square" alt="Version" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License" /></a>
@@ -33,6 +37,12 @@
 Running multiple AI agents in the terminal is like managing a sweatshop you can't see. They type, they wait, they finish — and you have no idea who's doing what unless you scroll through logs like a bureaucrat.
 
 **pixtuoid** puts them all in a tiny pixel-art office you can watch from above. A little bit *Black Mirror*, a little bit *The Sims* — and somehow the most intuitive multi-agent dashboard you'll ever use.
+
+## Who's it for?
+
+- You're running 3+ AI coding agents and losing track of who's stuck on what.
+- You want a glanceable activity signal without tailing logs.
+- You think coding agents should have a vibe.
 
 ## Quick Start
 
@@ -186,9 +196,10 @@ Three Rust crates:
 
 </details>
 
-## Migrating from ascii-agents (v0.3.0 → v0.4.0)
+<details>
+<summary><strong>Migrating from <code>ascii-agents</code> (v0.3.x → v0.4.0)</strong> — rename, hooks, config paths</summary>
 
-**v0.4.0 renames the project from `ascii-agents` to `pixtuoid`** — pix(el) + tu(i) + (agent-)oid.
+**v0.4.0 renamed the project from `ascii-agents` to `pixtuoid`.**
 
 ### What changed
 
@@ -222,6 +233,8 @@ Three Rust crates:
    ```
 
 > **GitHub links:** The old `IvanWng97/ascii-agents` URL automatically redirects to `IvanWng97/pixtuoid`. Existing bookmarks and stars carry over.
+
+</details>
 
 ## Contributing
 
