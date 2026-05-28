@@ -20,6 +20,7 @@ use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::{AgentSlot, SceneState};
 
 use crate::tui::chitchat::{self, ActiveChitchat, ChitchatBubble};
+use crate::tui::floor::LightingState;
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point, DESK_W};
 use crate::tui::pathfind::Router;
@@ -160,9 +161,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // `indoor_scale` smoothly travels from MIN_LEVEL (empty + past
     // debounce) to 1.0 (populated). Windows/skyline are unaffected.
     let indoor_scale = ctx.light.tick(ctx.scene.agents.is_empty(), ctx.now);
-    let min_level = crate::tui::floor::LightingState::MIN_LEVEL;
-    // Linear map: scale=1.0 → boost=1.0, scale=MIN_LEVEL → boost=2.4.
-    let empty_floor_boost = 1.0 + (1.0 - indoor_scale) * (2.4 - 1.0) / (1.0 - min_level);
+    // Empty floors get an extra floor-darken boost on top of the time-of-
+    // day dim — there are no monitor/lamp light sources to balance against
+    // the overhead darkness, so without the boost they read as "lights
+    // off but room weirdly bright."
+    let min_level = LightingState::MIN_LEVEL;
+    let boost_ceiling = LightingState::EMPTY_FLOOR_DIM_BOOST;
+    let empty_floor_boost = 1.0 + (1.0 - indoor_scale) * (boost_ceiling - 1.0) / (1.0 - min_level);
 
     let dim_strength = (0.45 - ctx.floor.sunlight_boost).max(0.1);
     dim_floor_overlay(

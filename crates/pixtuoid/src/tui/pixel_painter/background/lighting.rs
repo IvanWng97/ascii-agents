@@ -200,9 +200,13 @@ pub(in crate::tui::pixel_painter) fn paint_clock(
     let (hdx, hdy) = octant_offset(hour_turns);
     put(buf, hdx, hdy, hand_color);
 
-    // Minute hand: ray of length 2 from center (longer than hour hand).
+    // Minute hand: ray of length 2 from center at cardinals, 1 at
+    // diagonals. The 7x7 disc has 3-px face at cardinals but only 1-px
+    // face at diagonals — a length-2 diagonal hand would overwrite the
+    // rim and leave a gap in the border.
     let (mdx, mdy) = octant_offset(min_turns);
-    for step in 1..=2 {
+    let max_step = if mdx != 0 && mdy != 0 { 1 } else { 2 };
+    for step in 1..=max_step {
         put(buf, mdx * step, mdy * step, hand_min);
     }
 }

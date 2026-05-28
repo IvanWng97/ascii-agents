@@ -168,7 +168,7 @@ fn main() -> Result<()> {
     // Static snapshots have no time to animate the fade — snap straight
     // to the steady-state level for the chosen scene.
     if args.empty {
-        light.level = pixtuoid::tui::floor::LightingState::MIN_LEVEL;
+        light.snap_to_empty();
     }
     let mut draw_ctx = DrawCtx {
         buf: &mut buf,
