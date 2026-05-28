@@ -40,22 +40,18 @@ pub async fn run_tui(
     let mut version_popup = {
         let current_ver = env!("CARGO_PKG_VERSION");
         let cfg = crate::config::load(&config_path);
-        let should_show = match &cfg.last_seen_version {
-            None => false,
-            Some(last) => {
-                crate::version::is_newer_version(current_ver, last)
-                    && crate::version::release_notes(current_ver).is_some()
-            }
-        };
+        let decision = crate::version::boot_decision(current_ver, cfg.last_seen_version.as_deref());
         // Persist the current version immediately so the popup shows at
         // most once per upgrade, regardless of how the user exits this run
         // (Enter to dismiss, Esc/q/Ctrl+C to quit, or terminal close).
-        if should_show || cfg.last_seen_version.is_none() {
+        // Also overwrites a corrupted/hand-edited last_seen_version so the
+        // popup can't be silently disabled forever.
+        if decision.should_persist {
             if let Err(e) = crate::config::save_version(&config_path, current_ver) {
                 tracing::warn!("failed to persist version: {e}");
             }
         }
-        should_show
+        decision.should_show_popup
     };
     let mut last_layout_sig: Option<(u16, u16)> = None;
     let mut paused = false;

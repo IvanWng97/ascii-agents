@@ -4,6 +4,39 @@ pub fn is_newer_version(current: &str, last_seen: &str) -> bool {
         .is_some_and(|(c, l)| c > l)
 }
 
+pub fn is_valid_version(s: &str) -> bool {
+    parse_semver(s).is_some()
+}
+
+pub struct BootDecision {
+    pub should_show_popup: bool,
+    pub should_persist: bool,
+}
+
+/// Decide whether the version popup should fire on boot and whether to
+/// persist `last_seen_version`. Pure function so the boot logic is testable
+/// without spinning up a terminal.
+///
+/// Persist happens in three cases:
+/// - The popup is firing (record current so it only fires once).
+/// - First-time install (no recorded version yet).
+/// - The recorded version is unparseable — overwrite to recover, otherwise a
+///   corrupted/hand-edited value silently disables the popup forever.
+pub fn boot_decision(current_ver: &str, last_seen: Option<&str>) -> BootDecision {
+    let last_seen_parseable = last_seen.is_some_and(is_valid_version);
+    let should_show_popup = match last_seen {
+        Some(last) if last_seen_parseable => {
+            is_newer_version(current_ver, last) && release_notes(current_ver).is_some()
+        }
+        _ => false,
+    };
+    let should_persist = should_show_popup || last_seen.is_none() || !last_seen_parseable;
+    BootDecision {
+        should_show_popup,
+        should_persist,
+    }
+}
+
 /// Parses `major.minor.patch[-prerelease]` into a tuple where the 4th
 /// component is `0` for a prerelease and `1` for a release, so that
 /// `0.5.0-rc1 < 0.5.0` per semver precedence rules.
@@ -103,5 +136,66 @@ mod tests {
             release_notes(current).is_some(),
             "release_notes({current:?}) returned None — add an arm for the current version"
         );
+    }
+
+    #[test]
+    fn is_valid_version_accepts_well_formed() {
+        assert!(is_valid_version("0.4.0"));
+        assert!(is_valid_version("1.2.3"));
+        assert!(is_valid_version("0.5.0-rc1"));
+    }
+
+    #[test]
+    fn is_valid_version_rejects_corrupted() {
+        assert!(!is_valid_version("v0.4.0"), "leading v is not semver");
+        assert!(!is_valid_version("garbage"));
+        assert!(!is_valid_version(""));
+    }
+
+    // Regression for the silent-disable bug: a hand-edited or corrupted
+    // last_seen_version (e.g. `v0.4.0` matching the git-tag spelling) must
+    // be overwritten on boot, not left in place to suppress every future
+    // popup.
+    #[test]
+    fn boot_decision_overwrites_corrupted_last_seen() {
+        let d = boot_decision("0.4.1", Some("v0.4.0"));
+        assert!(
+            !d.should_show_popup,
+            "can't show popup when comparison fails"
+        );
+        assert!(
+            d.should_persist,
+            "corrupted last_seen must be overwritten to recover"
+        );
+    }
+
+    #[test]
+    fn boot_decision_first_run_persists_silently() {
+        let d = boot_decision("0.4.1", None);
+        assert!(!d.should_show_popup);
+        assert!(d.should_persist);
+    }
+
+    #[test]
+    fn boot_decision_upgrade_shows_popup_and_persists() {
+        // Use 0.4.0 (which has release_notes) as the current version so this
+        // test stays stable across version bumps.
+        let d = boot_decision("0.4.0", Some("0.3.0"));
+        assert!(d.should_show_popup);
+        assert!(d.should_persist);
+    }
+
+    #[test]
+    fn boot_decision_same_version_no_action() {
+        let d = boot_decision("0.4.0", Some("0.4.0"));
+        assert!(!d.should_show_popup);
+        assert!(!d.should_persist);
+    }
+
+    #[test]
+    fn boot_decision_downgrade_no_action() {
+        let d = boot_decision("0.3.0", Some("0.4.0"));
+        assert!(!d.should_show_popup);
+        assert!(!d.should_persist);
     }
 }
