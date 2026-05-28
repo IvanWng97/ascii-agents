@@ -200,6 +200,24 @@ pub(crate) fn capacity_for_terminal(cols: u16, rows: u16) -> usize {
     .unwrap_or(0)
 }
 
+fn summarize(scene: &SceneState) -> String {
+    let agents: Vec<String> = scene
+        .agents
+        .values()
+        .map(|a| {
+            let state = match &a.state {
+                ActivityState::Idle => "idle".to_string(),
+                ActivityState::Active { detail, .. } => {
+                    format!("active({})", detail.as_deref().unwrap_or("?"))
+                }
+                ActivityState::Waiting { reason } => format!("waiting({reason})"),
+            };
+            format!("{}@{}:{}", a.label, a.desk_index, state)
+        })
+        .collect();
+    format!("agents=[{}]", agents.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,22 +259,4 @@ mod tests {
         .unwrap_or(0);
         assert_eq!(capacity_for_terminal(cols, rows), expected);
     }
-}
-
-fn summarize(scene: &SceneState) -> String {
-    let agents: Vec<String> = scene
-        .agents
-        .values()
-        .map(|a| {
-            let state = match &a.state {
-                ActivityState::Idle => "idle".to_string(),
-                ActivityState::Active { detail, .. } => {
-                    format!("active({})", detail.as_deref().unwrap_or("?"))
-                }
-                ActivityState::Waiting { reason } => format!("waiting({reason})"),
-            };
-            format!("{}@{}:{}", a.label, a.desk_index, state)
-        })
-        .collect();
-    format!("agents=[{}]", agents.join(", "))
 }
