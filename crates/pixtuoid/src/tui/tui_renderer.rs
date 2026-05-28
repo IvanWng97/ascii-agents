@@ -212,11 +212,18 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             self.current_floor = nf.saturating_sub(1);
         }
 
-        let floor_info = if nf > 1 {
-            Some((self.current_floor + 1, nf))
-        } else {
-            None
+        let make_floor_info = |current_idx: usize| {
+            if nf > 1 {
+                Some(crate::tui::renderer::FloorInfo {
+                    current: current_idx + 1,
+                    total_floors: nf,
+                    total_agents: scene.agents.len(),
+                })
+            } else {
+                None
+            }
         };
+        let floor_info = make_floor_info(self.current_floor);
 
         // --- Transition path: composite two floors sliding in/out ----------
         if let Some(ref tr) = self.transition {
@@ -293,59 +300,57 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             let from_meta = FloorMeta::for_floor(from_floor, nf);
             let to_meta = FloorMeta::for_floor(to_floor, nf);
 
-            // Transitions hide text overlays, so use throwaway coffee
-            // and chitchat state — they won't be rendered anyway.
+            // Transitions hide *text* overlays (tooltips, chitchat bubbles,
+            // labels) but keep all pixel-level visuals — including pets,
+            // coffee cups, and steam — so the slide reads as a continuous
+            // scene rather than two stripped-down stand-ins.
             let mut transition_chitchat = std::collections::HashMap::new();
-            let empty_coffee = std::collections::HashSet::new();
-            let empty_fetched = std::collections::HashMap::new();
 
-            if let Some(layout) =
-                Layout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, from_meta.floor_seed)
-            {
-                from_ctx.router.set_preferred_zone(layout.corridor);
-                let _ = render_to_rgb_buffer(&mut PixelCtx {
-                    scene: &from_scene,
-                    layout: &layout,
-                    pack,
-                    now,
-                    buf: from_buf,
-                    cache: &mut from_ctx.cache,
-                    router: &mut from_ctx.router,
-                    overlay: &mut from_ctx.overlay,
-                    history: &mut from_ctx.history,
-                    theme: self.theme,
-                    floor: from_meta,
-                    active_pet: None,
-                    floor_pet_kind: None,
-                    chitchat_state: &mut transition_chitchat,
-                    coffee_holders: &empty_coffee,
-                    coffee_fetched_at: &empty_fetched,
-                });
-            }
+            let from_active_pet = self
+                .active_pet
+                .as_ref()
+                .filter(|p| p.floor_idx == from_floor && p.is_active(now));
+            let to_active_pet = self
+                .active_pet
+                .as_ref()
+                .filter(|p| p.floor_idx == to_floor && p.is_active(now));
+            let from_pet_kind =
+                crate::tui::pet::select_pet_for_floor(from_meta.floor_seed, &self.enabled_pets);
+            let to_pet_kind =
+                crate::tui::pet::select_pet_for_floor(to_meta.floor_seed, &self.enabled_pets);
 
-            if let Some(layout) =
-                Layout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, to_meta.floor_seed)
-            {
-                to_ctx.router.set_preferred_zone(layout.corridor);
-                let _ = render_to_rgb_buffer(&mut PixelCtx {
-                    scene: &to_scene,
-                    layout: &layout,
-                    pack,
-                    now,
-                    buf: to_buf,
-                    cache: &mut to_ctx.cache,
-                    router: &mut to_ctx.router,
-                    overlay: &mut to_ctx.overlay,
-                    history: &mut to_ctx.history,
-                    theme: self.theme,
-                    floor: to_meta,
-                    active_pet: None,
-                    floor_pet_kind: None,
-                    chitchat_state: &mut transition_chitchat,
-                    coffee_holders: &empty_coffee,
-                    coffee_fetched_at: &empty_fetched,
-                });
-            }
+            render_transition_floor(
+                &from_scene,
+                from_ctx,
+                from_buf,
+                from_meta,
+                buf_w,
+                buf_h,
+                from_active_pet,
+                from_pet_kind,
+                self.theme,
+                &self.coffee_holders,
+                &self.coffee_fetched_at,
+                &mut transition_chitchat,
+                pack,
+                now,
+            );
+            render_transition_floor(
+                &to_scene,
+                to_ctx,
+                to_buf,
+                to_meta,
+                buf_w,
+                buf_h,
+                to_active_pet,
+                to_pet_kind,
+                self.theme,
+                &self.coffee_holders,
+                &self.coffee_fetched_at,
+                &mut transition_chitchat,
+                pack,
+                now,
+            );
 
             // Compute y-offsets for vertical slide with divider gap.
             // t applies to total travel = screen_height + divider_height
@@ -368,6 +373,11 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             let theme = self.theme;
             let theme_picker = self.theme_picker;
             let version_popup = self.version_popup;
+            // Floor label tracks the destination floor for the duration of the
+            // slide so the per-floor agent count in the footer matches the
+            // label (otherwise users see "F1/3 ... 5 agents" with floor 2's
+            // count for ~400 ms).
+            let transition_floor_info = make_floor_info(to_floor);
 
             self.terminal.draw(|f| {
                 let actual_full = f.area();
@@ -377,7 +387,13 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                     width: actual_full.width,
                     height: actual_full.height.saturating_sub(1),
                 };
-                crate::tui::renderer::paint_footer(f, scene, actual_full, theme, floor_info);
+                crate::tui::renderer::paint_footer(
+                    f,
+                    &to_scene,
+                    actual_full,
+                    theme,
+                    transition_floor_info,
+                );
                 flush_buffer_to_term_at_offset(f, from_buf, actual_scene, from_offset);
                 flush_buffer_to_term_at_offset(f, to_buf, actual_scene, to_offset);
 
@@ -455,4 +471,50 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         }
         result.map(|_| ())
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_transition_floor(
+    scene: &SceneState,
+    fctx: &mut FloorCtx,
+    buf: &mut RgbBuffer,
+    floor_meta: FloorMeta,
+    buf_w: u16,
+    buf_h: u16,
+    active_pet: Option<&PetState>,
+    floor_pet_kind: Option<PetKind>,
+    theme: &'static crate::tui::theme::Theme,
+    coffee_holders: &std::collections::HashSet<pixtuoid_core::AgentId>,
+    coffee_fetched_at: &std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
+    chitchat_state: &mut std::collections::HashMap<
+        (usize, usize),
+        crate::tui::chitchat::ActiveChitchat,
+    >,
+    pack: &Pack,
+    now: SystemTime,
+) {
+    let Some(layout) =
+        Layout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, floor_meta.floor_seed)
+    else {
+        return;
+    };
+    fctx.router.set_preferred_zone(layout.corridor);
+    let _ = render_to_rgb_buffer(&mut PixelCtx {
+        scene,
+        layout: &layout,
+        pack,
+        now,
+        buf,
+        cache: &mut fctx.cache,
+        router: &mut fctx.router,
+        overlay: &mut fctx.overlay,
+        history: &mut fctx.history,
+        theme,
+        floor: floor_meta,
+        active_pet,
+        floor_pet_kind,
+        chitchat_state,
+        coffee_holders,
+        coffee_fetched_at,
+    });
 }

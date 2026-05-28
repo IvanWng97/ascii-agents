@@ -256,10 +256,74 @@ mod tests {
         insta::assert_snapshot!(line);
     }
 
+    fn fi(
+        current: usize,
+        total_floors: usize,
+        total_agents: usize,
+    ) -> crate::tui::renderer::FloorInfo {
+        crate::tui::renderer::FloorInfo {
+            current,
+            total_floors,
+            total_agents,
+        }
+    }
+
     #[test]
     fn footer_with_floor_info() {
         let s = scene_of(vec![idle("a"), idle("b")]);
-        let line = build_status_summary(&s, 120, Some((2, 3)));
+        let line = build_status_summary(&s, 120, Some(fi(2, 3, 5)));
         insta::assert_snapshot!(line);
+    }
+
+    // Direct assertions for count_str — snapshot tests alone can mask
+    // regressions because they're easy to ratify in `cargo insta review`.
+
+    #[test]
+    fn count_str_single_floor_shows_bare_n() {
+        let s = scene_of(vec![idle("a"), idle("b")]);
+        let line = build_status_summary(&s, 120, None);
+        assert!(line.contains(" 2 agents "), "got: {line}");
+        assert!(
+            !line.contains("2/"),
+            "should not show slash on single floor"
+        );
+    }
+
+    #[test]
+    fn count_str_multi_floor_shows_n_slash_total() {
+        let s = scene_of(vec![idle("a"), idle("b")]);
+        let line = build_status_summary(&s, 120, Some(fi(2, 3, 5)));
+        assert!(line.contains(" 2/5 agents "), "got: {line}");
+    }
+
+    #[test]
+    fn count_str_multi_floor_shows_slash_even_when_total_equals_n() {
+        // All agents happen to be on the visible floor — still show "/n"
+        // to signal the multi-floor context.
+        let s = scene_of(vec![idle("a"), idle("b")]);
+        let line = build_status_summary(&s, 120, Some(fi(1, 3, 2)));
+        assert!(line.contains(" 2/2 agents "), "got: {line}");
+    }
+
+    #[test]
+    fn count_str_empty_floor_still_shows_total() {
+        // The whole point of `total_agents`: when the current floor is
+        // empty but other floors have agents, the footer must signal that.
+        let s = scene_of(vec![]);
+        let line = build_status_summary(&s, 120, Some(fi(2, 3, 5)));
+        assert!(line.contains(" 0/5 agents "), "got: {line}");
+    }
+
+    #[test]
+    fn count_str_narrow_tier_uses_bare_n() {
+        // "5/12a" is ambiguous at narrow widths; medium/min tiers must
+        // drop the slash form regardless of multi-floor status.
+        let s = scene_of(vec![idle("a"), idle("b"), idle("c")]);
+        let line = build_status_summary(&s, 60, Some(fi(1, 3, 10)));
+        assert!(
+            !line.contains("3/10"),
+            "medium tier should not show slash: {line}"
+        );
+        assert!(line.contains("3a"), "got: {line}");
     }
 }

@@ -47,6 +47,18 @@ pub(super) use crate::tui::widgets::{
 
 pub use crate::tui::pet::PetState;
 
+/// Multi-floor display state. Combines the navigation breadcrumb
+/// (current/total) with the global agent count so a renderer never sees
+/// one without the other.
+#[derive(Debug, Clone, Copy)]
+pub struct FloorInfo {
+    /// 1-indexed current floor for display (e.g. "F2/3").
+    pub current: usize,
+    pub total_floors: usize,
+    /// Total agents across all floors. Used for the footer's `n/total`.
+    pub total_agents: usize,
+}
+
 /// Mutable per-frame render state, borrowed from `TuiRenderer`. Replaces
 /// the 14-parameter `draw_scene` signature with a single struct pass.
 pub struct DrawCtx<'a> {
@@ -60,7 +72,11 @@ pub struct DrawCtx<'a> {
     pub ticker: &'a TickerQueue,
     pub theme: &'a crate::tui::theme::Theme,
     pub theme_picker: Option<usize>,
-    pub floor_info: Option<(usize, usize)>,
+    /// Multi-floor display state. `Some` iff there's more than one floor.
+    /// Carries both the navigation breadcrumb (`current/total_floors`) and
+    /// the system-wide agent count so the footer can render `n/total` and
+    /// the elevator indicator can highlight the active floor.
+    pub floor_info: Option<FloorInfo>,
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a PetState>,
     pub last_pet_pos: Option<(Point, &'static str, PetKind)>,
@@ -255,9 +271,9 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
             theme,
         );
         paint_chitchat_bubbles(f, chitchat_bubbles, actual_scene, theme);
-        paint_wall_display(f, scene, actual_scene, now, ticker, theme, floor_info);
+        paint_wall_display(f, scene, actual_scene, now, ticker, theme);
         if let Some(door) = layout.door {
-            let (current, _) = floor_info.unwrap_or((1, 1));
+            let current = floor_info.map(|fi| fi.current).unwrap_or(1);
             paint_elevator_indicator(f, door, current, actual_scene, theme);
         }
         let tooltip_agent = hovered.or(pinned_agent);
