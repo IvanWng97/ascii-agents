@@ -38,6 +38,12 @@ Running multiple AI agents in the terminal is like managing a sweatshop you can'
 
 **pixtuoid** puts them all in a tiny pixel-art office you can watch from above. A little bit *Black Mirror*, a little bit *The Sims* — and somehow the most intuitive multi-agent dashboard you'll ever use.
 
+## Who's it for?
+
+- You're running 3+ AI coding agents and losing track of who's stuck on what.
+- You want a glanceable activity signal without tailing logs.
+- You think coding agents should have a vibe.
+
 ## Quick Start
 
 ```bash
@@ -190,9 +196,10 @@ Three Rust crates:
 
 </details>
 
-## Migrating from ascii-agents (v0.3.0 → v0.4.0)
+<details>
+<summary><strong>Migrating from <code>ascii-agents</code> (v0.3.x → v0.4.0)</strong> — rename, hooks, config paths</summary>
 
-**v0.4.0 renames the project from `ascii-agents` to `pixtuoid`** — pix(el) + tu(i) + (agent-)oid.
+**v0.4.0 renamed the project from `ascii-agents` to `pixtuoid`.**
 
 ### What changed
 
@@ -226,6 +233,8 @@ Three Rust crates:
    ```
 
 > **GitHub links:** The old `IvanWng97/ascii-agents` URL automatically redirects to `IvanWng97/pixtuoid`. Existing bookmarks and stars carry over.
+
+</details>
 
 ## Contributing
 
