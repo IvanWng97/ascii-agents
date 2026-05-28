@@ -75,10 +75,16 @@ pub fn load(path: &Path) -> AppConfig {
     }
 }
 
-pub fn save(path: &Path, theme_name: &str) -> Result<()> {
-    // Resolve symlinks so atomic rename targets the real file,
-    // not the symlink itself (critical for stow-managed configs).
-    // canonicalize handles relative symlink targets correctly.
+/// Load-modify-write the config atomically. `mutate` is called on the
+/// loaded (or default) config to apply changes; the resulting struct is
+/// serialized and atomically renamed into place.
+///
+/// Resolves symlinks so the atomic rename targets the real file, not the
+/// symlink itself (critical for stow-managed configs).
+fn update_config<F>(path: &Path, mutate: F) -> Result<()>
+where
+    F: FnOnce(&mut AppConfig),
+{
     let real_path = crate::install::io::resolve_symlink(path);
     if let Some(parent) = real_path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -93,7 +99,7 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
     } else {
         AppConfig::default()
     };
-    cfg.theme = Some(theme_name.to_string());
+    mutate(&mut cfg);
 
     let contents = toml::to_string_pretty(&cfg)?;
     let tmp = real_path.with_extension("toml.tmp");
@@ -104,30 +110,14 @@ pub fn save(path: &Path, theme_name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn save(path: &Path, theme_name: &str) -> Result<()> {
+    update_config(path, |cfg| cfg.theme = Some(theme_name.to_string()))
+}
+
 pub fn save_version(path: &Path, version: &str) -> Result<()> {
-    let real_path = crate::install::io::resolve_symlink(path);
-    if let Some(parent) = real_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let lock_path = real_path.with_extension("toml.lock");
-    let lock_file = std::fs::File::create(&lock_path)?;
-    fs2::FileExt::try_lock_exclusive(&lock_file)
-        .map_err(|e| anyhow::anyhow!("config lock held by another process: {e}"))?;
-
-    let mut cfg = if real_path.exists() {
-        load(&real_path)
-    } else {
-        AppConfig::default()
-    };
-    cfg.last_seen_version = Some(version.to_string());
-
-    let contents = toml::to_string_pretty(&cfg)?;
-    let tmp = real_path.with_extension("toml.tmp");
-    std::fs::write(&tmp, &contents)?;
-    std::fs::rename(&tmp, &real_path)?;
-    fs2::FileExt::unlock(&lock_file).ok();
-    let _ = std::fs::remove_file(&lock_path);
-    Ok(())
+    update_config(path, |cfg| {
+        cfg.last_seen_version = Some(version.to_string())
+    })
 }
 
 pub fn resolve_theme(config: &AppConfig, cli_theme: Option<String>) -> String {

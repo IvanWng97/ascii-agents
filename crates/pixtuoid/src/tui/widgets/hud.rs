@@ -288,10 +288,13 @@ pub(in crate::tui) fn paint_version_popup(
     use ratatui::text::{Line, Span as TSpan};
     use ratatui::widgets::{Block, Borders, Clear};
 
-    let w = 54u16;
+    let w = 54u16.min(bounds.width);
     let h = (notes.len() as u16 + 4).min(bounds.height);
-    let x = bounds.width.saturating_sub(w) / 2;
-    let y = bounds.height.saturating_sub(h) / 2;
+    if w < 4 || h < 3 {
+        return;
+    }
+    let x = bounds.x + bounds.width.saturating_sub(w) / 2;
+    let y = bounds.y + bounds.height.saturating_sub(h) / 2;
     let area = Rect {
         x,
         y,

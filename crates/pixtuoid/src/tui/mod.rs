@@ -41,7 +41,14 @@ pub async fn run_tui(
         let current_ver = env!("CARGO_PKG_VERSION");
         let cfg = crate::config::load(&config_path);
         match &cfg.last_seen_version {
-            None => crate::version::release_notes(current_ver).is_some(),
+            None => {
+                // Fresh install — silently mark this version as seen so
+                // the popup only ever fires on actual upgrades.
+                if let Err(e) = crate::config::save_version(&config_path, current_ver) {
+                    tracing::warn!("failed to persist initial version: {e}");
+                }
+                false
+            }
             Some(last) => {
                 crate::version::is_newer_version(current_ver, last)
                     && crate::version::release_notes(current_ver).is_some()
@@ -113,8 +120,8 @@ pub async fn run_tui(
                 match event::read()? {
                     Event::Key(k) => {
                         if version_popup {
-                            match k.code {
-                                KeyCode::Esc | KeyCode::Enter => {
+                            match (k.code, k.modifiers) {
+                                (KeyCode::Esc, _) | (KeyCode::Enter, _) => {
                                     version_popup = false;
                                     if let Err(e) = crate::config::save_version(
                                         &config_path,
@@ -122,6 +129,10 @@ pub async fn run_tui(
                                     ) {
                                         tracing::warn!("failed to persist version: {e}");
                                     }
+                                }
+                                (KeyCode::Char('q'), _)
+                                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                                    quit = true;
                                 }
                                 _ => {}
                             }
@@ -187,6 +198,11 @@ pub async fn run_tui(
                                 _ => {}
                             }
                         }
+                    }
+                    Event::Mouse(m) if version_popup => {
+                        // Swallow all mouse events while popup is visible so
+                        // clicks don't hit the scene behind it.
+                        let _ = m;
                     }
                     Event::Mouse(m) => match m.kind {
                         MouseEventKind::Moved | MouseEventKind::Drag(_) => {
