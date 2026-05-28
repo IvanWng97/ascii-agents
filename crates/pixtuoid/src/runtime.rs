@@ -184,17 +184,63 @@ async fn headless_loop(mut scene_rx: SceneRx) -> Result<()> {
 fn compute_boot_capacity() -> usize {
     crossterm::terminal::size()
         .ok()
-        .and_then(|(cols, rows)| {
-            let buf_h = rows.saturating_sub(1) * 2;
-            pixtuoid_core::layout::SceneLayout::compute_with_seed(
-                cols,
-                buf_h,
-                pixtuoid_core::layout::MAX_VISIBLE_DESKS,
-                0,
-            )
-            .map(|l| l.home_desks.len())
-        })
+        .map(|(cols, rows)| capacity_for_terminal(cols, rows))
         .unwrap_or(FALLBACK_DESKS)
+}
+
+pub(crate) fn capacity_for_terminal(cols: u16, rows: u16) -> usize {
+    let buf_h = rows.saturating_sub(1) * 2;
+    pixtuoid_core::layout::SceneLayout::compute_with_seed(
+        cols,
+        buf_h,
+        pixtuoid_core::layout::MAX_VISIBLE_DESKS,
+        0,
+    )
+    .map(|l| l.home_desks.len())
+    .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capacity_for_normal_terminal() {
+        let cap = capacity_for_terminal(192, 48);
+        assert!(cap > 0 && cap <= pixtuoid_core::layout::MAX_VISIBLE_DESKS);
+    }
+
+    #[test]
+    fn capacity_for_small_terminal() {
+        let cap = capacity_for_terminal(80, 35);
+        assert!(cap > 0, "80x35 should fit at least one desk");
+    }
+
+    #[test]
+    fn capacity_for_tiny_terminal_returns_zero() {
+        assert_eq!(capacity_for_terminal(10, 10), 0);
+    }
+
+    #[test]
+    fn capacity_for_zero_rows_returns_zero() {
+        assert_eq!(capacity_for_terminal(192, 0), 0);
+    }
+
+    #[test]
+    fn capacity_matches_renderer_formula() {
+        let cols: u16 = 160;
+        let rows: u16 = 50;
+        let buf_h = rows.saturating_sub(1) * 2;
+        let expected = pixtuoid_core::layout::SceneLayout::compute_with_seed(
+            cols,
+            buf_h,
+            pixtuoid_core::layout::MAX_VISIBLE_DESKS,
+            0,
+        )
+        .map(|l| l.home_desks.len())
+        .unwrap_or(0);
+        assert_eq!(capacity_for_terminal(cols, rows), expected);
+    }
 }
 
 fn summarize(scene: &SceneState) -> String {
