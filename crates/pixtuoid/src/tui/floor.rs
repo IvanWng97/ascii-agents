@@ -6,7 +6,7 @@
 //! and the per-floor rendering context (`FloorCtx`) so each floor owns its
 //! own router, overlay, pose history, and frame cache.
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use pixtuoid_core::state::{AgentSlot, SceneState};
 use pixtuoid_core::walkable::OccupancyOverlay;
@@ -181,12 +181,12 @@ impl FloorTransition {
 
     /// Progress ratio 0.0 → 1.0 with ease-in-out curve.
     pub fn t(&self, now: SystemTime) -> f32 {
-        let elapsed = now
-            .duration_since(self.started_at)
-            .unwrap_or(Duration::ZERO)
-            .as_millis() as f32;
-        let linear = (elapsed / self.duration_ms as f32).clamp(0.0, 1.0);
-        ease_out(linear)
+        crate::tui::anim::eased_progress(
+            self.started_at,
+            self.duration_ms as u32,
+            crate::tui::anim::Easing::EaseInOutCubic,
+            now,
+        )
     }
 
     pub fn is_done(&self, now: SystemTime) -> bool {
@@ -197,10 +197,6 @@ impl FloorTransition {
 // ---------------------------------------------------------------------------
 // Pure arithmetic helpers
 // ---------------------------------------------------------------------------
-
-fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t) * (1.0 - t)
-}
 
 /// How many floors are needed to seat all agents?
 pub fn num_floors(scene: &SceneState) -> usize {
