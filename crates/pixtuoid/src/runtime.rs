@@ -86,17 +86,15 @@ async fn run_async(
     let ag_src = AntigravitySource::default_paths();
 
     let (tx, rx) = mpsc::channel::<(Transport, AgentEvent)>(256);
-    let boot = desk_cap.unwrap_or_else(|| {
-        if headless {
-            FALLBACK_DESKS
-        } else {
-            compute_boot_capacity()
-        }
-    });
-    let (scene_tx, scene_rx) = watch::channel(Arc::new(SceneState::uniform(boot)));
+    let boot_caps: [usize; MAX_FLOORS] = match desk_cap {
+        Some(cap) => [cap; MAX_FLOORS],
+        None if headless => [FALLBACK_DESKS; MAX_FLOORS],
+        None => compute_boot_capacities(),
+    };
+    let (scene_tx, scene_rx) = watch::channel(Arc::new(SceneState::new(boot_caps)));
 
     let floor_caps: Arc<[AtomicUsize; MAX_FLOORS]> =
-        Arc::new(std::array::from_fn(|_| AtomicUsize::new(boot)));
+        Arc::new(std::array::from_fn(|i| AtomicUsize::new(boot_caps[i])));
 
     tokio::spawn(reducer_task(rx, scene_tx, Arc::clone(&floor_caps)));
 
@@ -127,8 +125,9 @@ async fn reducer_task(
     floor_caps: Arc<[AtomicUsize; MAX_FLOORS]>,
 ) {
     let mut reducer = Reducer::new();
-    let initial_cap = floor_caps[0].load(Ordering::Relaxed);
-    let mut scene = SceneState::uniform(initial_cap);
+    let initial_caps: [usize; MAX_FLOORS] =
+        std::array::from_fn(|i| floor_caps[i].load(Ordering::Relaxed));
+    let mut scene = SceneState::new(initial_caps);
     // 1-Hz tick so exit-grace sweeps run even when no new events arrive.
     let mut sweep_interval = tokio::time::interval(Duration::from_secs(1));
     sweep_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -181,20 +180,38 @@ async fn headless_loop(mut scene_rx: SceneRx) -> Result<()> {
     }
 }
 
-fn compute_boot_capacity() -> usize {
-    crossterm::terminal::size()
-        .ok()
-        .map(|(cols, rows)| capacity_for_terminal(cols, rows))
-        .unwrap_or(FALLBACK_DESKS)
+fn compute_boot_capacities() -> [usize; MAX_FLOORS] {
+    match crossterm::terminal::size().ok() {
+        Some((cols, rows)) => boot_capacities_for(cols, rows),
+        None => [FALLBACK_DESKS; MAX_FLOORS],
+    }
 }
 
-pub(crate) fn capacity_for_terminal(cols: u16, rows: u16) -> usize {
+/// Per-floor boot capacities derived from the real terminal size. Each floor
+/// uses its own seed, so different layout variants can yield different desk
+/// counts. When a floor's layout rejects the terminal (e.g. too small), fall
+/// back to `FALLBACK_DESKS` for that floor so the reducer can still seat
+/// agents — they may render off-grid on the tiny terminal, but won't be
+/// silently dropped during the boot race before the first TUI frame.
+pub(crate) fn boot_capacities_for(cols: u16, rows: u16) -> [usize; MAX_FLOORS] {
+    std::array::from_fn(|i| {
+        let seed = (i as u64).wrapping_mul(crate::tui::floor::FLOOR_SEED_MULTIPLIER);
+        let cap = capacity_for_terminal(cols, rows, seed);
+        if cap == 0 {
+            FALLBACK_DESKS
+        } else {
+            cap
+        }
+    })
+}
+
+pub(crate) fn capacity_for_terminal(cols: u16, rows: u16, floor_seed: u64) -> usize {
     let buf_h = rows.saturating_sub(1) * 2;
     pixtuoid_core::layout::SceneLayout::compute_with_seed(
         cols,
         buf_h,
         pixtuoid_core::layout::MAX_VISIBLE_DESKS,
-        0,
+        floor_seed,
     )
     .map(|l| l.home_desks.len())
     .unwrap_or(0)
@@ -222,26 +239,30 @@ fn summarize(scene: &SceneState) -> String {
 mod tests {
     use super::*;
 
+    fn floor_seed(i: u64) -> u64 {
+        i.wrapping_mul(crate::tui::floor::FLOOR_SEED_MULTIPLIER)
+    }
+
     #[test]
     fn capacity_for_normal_terminal() {
-        let cap = capacity_for_terminal(192, 48);
+        let cap = capacity_for_terminal(192, 48, 0);
         assert!(cap > 0 && cap <= pixtuoid_core::layout::MAX_VISIBLE_DESKS);
     }
 
     #[test]
     fn capacity_for_small_terminal() {
-        let cap = capacity_for_terminal(80, 35);
+        let cap = capacity_for_terminal(80, 35, 0);
         assert!(cap > 0, "80x35 should fit at least one desk");
     }
 
     #[test]
     fn capacity_for_tiny_terminal_returns_zero() {
-        assert_eq!(capacity_for_terminal(10, 10), 0);
+        assert_eq!(capacity_for_terminal(10, 10, 0), 0);
     }
 
     #[test]
     fn capacity_for_zero_rows_returns_zero() {
-        assert_eq!(capacity_for_terminal(192, 0), 0);
+        assert_eq!(capacity_for_terminal(192, 0, 0), 0);
     }
 
     #[test]
@@ -257,6 +278,55 @@ mod tests {
         )
         .map(|l| l.home_desks.len())
         .unwrap_or(0);
-        assert_eq!(capacity_for_terminal(cols, rows), expected);
+        assert_eq!(capacity_for_terminal(cols, rows, 0), expected);
+    }
+
+    // Regression for the pre-0.4.1 bug where boot capacity used floor-0's seed
+    // for all floors. Different seeds select different layout variants (mid_x
+    // splits {28%, 18%, 22%, 35%, 22%}) which can yield different desk counts
+    // at the same terminal size; capacity_for_terminal must respect the seed.
+    #[test]
+    fn seed_can_produce_distinct_capacities() {
+        let mut found = false;
+        'outer: for cols in [120u16, 140, 160, 180, 200, 220, 240] {
+            for rows in [30u16, 36, 40, 48, 56, 64] {
+                let mut unique = std::collections::HashSet::new();
+                for i in 0..MAX_FLOORS as u64 {
+                    unique.insert(capacity_for_terminal(cols, rows, floor_seed(i)));
+                }
+                if unique.len() > 1 {
+                    found = true;
+                    break 'outer;
+                }
+            }
+        }
+        assert!(
+            found,
+            "expected at least one terminal size in the swept range where \
+             per-floor seeds produce distinct capacities"
+        );
+    }
+
+    #[test]
+    fn boot_capacities_uses_each_floor_seed() {
+        let caps = boot_capacities_for(192, 48);
+        let expected: [usize; MAX_FLOORS] = std::array::from_fn(|i| {
+            let c = capacity_for_terminal(192, 48, floor_seed(i as u64));
+            if c == 0 {
+                FALLBACK_DESKS
+            } else {
+                c
+            }
+        });
+        assert_eq!(caps, expected);
+    }
+
+    // Regression for the boot-race window where SessionStart events fired
+    // between SourceManager spawn and the first TUI frame's fetch_max were
+    // silently dropped because boot=0 left every floor capacity at zero.
+    #[test]
+    fn boot_capacities_falls_back_to_default_on_tiny_terminal() {
+        let caps = boot_capacities_for(10, 10);
+        assert_eq!(caps, [FALLBACK_DESKS; MAX_FLOORS]);
     }
 }
