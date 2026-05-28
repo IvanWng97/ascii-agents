@@ -66,12 +66,14 @@ pub async fn run_tui(
             renderer.set_theme_picker(theme_picker);
             renderer.render(&snapshot, &pack, now)?;
 
-            // Auto-compute per-floor desk capacity. Each floor uses its
-            // own layout seed, so different variants may have different
-            // desk counts. fetch_max ensures capacity only grows (monotone)
-            // to prevent orphaning agents already assigned to higher desks.
-            // If the user set a desk cap (config or CLI), each floor is
-            // clamped to that value.
+            // Auto-compute per-floor desk capacity from the current
+            // terminal dimensions. Each floor uses its own layout seed, so
+            // different variants may have different desk counts. fetch_max
+            // ensures capacity only grows (monotone) to prevent shifting
+            // cumulative offsets that would remap agents on floor 1+ to
+            // wrong desk positions. On terminal shrink, agents beyond the
+            // layout's capacity become invisible but stay alive; they
+            // reappear when the terminal grows back.
             if let Some(layout) = renderer.cached_layout() {
                 use pixtuoid_core::layout::{SceneLayout, MAX_VISIBLE_DESKS};
                 use pixtuoid_core::state::MAX_FLOORS;
@@ -83,7 +85,7 @@ pub async fn run_tui(
                     let mut capacity =
                         SceneLayout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, seed)
                             .map(|l| l.home_desks.len())
-                            .unwrap_or(MAX_VISIBLE_DESKS);
+                            .unwrap_or(0);
                     if let Some(cap) = desk_cap {
                         capacity = capacity.min(cap);
                     }

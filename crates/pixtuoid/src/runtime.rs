@@ -23,9 +23,10 @@ use tokio::sync::{mpsc, watch};
 ///   - swapping in a v2 daemon means publishing the same Arc over a socket
 pub type SceneRx = watch::Receiver<Arc<SceneState>>;
 
-/// Bootstrap desk capacity — used only before the first TUI frame
-/// auto-computes the real per-floor capacity from terminal dimensions.
-const BOOTSTRAP_DESKS: usize = 16;
+/// Fallback desk capacity when the terminal cannot be queried (e.g.
+/// headless mode). The real capacity is computed from terminal size in
+/// `compute_boot_capacity` before the first TUI frame.
+const FALLBACK_DESKS: usize = 16;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -85,7 +86,13 @@ async fn run_async(
     let ag_src = AntigravitySource::default_paths();
 
     let (tx, rx) = mpsc::channel::<(Transport, AgentEvent)>(256);
-    let boot = desk_cap.unwrap_or(BOOTSTRAP_DESKS);
+    let boot = desk_cap.unwrap_or_else(|| {
+        if headless {
+            FALLBACK_DESKS
+        } else {
+            compute_boot_capacity()
+        }
+    });
     let (scene_tx, scene_rx) = watch::channel(Arc::new(SceneState::uniform(boot)));
 
     let floor_caps: Arc<[AtomicUsize; MAX_FLOORS]> =
@@ -172,6 +179,22 @@ async fn headless_loop(mut scene_rx: SceneRx) -> Result<()> {
             }
         }
     }
+}
+
+fn compute_boot_capacity() -> usize {
+    crossterm::terminal::size()
+        .ok()
+        .and_then(|(cols, rows)| {
+            let buf_h = rows.saturating_sub(1) * 2;
+            pixtuoid_core::layout::SceneLayout::compute_with_seed(
+                cols,
+                buf_h,
+                pixtuoid_core::layout::MAX_VISIBLE_DESKS,
+                0,
+            )
+            .map(|l| l.home_desks.len())
+        })
+        .unwrap_or(FALLBACK_DESKS)
 }
 
 fn summarize(scene: &SceneState) -> String {
