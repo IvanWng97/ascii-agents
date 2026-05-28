@@ -15,7 +15,6 @@ pub enum Easing {
     Linear,
     EaseOutCubic,
     EaseInOutCubic,
-    EaseOutExpo,
     EaseInQuad,
 }
 
@@ -32,13 +31,6 @@ impl Easing {
                     4.0 * t.powi(3)
                 } else {
                     1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-                }
-            }
-            Easing::EaseOutExpo => {
-                if t >= 1.0 {
-                    1.0
-                } else {
-                    1.0 - 2.0_f32.powf(-10.0 * t)
                 }
             }
             Easing::EaseInQuad => t * t,
@@ -101,13 +93,6 @@ mod tests {
     }
 
     #[test]
-    fn ease_out_expo_endpoints() {
-        assert!(approx_eq(Easing::EaseOutExpo.apply(0.0), 0.0));
-        assert!(approx_eq(Easing::EaseOutExpo.apply(1.0), 1.0));
-        assert!(Easing::EaseOutExpo.apply(0.5) > 0.9);
-    }
-
-    #[test]
     fn ease_in_quad_endpoints() {
         assert!(approx_eq(Easing::EaseInQuad.apply(0.0), 0.0));
         assert!(approx_eq(Easing::EaseInQuad.apply(1.0), 1.0));
@@ -120,7 +105,6 @@ mod tests {
             Easing::Linear,
             Easing::EaseOutCubic,
             Easing::EaseInOutCubic,
-            Easing::EaseOutExpo,
             Easing::EaseInQuad,
         ] {
             let mut prev = -1.0_f32;

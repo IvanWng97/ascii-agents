@@ -196,7 +196,7 @@ fn main() -> Result<()> {
         coffee_holders: &std::collections::HashSet::new(),
         coffee_fetched_at: &std::collections::HashMap::new(),
         new_coffee_carriers: Vec::new(),
-        popup_scale: 1.0,
+        popup_scale: 0.0,
     };
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx)?;
 
@@ -654,7 +654,7 @@ fn save_as_gif(
             coffee_holders: &std::collections::HashSet::new(),
             coffee_fetched_at: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
-            popup_scale: 1.0,
+            popup_scale: 0.0,
         };
         draw_scene(term, scene, pack, now, &mut draw_ctx)?;
 

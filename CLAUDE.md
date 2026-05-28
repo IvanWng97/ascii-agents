@@ -33,6 +33,7 @@ crates/
 │   ├── runtime.rs          tokio task wiring (source ── (Transport, AgentEvent) ──► reducer ──► renderer)
 │   ├── install/            settings.json merge, atomic write, advisory lock, stow-symlink safe
 │   └── tui/                ratatui App + TuiRenderer (Renderer trait impl)
+│       ├── anim.rs         centralized easing curves + eased_progress(start, duration_ms, easing, now) free function — used by floor slide, A* walk path ease, and version popup entrance/dismissal animations
 │       ├── renderer.rs     draw_scene orchestrator (DrawCtx struct), half-block flush, terminal lifecycle
 │       ├── widgets/        ratatui widget paint fns, split into sub-modules:
 │       │                   mod.rs (TickerQueue, shared helpers), hud.rs (footer, wall display,
