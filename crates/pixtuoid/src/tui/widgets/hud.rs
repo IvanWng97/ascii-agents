@@ -288,8 +288,11 @@ pub(in crate::tui) fn paint_version_popup(
     use ratatui::text::{Line, Span as TSpan};
     use ratatui::widgets::{Block, Borders, Clear};
 
-    let w = 54u16.min(bounds.width);
-    let h = (notes.len() as u16 + 4).min(bounds.height);
+    let release_url = "https://github.com/IvanWng97/pixtuoid/releases";
+    // Compute width needed: borders + "  More details: " (16) + URL + margin
+    let needed_w = 2 + 16 + release_url.len() as u16 + 2;
+    let w = needed_w.min(bounds.width);
+    let h = (notes.len() as u16 + 6).min(bounds.height);
     if w < 4 || h < 3 {
         return;
     }
@@ -303,7 +306,7 @@ pub(in crate::tui) fn paint_version_popup(
     };
     f.render_widget(Clear, area);
 
-    let mut items: Vec<Line> = Vec::with_capacity(notes.len() + 1);
+    let mut items: Vec<Line> = Vec::with_capacity(notes.len() + 3);
     items.push(Line::from(""));
     for note in notes {
         items.push(Line::from(TSpan::styled(
@@ -311,8 +314,21 @@ pub(in crate::tui) fn paint_version_popup(
             Style::default().fg(to_color(theme.ui.label_idle)),
         )));
     }
+    items.push(Line::from(""));
+    items.push(Line::from(vec![
+        TSpan::styled(
+            "  More details: ",
+            Style::default().fg(to_color(theme.ui.label_idle)),
+        ),
+        TSpan::styled(
+            release_url.to_string(),
+            Style::default()
+                .fg(to_color(theme.ui.neon_brand))
+                .add_modifier(Modifier::UNDERLINED),
+        ),
+    ]));
 
-    let title = format!(" What's new in v{version} \u{2014} Esc/Enter to close ");
+    let title = format!(" What's new in v{version} \u{2014} Enter to close ");
     let block = Block::default()
         .title(TSpan::styled(
             title,
@@ -325,6 +341,33 @@ pub(in crate::tui) fn paint_version_popup(
         .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
 
     f.render_widget(Paragraph::new(items).block(block), area);
+}
+
+/// Computes the screen rect of the clickable URL inside the version popup.
+/// Returns None if the popup would be too small to render. Mirrors the
+/// geometry inside `paint_version_popup` (kept in sync by sharing the same
+/// width calculation).
+pub(in crate::tui) fn version_popup_url_rect(notes_len: usize, bounds: Rect) -> Option<Rect> {
+    let release_url = "https://github.com/IvanWng97/pixtuoid/releases";
+    let needed_w = 2 + 16 + release_url.len() as u16 + 2;
+    let w = needed_w.min(bounds.width);
+    let h = (notes_len as u16 + 6).min(bounds.height);
+    if w < 4 || h < 3 {
+        return None;
+    }
+    let popup_x = bounds.x + bounds.width.saturating_sub(w) / 2;
+    let popup_y = bounds.y + bounds.height.saturating_sub(h) / 2;
+    // URL line layout inside popup (Block with Borders::ALL has 1-cell border):
+    //   y = popup_y + 1 (border) + 1 (blank) + notes_len (notes) + 1 (blank) = popup_y + notes_len + 3
+    //   x = popup_x + 1 (border) + 16 ("  More details: ") = popup_x + 17
+    let url_y = popup_y + notes_len as u16 + 3;
+    let url_x = popup_x + 17;
+    Some(Rect {
+        x: url_x,
+        y: url_y,
+        width: release_url.len() as u16,
+        height: 1,
+    })
 }
 
 pub(in crate::tui) fn paint_elevator_indicator(

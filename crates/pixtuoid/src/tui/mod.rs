@@ -40,20 +40,22 @@ pub async fn run_tui(
     let mut version_popup = {
         let current_ver = env!("CARGO_PKG_VERSION");
         let cfg = crate::config::load(&config_path);
-        match &cfg.last_seen_version {
-            None => {
-                // Fresh install — silently mark this version as seen so
-                // the popup only ever fires on actual upgrades.
-                if let Err(e) = crate::config::save_version(&config_path, current_ver) {
-                    tracing::warn!("failed to persist initial version: {e}");
-                }
-                false
-            }
+        let should_show = match &cfg.last_seen_version {
+            None => false,
             Some(last) => {
                 crate::version::is_newer_version(current_ver, last)
                     && crate::version::release_notes(current_ver).is_some()
             }
+        };
+        // Persist the current version immediately so the popup shows at
+        // most once per upgrade, regardless of how the user exits this run
+        // (Enter to dismiss, Esc/q/Ctrl+C to quit, or terminal close).
+        if should_show || cfg.last_seen_version.is_none() {
+            if let Err(e) = crate::config::save_version(&config_path, current_ver) {
+                tracing::warn!("failed to persist version: {e}");
+            }
         }
+        should_show
     };
     let mut last_layout_sig: Option<(u16, u16)> = None;
     let mut paused = false;
@@ -121,16 +123,11 @@ pub async fn run_tui(
                     Event::Key(k) => {
                         if version_popup {
                             match (k.code, k.modifiers) {
-                                (KeyCode::Esc, _) | (KeyCode::Enter, _) => {
+                                (KeyCode::Enter, _) => {
                                     version_popup = false;
-                                    if let Err(e) = crate::config::save_version(
-                                        &config_path,
-                                        env!("CARGO_PKG_VERSION"),
-                                    ) {
-                                        tracing::warn!("failed to persist version: {e}");
-                                    }
                                 }
                                 (KeyCode::Char('q'), _)
+                                | (KeyCode::Esc, _)
                                 | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                                     quit = true;
                                 }
@@ -200,9 +197,36 @@ pub async fn run_tui(
                         }
                     }
                     Event::Mouse(m) if version_popup => {
-                        // Swallow all mouse events while popup is visible so
-                        // clicks don't hit the scene behind it.
-                        let _ = m;
+                        // While the popup is visible, only the URL link is
+                        // clickable; all other clicks are swallowed so they
+                        // don't fall through to the scene behind.
+                        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+                            if let Ok((cols, rows)) = crossterm::terminal::size() {
+                                let bounds = ratatui::layout::Rect {
+                                    x: 0,
+                                    y: 0,
+                                    width: cols,
+                                    height: rows,
+                                };
+                                let notes_len =
+                                    crate::version::release_notes(env!("CARGO_PKG_VERSION"))
+                                        .map(|n| n.len())
+                                        .unwrap_or(0);
+                                if let Some(rect) =
+                                    widgets::version_popup_url_rect(notes_len, bounds)
+                                {
+                                    if m.column >= rect.x
+                                        && m.column < rect.x + rect.width
+                                        && m.row >= rect.y
+                                        && m.row < rect.y + rect.height
+                                    {
+                                        let _ = open::that(
+                                            "https://github.com/IvanWng97/pixtuoid/releases",
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     Event::Mouse(m) => match m.kind {
                         MouseEventKind::Moved | MouseEventKind::Drag(_) => {
