@@ -106,7 +106,13 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
     }
 
     pub fn cancel_transition(&mut self) {
-        self.transition = None;
+        if let Some(tr) = self.transition.take() {
+            // Land on the destination floor: a resize-induced cancel should
+            // not silently revert a user-initiated navigation. Clamp against
+            // the current floor count in case to_floor is now stale.
+            let nf = self.floor_ctxs.len().max(1);
+            self.current_floor = tr.to_floor.min(nf - 1);
+        }
     }
 
     pub fn set_mouse_pos(&mut self, pos: Option<(u16, u16)>) {

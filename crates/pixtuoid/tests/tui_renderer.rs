@@ -179,3 +179,69 @@ fn tui_renderer_transition_paints_pets_and_coffee() {
         "transition buffer should have substantial paint (got {nonzero} non-black px)"
     );
 }
+
+/// Regression: a resize mid-slide previously left `current_floor` at
+/// `from_floor`, silently reverting a user-initiated navigation with no UI
+/// signal. `cancel_transition` must now land the user on `to_floor`.
+#[test]
+fn cancel_transition_lands_on_destination_floor() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_716_286_800);
+
+    let mut caps = [0usize; pixtuoid_core::state::MAX_FLOORS];
+    caps[0] = 8;
+    caps[1] = 8;
+    let mut scene = SceneState::new(caps);
+    for (i, name) in ["a", "b"].iter().enumerate() {
+        let id = AgentId::from_transcript_path(&format!("/demo/{name}.jsonl"));
+        scene.agents.insert(
+            id,
+            AgentSlot {
+                agent_id: id,
+                source: std::sync::Arc::from("claude-code"),
+                session_id: std::sync::Arc::from(format!("s-{i}").as_str()),
+                cwd: std::sync::Arc::from(PathBuf::from("/demo").as_path()),
+                label: std::sync::Arc::from(*name),
+                state: ActivityState::Idle,
+                state_started_at: now,
+                created_at: now - Duration::from_secs(60),
+                last_event_at: now - Duration::from_secs(60),
+                exiting_at: None,
+                pending_idle_at: None,
+                desk_index: i * 8,
+                floor_idx: i,
+                tool_call_count: 0,
+                active_ms: 0,
+                unknown_cwd: false,
+                parent_id: None,
+            },
+        );
+    }
+
+    let backend = TestBackend::new(96, 36);
+    let terminal = Terminal::new(backend).expect("terminal");
+    let mut renderer = TuiRenderer::new(
+        terminal,
+        &pixtuoid::tui::theme::NORMAL,
+        pixtuoid::tui::pet::PetKind::ALL.to_vec(),
+    );
+    let pack = load_sprite_pack(None).expect("pack");
+
+    renderer.render(&scene, &pack, now).expect("initial render");
+    assert_eq!(renderer.current_floor(), 0);
+
+    renderer.navigate_floor(1, now);
+    assert!(renderer.transition().is_some());
+    assert_eq!(
+        renderer.current_floor(),
+        0,
+        "current_floor stays at source until transition completes or cancels"
+    );
+
+    renderer.cancel_transition();
+    assert!(renderer.transition().is_none());
+    assert_eq!(
+        renderer.current_floor(),
+        1,
+        "cancel_transition should snap to the destination floor"
+    );
+}
