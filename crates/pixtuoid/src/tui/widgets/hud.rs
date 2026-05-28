@@ -363,10 +363,23 @@ pub(in crate::tui) fn version_popup_url_rect(notes_len: usize, bounds: Rect) -> 
     //   x = popup_x + 1 (border) + URL_PREFIX.len()
     let url_y = popup_y + notes_len as u16 + 3;
     let url_x = popup_x + 1 + URL_PREFIX.len() as u16;
+
+    // Clip against the popup's inner content area: when the painter clipped
+    // the envelope (narrow / short terminal), the URL rect must shrink too —
+    // otherwise clicks past the visible popup register as URL clicks.
+    let inner_right = popup_x + w - 1; // bottom-right border column (exclusive)
+    let inner_bottom = popup_y + h - 1; // bottom border row (exclusive)
+    if url_x >= inner_right || url_y >= inner_bottom {
+        return None;
+    }
+    let width = (VERSION_POPUP_URL.len() as u16).min(inner_right - url_x);
+    if width == 0 {
+        return None;
+    }
     Some(Rect {
         x: url_x,
         y: url_y,
-        width: VERSION_POPUP_URL.len() as u16,
+        width,
         height: 1,
     })
 }
@@ -401,5 +414,64 @@ pub(in crate::tui) fn paint_elevator_indicator(
             .bg(to_color(theme.ui.tooltip_bg))
             .add_modifier(Modifier::BOLD);
         f.render_widget(Paragraph::new(Line::from(Span::styled(label, style))), r);
+    }
+}
+
+#[cfg(test)]
+mod hud_tests {
+    use super::*;
+
+    fn full_bounds(w: u16, h: u16) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+        }
+    }
+
+    #[test]
+    fn url_rect_fits_inside_normal_popup() {
+        let rect = version_popup_url_rect(4, full_bounds(200, 60)).expect("should fit");
+        assert_eq!(rect.width, VERSION_POPUP_URL.len() as u16);
+        assert_eq!(rect.height, 1);
+    }
+
+    // Regression for the phantom-browser-launch bug: on a narrow terminal
+    // the painter clips the popup envelope, but the URL click rect used to
+    // extend past the visible popup's right edge, registering clicks on the
+    // scene behind as URL clicks. The rect must stay inside the envelope.
+    #[test]
+    fn url_rect_does_not_extend_past_clipped_popup_right_edge() {
+        let bounds = full_bounds(50, 30);
+        if let Some(rect) = version_popup_url_rect(4, bounds) {
+            let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
+            let w = needed_w.min(bounds.width);
+            let popup_x = bounds.width.saturating_sub(w) / 2;
+            let popup_inner_right = popup_x + w - 1;
+            assert!(
+                rect.x + rect.width <= popup_inner_right,
+                "url rect cols {}..{} extend past popup inner-right {}",
+                rect.x,
+                rect.x + rect.width,
+                popup_inner_right
+            );
+        }
+    }
+
+    // Regression for the off-screen URL row bug: on a too-short terminal,
+    // the painter clips the popup envelope vertically, and the URL row used
+    // to land on or below the clipped bottom border (where ratatui never
+    // paints it). The rect must return None instead.
+    #[test]
+    fn url_rect_returns_none_when_url_row_falls_outside_clipped_popup() {
+        // notes_len=4 → needed h=10. With bounds.height=8 the popup clips
+        // to h=8, leaving room for at most ~3 notes — the URL row at offset
+        // (notes_len + 3) = 7 lands on the bottom border.
+        let rect = version_popup_url_rect(4, full_bounds(200, 8));
+        assert!(
+            rect.is_none(),
+            "expected None when URL row falls on the clipped popup's bottom border: got {rect:?}"
+        );
     }
 }
