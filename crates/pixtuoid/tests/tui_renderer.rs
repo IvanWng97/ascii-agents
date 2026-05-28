@@ -226,6 +226,55 @@ fn set_version_popup_records_timestamp_on_edge() {
     );
 }
 
+#[test]
+fn version_popup_animation_starts_small_then_grows() {
+    use std::time::{Duration, SystemTime};
+
+    let backend = TestBackend::new(96, 36);
+    let terminal = Terminal::new(backend).expect("terminal");
+    let mut renderer = TuiRenderer::new(
+        terminal,
+        &pixtuoid::tui::theme::NORMAL,
+        pixtuoid::tui::pet::PetKind::ALL.to_vec(),
+    );
+
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    renderer.set_version_popup(true, t0);
+
+    let scale_start = renderer.version_popup_scale(t0);
+    assert!(
+        scale_start < 0.1,
+        "expected entrance start scale < 0.1; got {scale_start}"
+    );
+
+    let scale_mid = renderer.version_popup_scale(t0 + Duration::from_millis(100));
+    assert!(
+        scale_mid > 0.8,
+        "expected scale > 0.8 at mid-entrance; got {scale_mid}"
+    );
+
+    let scale_end = renderer.version_popup_scale(t0 + Duration::from_millis(200));
+    assert!(
+        (scale_end - 1.0).abs() < 1e-3,
+        "expected scale 1.0 at end of entrance; got {scale_end}"
+    );
+
+    let t1 = t0 + Duration::from_millis(200);
+    renderer.set_version_popup(false, t1);
+
+    let scale_dismiss_mid = renderer.version_popup_scale(t1 + Duration::from_millis(60));
+    assert!(
+        scale_dismiss_mid > 0.0 && scale_dismiss_mid < 1.0,
+        "expected mid-dismissal scale between 0 and 1; got {scale_dismiss_mid}"
+    );
+
+    let scale_dismiss_end = renderer.version_popup_scale(t1 + Duration::from_millis(120));
+    assert!(
+        scale_dismiss_end < 0.01,
+        "expected dismissal end scale ~0; got {scale_dismiss_end}"
+    );
+}
+
 /// Regression: a resize mid-slide previously left `current_floor` at
 /// `from_floor`, silently reverting a user-initiated navigation with no UI
 /// signal. `cancel_transition` must now land the user on `to_floor`.

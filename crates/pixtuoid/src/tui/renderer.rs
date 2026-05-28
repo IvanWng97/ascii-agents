@@ -94,7 +94,9 @@ pub struct DrawCtx<'a> {
     /// New coffee carriers detected this frame — caller uses these to
     /// update the persistent `coffee_holders` set.
     pub new_coffee_carriers: Vec<pixtuoid_core::AgentId>,
-    pub version_popup: bool,
+    /// Animated scale for the version popup (0.0 = hidden, 1.0 = fully shown).
+    /// Drives entrance (EaseOutCubic/200ms) and dismissal (EaseInQuad/120ms).
+    pub popup_scale: f32,
 }
 
 /// Clip a widget rect to fit inside `bounds`. Returns `None` if the rect
@@ -249,7 +251,6 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
     let buf = &ctx.buf;
     let ticker = ctx.ticker;
     let theme_picker = ctx.theme_picker;
-    let version_popup = ctx.version_popup;
     let chitchat_bubbles = &ctx.chitchat_bubbles;
     term.draw(|f| {
         // Re-derive rects from the actual frame buffer to guard against
@@ -315,9 +316,16 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         if let Some(idx) = theme_picker {
             paint_theme_picker(f, idx, actual_full, theme);
         }
-        if version_popup {
+        if ctx.popup_scale > 0.0 {
             if let Some(notes) = crate::version::release_notes(env!("CARGO_PKG_VERSION")) {
-                paint_version_popup(f, env!("CARGO_PKG_VERSION"), notes, actual_full, theme, 1.0);
+                paint_version_popup(
+                    f,
+                    env!("CARGO_PKG_VERSION"),
+                    notes,
+                    actual_full,
+                    theme,
+                    ctx.popup_scale,
+                );
             }
         }
     })?;

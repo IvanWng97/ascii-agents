@@ -211,8 +211,10 @@ pub async fn run_tui(
                                     crate::version::release_notes(env!("CARGO_PKG_VERSION"))
                                         .map(|n| n.len())
                                         .unwrap_or(0);
+                                let scale =
+                                    renderer.version_popup_scale(std::time::SystemTime::now());
                                 if let Some(rect) =
-                                    widgets::version_popup_url_rect(notes_len, bounds, 1.0)
+                                    widgets::version_popup_url_rect(notes_len, bounds, scale)
                                 {
                                     if m.column >= rect.x
                                         && m.column < rect.x + rect.width

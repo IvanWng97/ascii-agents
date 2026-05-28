@@ -157,6 +157,22 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
         self.version_popup_started_at
     }
 
+    /// Compute the entrance/dismissal scale for the version popup based on
+    /// the current state and the time since the last edge. Range 0.0..=1.0.
+    ///
+    /// - false → true (entrance): EaseOutCubic over 200ms, 0 → 1
+    /// - true → false (dismissal): EaseInQuad over 120ms, 1 → 0
+    /// - steady state: 1.0 if visible, 0.0 if hidden
+    pub fn version_popup_scale(&self, now: SystemTime) -> f32 {
+        use crate::tui::anim::{eased_progress, Easing};
+        match (self.version_popup, self.version_popup_started_at) {
+            (true, Some(start)) => eased_progress(start, 200, Easing::EaseOutCubic, now),
+            (false, Some(start)) => 1.0 - eased_progress(start, 120, Easing::EaseInQuad, now),
+            (true, None) => 1.0,
+            (false, None) => 0.0,
+        }
+    }
+
     pub fn set_active_pet(&mut self, pet: Option<PetState>) {
         self.active_pet = pet;
     }
@@ -282,6 +298,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
             let buf_w = scene_rect.width;
             let buf_h = scene_rect.height.saturating_mul(2);
+            // Compute popup scale before the split_at_mut borrows.
+            let popup_scale = self.version_popup_scale(now);
 
             // Render both floors into their respective buffers.
             // Use split_at_mut to get mutable access to two different indices.
@@ -387,7 +405,6 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
             let theme = self.theme;
             let theme_picker = self.theme_picker;
-            let version_popup = self.version_popup;
             // Floor label tracks the destination floor for the duration of the
             // slide so the per-floor agent count in the footer matches the
             // label (otherwise users see "F1/3 ... 5 agents" with floor 2's
@@ -415,7 +432,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 if let Some(idx) = theme_picker {
                     crate::tui::renderer::paint_theme_picker(f, idx, actual_full, theme);
                 }
-                if version_popup {
+                if popup_scale > 0.0 {
                     if let Some(notes) = crate::version::release_notes(env!("CARGO_PKG_VERSION")) {
                         crate::tui::renderer::paint_version_popup(
                             f,
@@ -423,7 +440,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                             notes,
                             actual_full,
                             theme,
-                            1.0,
+                            popup_scale,
                         );
                     }
                 }
@@ -447,6 +464,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             .retain(|id, _| scene.agents.contains_key(id));
 
         let floor_meta = FloorMeta::for_floor(self.current_floor, nf);
+        // Compute popup scale before the mutable borrows below.
+        let popup_scale = self.version_popup_scale(now);
         let fctx = &mut self.floor_ctxs[self.current_floor];
         let mut draw_ctx = DrawCtx {
             buf: &mut self.floor_bufs[self.current_floor],
@@ -473,7 +492,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             coffee_holders: &self.coffee_holders,
             coffee_fetched_at: &self.coffee_fetched_at,
             new_coffee_carriers: Vec::new(),
-            version_popup: self.version_popup,
+            popup_scale,
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
         self.last_pet_pos = draw_ctx.last_pet_pos;
