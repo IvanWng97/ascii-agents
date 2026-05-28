@@ -317,7 +317,7 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         }
         if version_popup {
             if let Some(notes) = crate::version::release_notes(env!("CARGO_PKG_VERSION")) {
-                paint_version_popup(f, env!("CARGO_PKG_VERSION"), notes, actual_full, theme);
+                paint_version_popup(f, env!("CARGO_PKG_VERSION"), notes, actual_full, theme, 1.0);
             }
         }
     })?;

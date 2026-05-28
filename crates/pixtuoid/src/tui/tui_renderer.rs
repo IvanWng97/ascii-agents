@@ -423,6 +423,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                             notes,
                             actual_full,
                             theme,
+                            1.0,
                         );
                     }
                 }

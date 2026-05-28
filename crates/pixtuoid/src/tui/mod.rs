@@ -212,7 +212,7 @@ pub async fn run_tui(
                                         .map(|n| n.len())
                                         .unwrap_or(0);
                                 if let Some(rect) =
-                                    widgets::version_popup_url_rect(notes_len, bounds)
+                                    widgets::version_popup_url_rect(notes_len, bounds, 1.0)
                                 {
                                     if m.column >= rect.x
                                         && m.column < rect.x + rect.width
