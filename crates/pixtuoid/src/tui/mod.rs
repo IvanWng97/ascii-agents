@@ -1,3 +1,4 @@
+pub mod anim;
 pub mod chitchat;
 pub mod embedded_pack;
 pub mod floor;
