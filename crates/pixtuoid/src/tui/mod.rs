@@ -220,9 +220,7 @@ pub async fn run_tui(
                                         && m.row >= rect.y
                                         && m.row < rect.y + rect.height
                                     {
-                                        let _ = open::that(
-                                            "https://github.com/IvanWng97/pixtuoid/releases",
-                                        );
+                                        let _ = open::that(widgets::VERSION_POPUP_URL);
                                     }
                                 }
                             }

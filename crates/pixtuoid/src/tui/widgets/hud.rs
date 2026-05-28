@@ -277,6 +277,13 @@ pub(in crate::tui) fn paint_wall_display(
     }
 }
 
+/// URL shown on the "More details" line and opened on click.
+pub(in crate::tui) const VERSION_POPUP_URL: &str = "https://github.com/IvanWng97/pixtuoid/releases";
+/// Prefix rendered before the URL. Its byte-length determines the URL's
+/// click-rect x-offset; keep `paint_version_popup` and
+/// `version_popup_url_rect` consistent by using this constant.
+const URL_PREFIX: &str = "  More details: ";
+
 pub(in crate::tui) fn paint_version_popup(
     f: &mut ratatui::Frame<'_>,
     version: &str,
@@ -288,9 +295,7 @@ pub(in crate::tui) fn paint_version_popup(
     use ratatui::text::{Line, Span as TSpan};
     use ratatui::widgets::{Block, Borders, Clear};
 
-    let release_url = "https://github.com/IvanWng97/pixtuoid/releases";
-    // Compute width needed: borders + "  More details: " (16) + URL + margin
-    let needed_w = 2 + 16 + release_url.len() as u16 + 2;
+    let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
     let w = needed_w.min(bounds.width);
     let h = (notes.len() as u16 + 6).min(bounds.height);
     if w < 4 || h < 3 {
@@ -317,11 +322,11 @@ pub(in crate::tui) fn paint_version_popup(
     items.push(Line::from(""));
     items.push(Line::from(vec![
         TSpan::styled(
-            "  More details: ",
+            URL_PREFIX,
             Style::default().fg(to_color(theme.ui.label_idle)),
         ),
         TSpan::styled(
-            release_url.to_string(),
+            VERSION_POPUP_URL,
             Style::default()
                 .fg(to_color(theme.ui.neon_brand))
                 .add_modifier(Modifier::UNDERLINED),
@@ -348,8 +353,7 @@ pub(in crate::tui) fn paint_version_popup(
 /// geometry inside `paint_version_popup` (kept in sync by sharing the same
 /// width calculation).
 pub(in crate::tui) fn version_popup_url_rect(notes_len: usize, bounds: Rect) -> Option<Rect> {
-    let release_url = "https://github.com/IvanWng97/pixtuoid/releases";
-    let needed_w = 2 + 16 + release_url.len() as u16 + 2;
+    let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
     let w = needed_w.min(bounds.width);
     let h = (notes_len as u16 + 6).min(bounds.height);
     if w < 4 || h < 3 {
@@ -358,14 +362,14 @@ pub(in crate::tui) fn version_popup_url_rect(notes_len: usize, bounds: Rect) -> 
     let popup_x = bounds.x + bounds.width.saturating_sub(w) / 2;
     let popup_y = bounds.y + bounds.height.saturating_sub(h) / 2;
     // URL line layout inside popup (Block with Borders::ALL has 1-cell border):
-    //   y = popup_y + 1 (border) + 1 (blank) + notes_len (notes) + 1 (blank) = popup_y + notes_len + 3
-    //   x = popup_x + 1 (border) + 16 ("  More details: ") = popup_x + 17
+    //   y = popup_y + 1 (border) + 1 (blank) + notes_len (notes) + 1 (blank)
+    //   x = popup_x + 1 (border) + URL_PREFIX.len()
     let url_y = popup_y + notes_len as u16 + 3;
-    let url_x = popup_x + 17;
+    let url_x = popup_x + 1 + URL_PREFIX.len() as u16;
     Some(Rect {
         x: url_x,
         y: url_y,
-        width: release_url.len() as u16,
+        width: VERSION_POPUP_URL.len() as u16,
         height: 1,
     })
 }
