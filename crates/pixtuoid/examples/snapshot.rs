@@ -97,6 +97,11 @@ struct SnapshotArgs {
     /// Floor seed — selects floor layout variant (0–4).
     #[arg(long, default_value_t = 0)]
     floor_seed: u64,
+
+    /// Render an empty office (no agents) — useful for capturing the
+    /// dimmed empty-floor look.
+    #[arg(long)]
+    empty: bool,
 }
 
 fn default_projects_root() -> String {
@@ -110,7 +115,9 @@ fn main() -> Result<()> {
     let args = SnapshotArgs::parse();
 
     let now = SystemTime::now();
-    let scene = if args.live {
+    let scene = if args.empty {
+        SceneState::uniform(args.max_desks)
+    } else if args.live {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()?;

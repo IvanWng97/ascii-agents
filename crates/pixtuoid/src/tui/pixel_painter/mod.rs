@@ -155,15 +155,22 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         ctx.floor.altitude,
     );
 
+    // Empty floor → indoor lights dimmed ("nobody flipped the switch").
+    // Sky/windows are unaffected; only ceiling pools, floor lamp, and the
+    // floor-darken overlay scale down.
+    let empty_floor = ctx.scene.agents.is_empty();
+    let indoor_scale: f32 = if empty_floor { 0.10 } else { 1.0 };
+    let empty_floor_boost: f32 = if empty_floor { 2.4 } else { 1.0 };
+
     let dim_strength = (0.45 - ctx.floor.sunlight_boost).max(0.1);
     dim_floor_overlay(
         ctx.buf,
         top_wall_h,
         buf_h,
-        look.darkness * dim_strength,
+        look.darkness * dim_strength * empty_floor_boost,
         ctx.theme,
     );
-    let pool_strength = 0.15 + 0.30 * look.darkness;
+    let pool_strength = (0.15 + 0.30 * look.darkness) * indoor_scale;
     for desk in &ctx.layout.home_desks {
         paint_ceiling_pool(
             ctx.buf,
@@ -200,7 +207,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         );
     }
     if let Some(lamp) = ctx.layout.floor_lamp {
-        paint_floor_lamp_halo(ctx.buf, lamp.x, lamp.y, look.darkness * 0.55, ctx.theme);
+        paint_floor_lamp_halo(
+            ctx.buf,
+            lamp.x,
+            lamp.y,
+            look.darkness * 0.55 * indoor_scale,
+            ctx.theme,
+        );
     }
 
     // Neon sign panel in the wall band — dark bg with glow border.
@@ -212,9 +225,9 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
 
     // Live wall clock painted after the wall (so hands sit on top of it)
     // but before wall decor — the bookshelf etc. shouldn't cover it.
-    // 9x9 sprite, center at clock_x+4; clamp so it never collides with
+    // 7x7 sprite, center at clock_x+3; clamp so it never collides with
     // the 30-wide neon panel on the left.
-    let clock_x = (buf_w / 2).saturating_sub(4).max(neon_w + 2);
+    let clock_x = (buf_w / 2).saturating_sub(3).max(neon_w + 2);
     paint_clock(ctx.buf, clock_x, 1, ctx.now, ctx.theme);
     // Corridor runner — painted over the floor but BEFORE walls/decor
     // so walls cleanly overlap it where they cross.
