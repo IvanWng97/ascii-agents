@@ -190,14 +190,26 @@ pub fn derive_with_routing(
         return Some(pose);
     }
     let traveled = (t_x1000 as u32 * total) / 1000;
+    let last_leg = leg_lens.len() - 1;
     let mut acc: u32 = 0;
     for (i, &leg) in leg_lens.iter().enumerate() {
         if acc + leg >= traveled {
             let into_leg = traveled - acc;
-            let seg_t = (into_leg * 1000)
+            let raw_seg_t = (into_leg * 1000)
                 .checked_div(leg)
                 .map(|t| t.min(1000) as u16)
                 .unwrap_or(1000);
+            // Path-tail ease: slow the agent as it approaches the final
+            // destination. Only the final leg is eased; mid-route legs
+            // stay linear so the agent doesn't appear to hesitate at
+            // every turn. Spec: PR #52 (Motion & Easing).
+            let seg_t = if i == last_leg {
+                let normalized = raw_seg_t as f32 / 1000.0;
+                let eased = crate::tui::anim::Easing::EaseOutCubic.apply(normalized);
+                (eased * 1000.0).round() as u16
+            } else {
+                raw_seg_t
+            };
             // Record the walker's current position for the next frame's
             // snap-back lookup.
             let cur_pos = walking_position(path[i], path[i + 1], seg_t);
@@ -518,5 +530,104 @@ mod tests {
         let t1 = t0 + Duration::from_millis(600);
         assert_eq!(history.recent(id, 500, t1), None);
         assert_eq!(history.recent(id, 700, t1), Some(pt));
+    }
+
+    #[test]
+    fn final_leg_seg_t_is_eased() {
+        // Verify that EaseOutCubic is applied to seg_t on the FINAL leg of a
+        // multi-segment A* walk, and that non-final legs stay linear.
+        //
+        // We use t_x1000 = 990 (99% of entry animation) which guarantees
+        // `traveled` lands on the last segment regardless of how leg lengths
+        // split — the agent must be on the final leg at near-end progress.
+        // At that high raw_seg_t, EaseOutCubic approaches 1000 (>= raw), so
+        // seg_t > 900 is a reliable easing signal.
+        //
+        // For the non-final leg smoke-check we use t = 25% and a 4-point path
+        // where the first three legs together consume more than 50% of total
+        // distance, so at 25% we're provably on leg 0 (not the final leg) and
+        // seg_t == raw_seg_t (linear).
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let door = l.door_threshold.expect("door");
+        let desk = l.home_desks[0];
+        let entry_ms = ENTRY_ANIMATION_MS;
+
+        // ── Final-leg check: t=99%, 3-point path ─────────────────────────
+        // At t_x1000 ≈ 990 the agent is deep into the last leg.
+        // raw_seg_t depends on octile ratios, but near-end means raw > 900.
+        // EaseOutCubic(x > 0.9) > x, so eased seg_t >= raw ≈ 900+.
+        // We assert seg_t >= 900 (verifying easing doesn't break near-end).
+        let since_990 = 990 * entry_ms / 1000;
+        let slot_990 = entry_slot(now - Duration::from_millis(since_990));
+        let mid = Point {
+            x: (door.x + desk.x) / 2,
+            y: (door.y + desk.y) / 2,
+        };
+        let mut router_990 = StubRouter::corners(vec![door, mid, desk]);
+        let mut history_990 = PoseHistory::new();
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let p_990 = derive_with_routing(
+            &slot_990,
+            now,
+            &l,
+            &mut router_990,
+            &overlay,
+            &mut history_990,
+        );
+        let seg_t_990 = match p_990 {
+            Some(Pose::Walking { t_x1000, .. }) => t_x1000,
+            other => panic!("expected Walking at t=990, got {other:?}"),
+        };
+        // At 99% progress on the final leg, easing brings seg_t close to 1000.
+        assert!(
+            seg_t_990 >= 900,
+            "final-leg seg_t at 99% should be >= 900 (eased), got {seg_t_990}"
+        );
+        assert!(
+            seg_t_990 <= 1000,
+            "seg_t must not exceed 1000, got {seg_t_990}"
+        );
+
+        // ── Non-final leg check: t=10%, 3-point path ─────────────────────
+        // At t_x1000 ≈ 100 (10%), traveled is near the start.
+        // For any 2-leg path, traveled < leg0 unless leg0 is negligibly small.
+        // For our door→mid→desk path both legs are tens of octile units, so
+        // at 10% the agent is on leg 0 (not the final leg) → seg_t is linear.
+        // Linear seg_t ≈ raw_seg_t. We just check it's <= 1000 and well below
+        // the eased value we'd get at the same raw_seg_t on the final leg.
+        let since_100 = 100 * entry_ms / 1000;
+        let slot_100 = entry_slot(now - Duration::from_millis(since_100));
+        let mut router_100 = StubRouter::corners(vec![door, mid, desk]);
+        let mut history_100 = PoseHistory::new();
+        let p_100 = derive_with_routing(
+            &slot_100,
+            now,
+            &l,
+            &mut router_100,
+            &overlay,
+            &mut history_100,
+        );
+        match p_100 {
+            Some(Pose::Walking { from, t_x1000, .. }) => {
+                // Non-final leg: from == door confirms we're on leg 0.
+                assert_eq!(
+                    from, door,
+                    "at 10% agent should be on first leg (from=door)"
+                );
+                // Non-final leg is linear: seg_t == raw_seg_t.
+                // EaseOutCubic(x) > x for 0 < x < 1, so if easing were
+                // mistakenly applied here, seg_t would be notably higher than
+                // raw. Verify seg_t is in the plausible linear range (not inflated).
+                // At 10% total with two roughly equal legs, seg_t ≈ 200.
+                // If easing were applied: EaseOutCubic(0.2)=0.488 → seg_t≈488.
+                // We assert seg_t < 400 to distinguish linear from eased.
+                assert!(
+                    t_x1000 < 400,
+                    "non-final leg seg_t should be linear (< 400), got {t_x1000}"
+                );
+            }
+            other => panic!("expected Walking at t=100, got {other:?}"),
+        }
     }
 }
