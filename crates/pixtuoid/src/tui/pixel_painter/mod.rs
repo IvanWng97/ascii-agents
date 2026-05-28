@@ -81,6 +81,7 @@ pub struct PixelCtx<'a> {
     pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
+    pub light: &'a mut crate::tui::floor::LightingState,
 }
 
 /// Paint a character at an arbitrary anchor with per-agent recolor. `flip_x`
@@ -155,12 +156,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         ctx.floor.altitude,
     );
 
-    // Empty floor → indoor lights dimmed ("nobody flipped the switch").
-    // Sky/windows are unaffected; only ceiling pools, floor lamp, and the
-    // floor-darken overlay scale down.
-    let empty_floor = ctx.scene.agents.is_empty();
-    let indoor_scale: f32 = if empty_floor { 0.10 } else { 1.0 };
-    let empty_floor_boost: f32 = if empty_floor { 2.4 } else { 1.0 };
+    // Per-floor lighting: tick the fade state with the current occupancy.
+    // `indoor_scale` smoothly travels from MIN_LEVEL (empty + past
+    // debounce) to 1.0 (populated). Windows/skyline are unaffected.
+    let indoor_scale = ctx.light.tick(ctx.scene.agents.is_empty(), ctx.now);
+    let min_level = crate::tui::floor::LightingState::MIN_LEVEL;
+    // Linear map: scale=1.0 → boost=1.0, scale=MIN_LEVEL → boost=2.4.
+    let empty_floor_boost = 1.0 + (1.0 - indoor_scale) * (2.4 - 1.0) / (1.0 - min_level);
 
     let dim_strength = (0.45 - ctx.floor.sunlight_boost).max(0.1);
     dim_floor_overlay(

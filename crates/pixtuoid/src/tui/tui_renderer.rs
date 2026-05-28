@@ -438,6 +438,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             router: &mut fctx.router,
             overlay: &mut fctx.overlay,
             history: &mut fctx.history,
+            light: &mut fctx.light,
             mouse_pos: self.mouse_pos,
             pinned_agent: self.pinned_agent,
             ticker: &self.ticker,
@@ -516,5 +517,6 @@ fn render_transition_floor(
         chitchat_state,
         coffee_holders,
         coffee_fetched_at,
+        light: &mut fctx.light,
     });
 }

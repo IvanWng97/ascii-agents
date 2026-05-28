@@ -15,6 +15,7 @@ macro_rules! make_draw_ctx {
         let mut _router = pixtuoid::tui::pathfind::AStarRouter::new();
         let mut _overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut _history = pixtuoid::tui::pose::PoseHistory::new();
+        let mut _light = pixtuoid::tui::floor::LightingState::new();
         let _ticker = pixtuoid::tui::renderer::TickerQueue::new();
         let mut _chitchat_state = std::collections::HashMap::new();
 
@@ -34,6 +35,7 @@ macro_rules! make_draw_ctx {
             router: &mut _router,
             overlay: &mut _overlay,
             history: &mut _history,
+            light: &mut _light,
             mouse_pos: None,
             pinned_agent: None,
             ticker: &_ticker,

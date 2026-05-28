@@ -53,13 +53,14 @@ impl FloorMeta {
 }
 
 /// Per-floor rendering state. Each floor gets its own pathfinder,
-/// occupancy overlay, pose history, and recolored-frame cache so floors
-/// are fully independent.
+/// occupancy overlay, pose history, recolored-frame cache, and lighting
+/// fade state so floors are fully independent.
 pub struct FloorCtx {
     pub router: AStarRouter,
     pub overlay: OccupancyOverlay,
     pub history: PoseHistory,
     pub cache: FrameCache,
+    pub light: LightingState,
 }
 
 impl Default for FloorCtx {
@@ -75,7 +76,70 @@ impl FloorCtx {
             overlay: OccupancyOverlay::new(),
             history: PoseHistory::new(),
             cache: FrameCache::new(),
+            light: LightingState::new(),
         }
+    }
+}
+
+/// Per-floor indoor-lighting fade state.
+///
+/// Behavior:
+/// * Populated → empty: hold the lights for `EMPTY_DEBOUNCE_MS`, then ease
+///   toward `MIN_LEVEL` with time constant `FADE_TAU_MS`. This avoids
+///   flicker when agents briefly disappear between transcripts.
+/// * Empty → populated: snap target to 1.0 immediately (motion-sensor
+///   feel). The same ease still smooths the rise over a frame or two.
+pub struct LightingState {
+    pub level: f32,
+    empty_since: Option<SystemTime>,
+    last_update: Option<SystemTime>,
+}
+
+impl Default for LightingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LightingState {
+    pub const MIN_LEVEL: f32 = 0.10;
+    pub const EMPTY_DEBOUNCE_MS: u64 = 5_000;
+    pub const FADE_TAU_MS: u64 = 800;
+
+    pub fn new() -> Self {
+        Self {
+            level: 1.0,
+            empty_since: None,
+            last_update: None,
+        }
+    }
+
+    /// Advance the fade one frame. `empty` is the current per-floor
+    /// occupancy. Returns the new lit level in `[MIN_LEVEL, 1.0]`.
+    pub fn tick(&mut self, empty: bool, now: SystemTime) -> f32 {
+        let target = if empty {
+            let since = *self.empty_since.get_or_insert(now);
+            let elapsed = now.duration_since(since).unwrap_or_default().as_millis() as u64;
+            if elapsed >= Self::EMPTY_DEBOUNCE_MS {
+                Self::MIN_LEVEL
+            } else {
+                1.0
+            }
+        } else {
+            self.empty_since = None;
+            1.0
+        };
+
+        let dt_ms = self
+            .last_update
+            .and_then(|prev| now.duration_since(prev).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.last_update = Some(now);
+
+        let alpha = 1.0 - (-(dt_ms as f32) / Self::FADE_TAU_MS as f32).exp();
+        self.level += (target - self.level) * alpha.clamp(0.0, 1.0);
+        self.level
     }
 }
 
