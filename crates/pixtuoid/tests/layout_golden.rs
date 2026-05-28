@@ -119,3 +119,34 @@ fn layout_dense_seed6_room_walls() {
     let l = SceneLayout::compute_with_seed(192, 160, 4, 6).unwrap();
     insta::assert_debug_snapshot!("room_walls_dense_seed6", l.room_walls);
 }
+
+// ── Floor variant uniqueness ────────────────────────────────────────
+// The 5 standard floor seeds (floor_idx × FLOOR_SEED_MULTIPLIER, for
+// floor_idx in 0..5) must each map to a distinct layout variant.
+// Collisions cause adjacent floors to look identical — see PR #42.
+
+#[test]
+fn floor_variant_hash_gives_unique_layouts_per_floor() {
+    use pixtuoid::tui::floor::FLOOR_SEED_MULTIPLIER;
+    use std::collections::HashSet;
+
+    let signatures: HashSet<_> = (0u64..5)
+        .map(|i| {
+            let seed = i.wrapping_mul(FLOOR_SEED_MULTIPLIER);
+            let l = SceneLayout::compute_with_seed(192, 160, 4, seed).unwrap();
+            (
+                l.meeting_room,
+                l.pantry_room,
+                l.meeting_tables,
+                l.home_desks,
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        signatures.len(),
+        5,
+        "floors 0..5 must produce 5 distinct layout variants, got {} unique",
+        signatures.len(),
+    );
+}
