@@ -121,12 +121,17 @@ fn install_crash_hook() {
 
         let issue_url = build_issue_url(version, &panic_msg, &location, &bt_str, &crash_path);
 
-        eprintln!("\n\x1b[1;31mpixtuoid v{version} crashed.\x1b[0m\n");
+        eprintln!("\n\x1b[1;31mpixtuoid v{version} crashed — sorry about that.\x1b[0m\n");
         eprintln!("  \x1b[2m{panic_msg}\x1b[0m");
         eprintln!("  \x1b[2mat {location}\x1b[0m\n");
-        eprintln!("  Report saved to: {}\n", crash_path.display());
-        eprintln!("  \x1b[1mFile a bug report (pre-filled):\x1b[0m");
-        eprintln!("  {issue_url}\n");
+        eprintln!("  \x1b[1mHelp fix it\x1b[0m — open this link to file a pre-filled bug report");
+        eprintln!("  (panic + backtrace already included, no typing needed):\n");
+        eprintln!("  \x1b[4m{issue_url}\x1b[0m\n");
+        eprintln!(
+            "  Full backtrace saved to \x1b[2m{}\x1b[0m",
+            crash_path.display()
+        );
+        eprintln!("  \x1b[2m(attach if the reviewer asks — the link above only carries a truncated trace)\x1b[0m\n");
     }));
 }
 
