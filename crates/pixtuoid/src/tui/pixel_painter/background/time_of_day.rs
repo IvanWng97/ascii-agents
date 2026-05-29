@@ -119,6 +119,59 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::tui::pixel_painter) enum WallSide {
+    East,
+    South,
+    West,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(in crate::tui::pixel_painter) struct SunSpot {
+    pub wall: WallSide,
+    /// 0.0..=1.0 along the wall (left→right for South, top→bottom for East/West).
+    pub along: f32,
+    /// 0.0=high on wall, 1.0=low.
+    pub vertical: f32,
+    /// 0.0=dim, 1.0=brightest at noon.
+    pub intensity: f32,
+    /// 0.0=neutral white (noon), 1.0=very warm gold (sunrise/sunset).
+    pub warmth: f32,
+}
+
+/// Time-of-day sun position projected onto an office wall. Uses UTC
+/// hour-of-day from `SystemTime` (not local) so behavior is reproducible
+/// in tests; visual realism vs the user's clock is intentionally traded
+/// for determinism here. Returns `None` outside daylight (6:00–19:00).
+pub(in crate::tui::pixel_painter) fn sun_on_wall(now: SystemTime) -> Option<SunSpot> {
+    let secs = now.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    let hour = (secs % 86_400) as f32 / 3600.0;
+    if !(6.0..=19.0).contains(&hour) {
+        return None;
+    }
+    let (wall, along) = if hour < 8.5 {
+        (WallSide::East, (hour - 6.0) / 2.5)
+    } else if hour < 16.0 {
+        (WallSide::South, (hour - 8.5) / 7.5)
+    } else {
+        (WallSide::West, (hour - 16.0) / 3.0)
+    };
+    let noon_distance = (hour - 12.0).abs() / 6.0;
+    let intensity = (1.0 - noon_distance * 0.7).clamp(0.3, 1.0);
+    let warmth = noon_distance.clamp(0.0, 1.0);
+    let vertical = match wall {
+        WallSide::South => 0.15,
+        WallSide::East | WallSide::West => 0.55 + noon_distance * 0.2,
+    };
+    Some(SunSpot {
+        wall,
+        along,
+        vertical,
+        intensity,
+        warmth,
+    })
+}
+
 /// Multiplicative dim applied to floor pixels at night. Pulls everything
 /// toward a dark navy so the artificial-light pools have something to
 /// stand out against. `strength` is 0..1 (no dim..full dim).
@@ -144,5 +197,45 @@ pub(in crate::tui::pixel_painter) fn dim_floor_overlay(
                 ),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn at_hour(h: u64, m: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(h * 3600 + m * 60)
+    }
+
+    #[test]
+    fn sun_on_wall_east_at_morning() {
+        let s = sun_on_wall(at_hour(7, 0)).expect("sun should be up at 07:00");
+        assert_eq!(s.wall, WallSide::East);
+        assert!(s.warmth > 0.5, "morning sun should be warm: {}", s.warmth);
+    }
+
+    #[test]
+    fn sun_on_wall_overhead_at_noon() {
+        let s = sun_on_wall(at_hour(12, 0)).expect("sun should be up at 12:00");
+        assert_eq!(s.wall, WallSide::South);
+        assert!(
+            s.intensity > 0.85,
+            "noon sun should be intense: {}",
+            s.intensity
+        );
+    }
+
+    #[test]
+    fn sun_on_wall_west_at_evening() {
+        let s = sun_on_wall(at_hour(18, 0)).expect("sun should be up at 18:00");
+        assert_eq!(s.wall, WallSide::West);
+        assert!(s.warmth > 0.6, "evening sun should be warm: {}", s.warmth);
+    }
+
+    #[test]
+    fn sun_on_wall_none_at_midnight() {
+        assert!(sun_on_wall(at_hour(0, 0)).is_none());
     }
 }
