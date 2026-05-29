@@ -69,8 +69,7 @@ pub struct DrawCtx<'a> {
     pub overlay: &'a mut pixtuoid_core::walkable::OccupancyOverlay,
     pub history: &'a mut pose::PoseHistory,
     /// Per-floor motion state — threaded like `history`. Agents' `MotionState`
-    /// entries are initialized and advanced by `derive_with_routing` (Phase 3+).
-    /// Phase 2 wires the borrow; the field is accepted but not read yet.
+    /// entries are initialized and advanced by `derive_with_routing`.
     pub motion: &'a mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
     /// Per-floor max in-flight entry/exit physics duration (ms). Written
     /// each render tick by `tui_renderer.rs` from `fctx.motion`; read by

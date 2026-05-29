@@ -78,7 +78,7 @@ pub struct PixelCtx<'a> {
     pub overlay: &'a mut OccupancyOverlay,
     pub history: &'a mut pose::PoseHistory,
     /// Forwarded from `DrawCtx.motion` — identical lifetime, identical
-    /// borrow rules. Phase 3+ will read/write entries; Phase 2 just stores the reference.
+    /// borrow rules. `derive_with_routing` reads/writes per-agent entries.
     pub motion: &'a mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
     /// Per-floor max in-flight entry/exit physics duration (ms), forwarded
     /// from `DrawCtx.door_anim_max_ms`. Used by `compute_door_frame_idx`

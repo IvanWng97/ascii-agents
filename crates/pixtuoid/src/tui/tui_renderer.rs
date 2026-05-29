@@ -555,7 +555,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             .retain(|id, _| scene.agents.contains_key(id));
         self.coffee_stains
             .retain(|id, _| scene.agents.contains_key(id));
-        // Phase 2: evict motion state for departed agents.
+        // Evict per-agent motion state for departed agents (mirrors the
+        // coffee/history/cache eviction above).
         self.floor_ctxs[self.current_floor]
             .motion
             .retain(|id, _| scene.agents.contains_key(id));

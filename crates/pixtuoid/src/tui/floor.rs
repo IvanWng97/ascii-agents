@@ -71,8 +71,6 @@ pub struct FloorCtx {
     /// this floor (ms). Written each frame by `derive_with_routing`; read by
     /// `compute_door_frame_idx` to drive door-open cosmetics without a
     /// hardcoded `ENTRY_ANIMATION_MS`.
-    // wired in Phase 2/3
-    #[allow(dead_code)]
     pub door_anim_max_ms: u64,
 }
 
