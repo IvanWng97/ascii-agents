@@ -163,7 +163,15 @@ const DOOR_TRANSITION_MS: u64 = 200;
 /// a per-frame value based on how far through their entry/exit window
 /// they are; we take the MAX across all agents so the door is at
 /// least as open as the most-in-progress agent needs.
-pub(super) fn compute_door_frame_idx(agents: &[AgentSlot], now: SystemTime) -> usize {
+///
+/// `door_anim_max_ms` is the per-floor cached maximum entry/exit physics
+/// duration (written each frame from `fctx.motion`). Falls back to
+/// `ENTRY_ANIMATION_MS` when zero (e.g. before any entry walk is in flight).
+pub(super) fn compute_door_frame_idx(
+    agents: &[AgentSlot],
+    now: SystemTime,
+    door_anim_max_ms: u64,
+) -> usize {
     fn frame_for_progress(elapsed_ms: u64, total_ms: u64) -> usize {
         // 0..200ms: opening (0 → 1 → 2)
         if elapsed_ms < DOOR_TRANSITION_MS {
@@ -185,13 +193,22 @@ pub(super) fn compute_door_frame_idx(agents: &[AgentSlot], now: SystemTime) -> u
             2
         }
     }
+    // Use the physics-derived window when available; fall back to the
+    // fixed constant so the door cosmetic still works before any entry
+    // is in flight (door_anim_max_ms == 0 at frame 0).
+    let entry_window_ms = if door_anim_max_ms > 0 {
+        door_anim_max_ms
+    } else {
+        pose::ENTRY_ANIMATION_MS
+    };
+
     let mut max_frame: usize = 0;
     for a in agents {
         if a.exiting_at.is_none() {
             if let Ok(d) = now.duration_since(a.created_at) {
                 let ms = d.as_millis() as u64;
-                if ms < pose::ENTRY_ANIMATION_MS {
-                    max_frame = max_frame.max(frame_for_progress(ms, pose::ENTRY_ANIMATION_MS));
+                if ms < entry_window_ms {
+                    max_frame = max_frame.max(frame_for_progress(ms, entry_window_ms));
                 }
             }
         }

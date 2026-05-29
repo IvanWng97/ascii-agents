@@ -37,6 +37,7 @@ macro_rules! make_draw_ctx {
             overlay: &mut _overlay,
             history: &mut _history,
             motion: &mut _motion,
+            door_anim_max_ms: 0,
             light: &mut _light,
             mouse_pos: None,
             pinned_agent: None,

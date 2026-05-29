@@ -72,6 +72,11 @@ pub struct DrawCtx<'a> {
     /// entries are initialized and advanced by `derive_with_routing` (Phase 3+).
     /// Phase 2 wires the borrow; the field is accepted but not read yet.
     pub motion: &'a mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
+    /// Per-floor max in-flight entry/exit physics duration (ms). Written
+    /// each render tick by `tui_renderer.rs` from `fctx.motion`; read by
+    /// `compute_door_frame_idx` so the door cosmetic scales with actual
+    /// walk physics instead of the old hardcoded `ENTRY_ANIMATION_MS`.
+    pub door_anim_max_ms: u64,
     /// Per-floor lighting fade state. Advanced inside the pixel pass and
     /// read by the indoor-light helpers. Borrowed mutably from the
     /// matching `FloorCtx`.
@@ -239,6 +244,7 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         coffee_fetched_at: ctx.coffee_fetched_at,
         coffee_stains: ctx.coffee_stains,
         light: ctx.light,
+        door_anim_max_ms: ctx.door_anim_max_ms,
     });
     ctx.last_pet_pos = pixel_result.pet_pos;
     ctx.chitchat_bubbles = pixel_result.chitchat_bubbles;

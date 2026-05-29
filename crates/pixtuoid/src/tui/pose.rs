@@ -15,16 +15,17 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
+use pixtuoid_core::physics::{walk_arrived, walk_profile, walk_progress, WalkIntent};
 use pixtuoid_core::state::AgentSlot;
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentId;
 
-use crate::tui::motion::MotionState;
+use crate::tui::motion::{octile_path_len, MotionState};
 
 pub use pixtuoid_core::pose::{
-    cycle_ms_for, derive, is_aimless_cycle, personality_for, takes_trip, waypoint_index_for_cycle,
-    Personality, Pose, ENTRY_ANIMATION_MS, TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES,
-    WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
+    cycle_ms_for, derive, derive_state_only, is_aimless_cycle, personality_for, takes_trip,
+    waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS, TYPING_FRAMES,
+    TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
 };
 
 use crate::tui::layout::{Layout, Point};
@@ -75,6 +76,11 @@ const SNAP_BACK_MIN_DIST: i32 = 8;
 /// per-segment Walking pose so the character traces the path
 /// corner-by-corner instead of cutting through obstacles or other agents.
 ///
+/// `motion` drives entry/exit physics: on first sighting an entering or
+/// exiting agent the A* path length is snapshotted into a `WalkProfile`
+/// (commit-to-route); subsequent frames compute `t_x1000` from
+/// `walk_progress` against the frozen profile.
+///
 /// `history` is consulted on state transitions: if the agent's pose
 /// flipped from a wander walk (or from AtWaypoint) to a desk-bound
 /// pose (SeatedTyping / SeatedIdle / StandingAtDesk), we override the
@@ -89,9 +95,148 @@ pub fn derive_with_routing(
     history: &mut PoseHistory,
     motion: &mut HashMap<AgentId, MotionState>,
 ) -> Option<Pose> {
-    // Phase 2: motion is threaded but not yet read — Phase 3+ will populate it.
-    let _ = &motion;
-    let raw = derive(slot, now, layout)?;
+    let desk = *layout.home_desks.get(slot.desk_index)?;
+
+    // ---- EXIT branch -------------------------------------------------------
+    // Takes priority over entry and state-driven poses.
+    if let Some(exit_time) = slot.exiting_at {
+        let door_target = layout.door_threshold?;
+
+        let mstate = motion
+            .entry(slot.agent_id)
+            .or_insert_with(|| MotionState::new(slot.agent_id));
+
+        // Snapshot the exit profile on first sighting.
+        if mstate.exit.is_none() {
+            let from = Point {
+                x: desk.x + 6,
+                y: desk.y + 4,
+            };
+            let h = slot.agent_id.raw();
+            let jx = ((h % 9) as i32 - 4) as i16;
+            let jy = (((h >> 16) % 9) as i32 - 4) as i16;
+            let to_jittered = Point {
+                x: door_target.x.saturating_add_signed(jx),
+                y: door_target.y.saturating_add_signed(jy),
+            };
+            let path = router.route(&layout.walkable, overlay, from, to_jittered);
+            let path_len = octile_path_len(&path).max(1);
+            let profile = walk_profile(path_len, WalkIntent::Exit, slot.agent_id);
+            mstate.exit = Some((exit_time, profile));
+        }
+
+        // Destructure without moving the non-Copy profile (Correction L).
+        let e = mstate.exit.as_ref()?;
+        let started_at = e.0;
+        let profile = &e.1;
+
+        let elapsed_ms = now
+            .duration_since(started_at)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as u64;
+
+        // GC: walk fully done including pause → return None so the slot
+        // disappears (same as old ENTRY_ANIMATION_MS gate).
+        if walk_arrived(profile, elapsed_ms) {
+            return None;
+        }
+
+        let t_x1000 = walk_progress(profile, elapsed_ms);
+        let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+        let from = Point {
+            x: desk.x + 6,
+            y: desk.y + 4,
+        };
+
+        return route_walking_pose(
+            slot,
+            now,
+            layout,
+            router,
+            overlay,
+            history,
+            Pose::Walking {
+                from,
+                to: door_target,
+                t_x1000,
+                frame,
+                carrying_coffee: false,
+            },
+        );
+    }
+
+    // ---- ENTRY branch ------------------------------------------------------
+    // Gate: spawn window check reuses ENTRY_ANIMATION_MS only as a bound on
+    // how long we try to route. Physics duration is the real walk time.
+    let since_spawn = now
+        .duration_since(slot.created_at)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as u64;
+
+    if let Some(door) = layout.door_threshold {
+        let mstate = motion
+            .entry(slot.agent_id)
+            .or_insert_with(|| MotionState::new(slot.agent_id));
+
+        // Snapshot on first sighting if we're within the spawn window.
+        if mstate.entry.is_none() && since_spawn < ENTRY_ANIMATION_MS {
+            let to_desk = Point {
+                x: desk.x + 6,
+                y: desk.y + 4,
+            };
+            let h = slot.agent_id.raw();
+            let jx = ((h % 9) as i32 - 4) as i16;
+            let jy = (((h >> 16) % 9) as i32 - 4) as i16;
+            let to_jittered = Point {
+                x: to_desk.x.saturating_add_signed(jx),
+                y: to_desk.y.saturating_add_signed(jy),
+            };
+            let path = router.route(&layout.walkable, overlay, door, to_jittered);
+            let path_len = octile_path_len(&path).max(1);
+            let profile = walk_profile(path_len, WalkIntent::Entry, slot.agent_id);
+            mstate.entry = Some((slot.created_at, profile));
+        }
+
+        if let Some((started_at, ref profile)) = mstate.entry.clone() {
+            let elapsed_ms = now
+                .duration_since(started_at)
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u64;
+
+            if !walk_arrived(profile, elapsed_ms) {
+                let t_x1000 = walk_progress(profile, elapsed_ms);
+                let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+                let to_desk = Point {
+                    x: desk.x + 6,
+                    y: desk.y + 4,
+                };
+                return route_walking_pose(
+                    slot,
+                    now,
+                    layout,
+                    router,
+                    overlay,
+                    history,
+                    Pose::Walking {
+                        from: door,
+                        to: to_desk,
+                        t_x1000,
+                        frame,
+                        carrying_coffee: false,
+                    },
+                );
+            }
+            // walk_arrived — fall through to state-driven pose (Correction C).
+            // DO NOT call `derive()` here as that would re-fire the linear
+            // entry override and cause a double-walk.
+        }
+    }
+
+    // ---- STATE-DRIVEN pose -------------------------------------------------
+    // Use derive_state_only (not derive) to avoid re-triggering the linear
+    // entry/exit overrides in core's derive() (Correction C — no double-walk).
+    let raw = derive_state_only(slot, now, layout)?;
+
     // Snap-back override: state-driven poses (SeatedTyping etc.) at the
     // desk would teleport the agent if they were mid-wander when state
     // changed. Replace them with a Walking pose from the previous
@@ -106,7 +251,6 @@ pub fn derive_with_routing(
         .as_millis() as u64;
     let pose = if desk_pose && since_state < SNAP_BACK_MS {
         if let Some(prev) = history.recent(slot.agent_id, 300, now) {
-            let desk = *layout.home_desks.get(slot.desk_index)?;
             let dist =
                 (prev.x as i32 - desk.x as i32).abs() + (prev.y as i32 - desk.y as i32).abs();
             if dist >= SNAP_BACK_MIN_DIST {
@@ -140,6 +284,25 @@ pub fn derive_with_routing(
         raw
     };
 
+    route_walking_pose(slot, now, layout, router, overlay, history, pose)
+}
+
+/// Apply A*-based polyline routing to a `Pose::Walking`, recording
+/// history with `now`. For non-Walking poses, records waypoint/aimless
+/// positions to history and returns `Some(pose)`.
+///
+/// This is the single shared helper for entry, exit, snap-back, and
+/// state-driven walks (Correction B). Records history with `now` (not
+/// `slot.last_event_at`) so snap-back lookups are fresh.
+fn route_walking_pose(
+    slot: &AgentSlot,
+    now: SystemTime,
+    layout: &Layout,
+    router: &mut dyn Router,
+    overlay: &OccupancyOverlay,
+    history: &mut PoseHistory,
+    pose: Pose,
+) -> Option<Pose> {
     let Pose::Walking {
         from,
         to,
@@ -160,6 +323,7 @@ pub fn derive_with_routing(
         }
         return Some(pose);
     };
+
     // Per-agent path personality: perturb the routing destination by a
     // few pixels hashed from the agent_id. Different agents heading
     // between the same two waypoints get different cache keys and (in
@@ -180,7 +344,7 @@ pub fn derive_with_routing(
     }
     if path.len() <= 2 {
         // Straight-line walk — record the interpolated position for next
-        // frame's snap-back lookup.
+        // frame's snap-back lookup. Use `now` not `last_event_at`.
         history.record(slot.agent_id, walking_position(from, to, t_x1000), now);
         return Some(Pose::Walking {
             from,
@@ -211,7 +375,7 @@ pub fn derive_with_routing(
                 .map(|t| t.min(1000) as u16)
                 .unwrap_or(1000);
             // Record the walker's current position for the next frame's
-            // snap-back lookup.
+            // snap-back lookup. Use `now` not `last_event_at`.
             let cur_pos = walking_position(path[i], path[i + 1], seg_t);
             history.record(slot.agent_id, cur_pos, now);
             return Some(Pose::Walking {
@@ -456,9 +620,11 @@ mod tests {
     fn multi_segment_path_maps_t_to_segment_via_octile_distance() {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let l = layout();
-        // Entry animation: ENTRY_ANIMATION_MS = 4000, since_spawn = 400 →
-        // raw t_x1000 = 100. For two ~equal legs, traveled ≈ 10% of total
-        // → agent is on leg 0 (door→mid), seg_t ≈ 20%.
+        // Entry walk in physics mode: 400ms elapsed. Physics (accel ramp) means
+        // the agent is early in the path — earlier than linear t=10% would give.
+        // The key check is that the segment-mapper correctly places the agent on
+        // segment 0 (door→mid) rather than segment 1, regardless of the exact
+        // physics-derived t_x1000.
         let slot = entry_slot(now - Duration::from_millis(400));
         let mut history = PoseHistory::new();
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
@@ -485,11 +651,11 @@ mod tests {
             }) => {
                 assert_eq!(from, door, "first segment starts at door, got {from:?}");
                 assert_eq!(to, mid, "first segment ends at mid, got {to:?}");
-                // linear t=0.1 over two equal legs → seg_t of first leg ≈ 0.2 → ~200.
-                // Accept a wider band to tolerate octile rounding.
+                // Physics progress at 400ms is in [0,500] — we're on the first segment.
+                // The wider band covers both physics (accel) and the old linear case.
                 assert!(
-                    (100..=400).contains(&t_x1000),
-                    "expected mid-first-segment seg_t in [100,400], got t_x1000={t_x1000}"
+                    (0..=500).contains(&t_x1000),
+                    "expected first-segment seg_t in [0,500], got t_x1000={t_x1000}"
                 );
                 assert!(history.recent(slot.agent_id, 1_000, now).is_some());
             }
@@ -593,5 +759,351 @@ mod tests {
         let t1 = t0 + Duration::from_millis(600);
         assert_eq!(history.recent(id, 500, t1), None);
         assert_eq!(history.recent(id, 700, t1), Some(pt));
+    }
+
+    // ---- Phase 3: entry/exit physics tests --------------------------------
+    // These live alongside the existing snap_back_* tests.
+    // Requires: physics::walk_profile, motion::MotionState (Phase 0-2 outputs).
+
+    /// Build an entry slot (Idle, just created). desk_index 0 = nearest desk.
+    fn entry_slot_near(created_at: SystemTime) -> AgentSlot {
+        let mut s = active_slot(created_at, created_at);
+        s.state = pixtuoid_core::state::ActivityState::Idle;
+        s.desk_index = 0;
+        s
+    }
+
+    /// Build an entry slot for a far desk index.
+    fn entry_slot_far(created_at: SystemTime, desk_index: usize) -> AgentSlot {
+        let mut s = entry_slot_near(created_at);
+        s.desk_index = desk_index;
+        // Give each far slot a distinct agent_id so speed_mult differs.
+        s.agent_id = AgentId::from_transcript_path(&format!("/far/{desk_index}.jsonl"));
+        s
+    }
+
+    /// Build an exiting slot: state_started_at from long ago, exiting_at = now.
+    fn exiting_slot(exiting_at: SystemTime, created_at: SystemTime) -> AgentSlot {
+        let mut s = active_slot(exiting_at - Duration::from_secs(30), created_at);
+        s.exiting_at = Some(exiting_at);
+        s.agent_id = AgentId::from_transcript_path("/exit/slot.jsonl");
+        s
+    }
+
+    /// Return (near_desk_index, far_desk_index) by actual octile distance
+    /// from the door to each desk+offset. Panics if layout has < 2 desks
+    /// or no door_threshold.
+    fn near_far_desk_indices(l: &Layout) -> (usize, usize) {
+        let door = l.door_threshold.expect("layout must have door_threshold");
+        let dists: Vec<u32> = l
+            .home_desks
+            .iter()
+            .map(|d| {
+                let target = Point {
+                    x: d.x + 6,
+                    y: d.y + 4,
+                };
+                octile_distance(door, target)
+            })
+            .collect();
+        let near_idx = dists
+            .iter()
+            .enumerate()
+            .min_by_key(|&(_, d)| d)
+            .map(|(i, _)| i)
+            .unwrap();
+        let far_idx = dists
+            .iter()
+            .enumerate()
+            .max_by_key(|&(_, d)| d)
+            .map(|(i, _)| i)
+            .unwrap();
+        assert_ne!(
+            dists[near_idx], dists[far_idx],
+            "need distinct near/far distances for this test"
+        );
+        assert!(
+            dists[far_idx] >= dists[near_idx] * 3 / 2,
+            "far dist ({}) must be ≥ 1.5× near dist ({}) for a meaningful test",
+            dists[far_idx],
+            dists[near_idx]
+        );
+        (near_idx, far_idx)
+    }
+
+    #[test]
+    fn entry_duration_scales_with_path_longer_desk_takes_longer() {
+        // Compute the actual nearest and farthest desks by octile distance
+        // from the door (Correction M — don't assume desk 0 is nearest).
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout(); // 120×96, 4 desks
+        let (near_idx, far_idx) = near_far_desk_indices(&l);
+
+        let near = entry_slot_far(now, near_idx);
+        let far = entry_slot_far(now, far_idx);
+
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+
+        // Two separate motion maps — each agent's first call snapshots its own profile.
+        let mut motion_near: HashMap<AgentId, MotionState> = HashMap::new();
+        let mut motion_far: HashMap<AgentId, MotionState> = HashMap::new();
+        let mut hist_near = PoseHistory::new();
+        let mut hist_far = PoseHistory::new();
+        let mut router_n = StubRouter::straight();
+        let mut router_f = StubRouter::straight();
+
+        // First call: snapshots the entry profile.
+        let _pn = derive_with_routing(
+            &near,
+            now,
+            &l,
+            &mut router_n,
+            &overlay,
+            &mut hist_near,
+            &mut motion_near,
+        );
+        let _pf = derive_with_routing(
+            &far,
+            now,
+            &l,
+            &mut router_f,
+            &overlay,
+            &mut hist_far,
+            &mut motion_far,
+        );
+
+        let dur_near = motion_near[&near.agent_id]
+            .entry
+            .as_ref()
+            .expect("entry profile set for near desk")
+            .1
+            .duration_ms;
+        let dur_far = motion_far[&far.agent_id]
+            .entry
+            .as_ref()
+            .expect("entry profile set for far desk")
+            .1
+            .duration_ms;
+
+        assert!(
+            dur_far >= dur_near,
+            "far desk duration {dur_far}ms must be >= near desk {dur_near}ms"
+        );
+    }
+
+    #[test]
+    fn nearer_desk_arrives_before_farther_desk() {
+        // Same created_at, same StubRouter (straight-line). Run enough frames
+        // so the near desk agent walk_arrived flips; the far desk must still
+        // be Walking at that point. Desks are chosen by actual octile distance
+        // from the door (Correction M).
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let (near_idx, far_idx) = near_far_desk_indices(&l);
+
+        let near = entry_slot_far(now, near_idx);
+        let far = entry_slot_far(now, far_idx);
+
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut motion_near = HashMap::new();
+        let mut motion_far = HashMap::new();
+        let mut hist_near = PoseHistory::new();
+        let mut hist_far = PoseHistory::new();
+        let mut router_n = StubRouter::straight();
+        let mut router_f = StubRouter::straight();
+
+        // Snapshot on first call.
+        let _ = derive_with_routing(
+            &near,
+            now,
+            &l,
+            &mut router_n,
+            &overlay,
+            &mut hist_near,
+            &mut motion_near,
+        );
+        let _ = derive_with_routing(
+            &far,
+            now,
+            &l,
+            &mut router_f,
+            &overlay,
+            &mut hist_far,
+            &mut motion_far,
+        );
+
+        // Advance time past the near desk's duration+pause but stay within
+        // the far desk's window. Use the near desk's profile to compute exact time.
+        let near_profile = motion_near[&near.agent_id]
+            .entry
+            .as_ref()
+            .unwrap()
+            .1
+            .clone();
+        // One ms past the near desk's full trip (duration + pause).
+        let done_ms = near_profile.duration_ms + near_profile.pause_ms + 1;
+        let t1 = now + Duration::from_millis(done_ms);
+
+        let p_near = derive_with_routing(
+            &near,
+            t1,
+            &l,
+            &mut router_n,
+            &overlay,
+            &mut hist_near,
+            &mut motion_near,
+        );
+        let p_far = derive_with_routing(
+            &far,
+            t1,
+            &l,
+            &mut router_f,
+            &overlay,
+            &mut hist_far,
+            &mut motion_far,
+        );
+
+        assert!(
+            !matches!(p_near, Some(Pose::Walking { .. })),
+            "near desk must have arrived (no longer Walking), got {p_near:?}"
+        );
+        assert!(
+            matches!(p_far, Some(Pose::Walking { .. })),
+            "far desk must still be Walking, got {p_far:?}"
+        );
+    }
+
+    #[test]
+    fn five_same_created_at_agents_have_distinct_entry_durations() {
+        // Speed_mult is per-agent-id → 5 distinct IDs must produce 5
+        // distinct physics durations even for the same desk index, confirming
+        // stagger.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+
+        let ids: Vec<AgentId> = (0..5)
+            .map(|i| AgentId::from_transcript_path(&format!("/stagger/{i}.jsonl")))
+            .collect();
+
+        let mut durations = Vec::new();
+        for &id in &ids {
+            let mut slot = entry_slot_near(now);
+            slot.agent_id = id;
+            let mut motion = HashMap::new();
+            let mut hist = PoseHistory::new();
+            let mut router = StubRouter::straight();
+            let _ = derive_with_routing(
+                &slot,
+                now,
+                &l,
+                &mut router,
+                &overlay,
+                &mut hist,
+                &mut motion,
+            );
+            let dur = motion[&id]
+                .entry
+                .as_ref()
+                .expect("entry profile set")
+                .1
+                .duration_ms;
+            durations.push(dur);
+        }
+
+        let unique: std::collections::HashSet<u64> = durations.iter().copied().collect();
+        assert!(
+            unique.len() >= 4,
+            "expected ≥4 distinct durations among 5 agents, got {unique:?}"
+        );
+    }
+
+    #[test]
+    fn exit_profile_snapshotted_once_not_on_subsequent_calls() {
+        // Second and third calls to derive_with_routing for an exiting agent
+        // must NOT overwrite the profile's started_at — exit is commit-to-route.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let slot = exiting_slot(now, now - Duration::from_secs(60));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut motion = HashMap::new();
+        let mut hist = PoseHistory::new();
+        let mut router = StubRouter::straight();
+
+        // First call: snapshot.
+        let _ = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut hist,
+            &mut motion,
+        );
+        let (started_at_1, _) = motion[&slot.agent_id]
+            .exit
+            .as_ref()
+            .expect("exit profile set on first call")
+            .clone();
+
+        // Second call 100 ms later: must not re-snapshot.
+        let t1 = now + Duration::from_millis(100);
+        let _ = derive_with_routing(&slot, t1, &l, &mut router, &overlay, &mut hist, &mut motion);
+        let (started_at_2, _) = motion[&slot.agent_id]
+            .exit
+            .as_ref()
+            .expect("exit profile still present")
+            .clone();
+
+        assert_eq!(
+            started_at_1, started_at_2,
+            "exit started_at must not change on subsequent calls"
+        );
+    }
+
+    #[test]
+    fn exit_uses_commute_speed_faster_than_wander() {
+        // Exit profiles must use V_CRUISE_COMMUTE, not V_CRUISE_WANDER.
+        // Proxy: compare v_cruise on the exit profile against the constant.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let slot = exiting_slot(now, now - Duration::from_secs(60));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut motion = HashMap::new();
+        let mut hist = PoseHistory::new();
+        let mut router = StubRouter::straight();
+
+        let _ = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut hist,
+            &mut motion,
+        );
+        let profile = &motion[&slot.agent_id]
+            .exit
+            .as_ref()
+            .expect("exit profile set")
+            .1;
+        // v_cruise stored in WalkProfile is v_base * speed_mult — it must be
+        // derived from V_CRUISE_COMMUTE (0.213), NOT V_CRUISE_WANDER (0.146).
+        // The minimum possible commute v_cruise = 0.213 * 0.85 ≈ 0.181,
+        // while the maximum wander v_cruise = 0.146 * 1.20 ≈ 0.175.
+        // There's a gap: anything >= 0.176 is unambiguously commute.
+        let min_commute =
+            pixtuoid_core::physics::V_CRUISE_COMMUTE * pixtuoid_core::physics::SPEED_MULT_MIN;
+        let max_wander =
+            pixtuoid_core::physics::V_CRUISE_WANDER * pixtuoid_core::physics::SPEED_MULT_MAX;
+        assert!(
+            min_commute > max_wander,
+            "test invariant: commute and wander speed ranges must not overlap"
+        );
+        assert!(
+            profile.v_cruise >= min_commute * 0.99, // small f32 tolerance
+            "exit v_cruise {:.4} must be in commute range (>= {min_commute:.4})",
+            profile.v_cruise
+        );
     }
 }

@@ -80,6 +80,10 @@ pub struct PixelCtx<'a> {
     /// Forwarded from `DrawCtx.motion` — identical lifetime, identical
     /// borrow rules. Phase 3+ will read/write entries; Phase 2 just stores the reference.
     pub motion: &'a mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
+    /// Per-floor max in-flight entry/exit physics duration (ms), forwarded
+    /// from `DrawCtx.door_anim_max_ms`. Used by `compute_door_frame_idx`
+    /// instead of the old hardcoded `ENTRY_ANIMATION_MS`.
+    pub door_anim_max_ms: u64,
     pub theme: &'a crate::tui::theme::Theme,
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a crate::tui::renderer::PetState>,
@@ -759,7 +763,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // flight we take the MAX frame so the door is at least as open
     // as the most-in-progress agent needs.
     if let Some(door_pos) = ctx.layout.door {
-        let frame_idx = compute_door_frame_idx(&agents, ctx.now);
+        let frame_idx = compute_door_frame_idx(&agents, ctx.now, ctx.door_anim_max_ms);
         drawables.push(Drawable {
             anchor_y: door_pos.y + 14,
             kind: DrawableKind::Door {
@@ -1355,7 +1359,7 @@ mod tests {
     #[test]
     fn door_frame_closed_when_no_agents() {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        assert_eq!(compute_door_frame_idx(&[], now), 0);
+        assert_eq!(compute_door_frame_idx(&[], now, 0), 0);
     }
 
     #[test]
@@ -1363,7 +1367,7 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         // 50 ms into the 200 ms opening ramp — first half = frame 1.
         let slot = entry_slot(50, now);
-        assert_eq!(compute_door_frame_idx(&[slot], now), 1);
+        assert_eq!(compute_door_frame_idx(&[slot], now, 0), 1);
     }
 
     #[test]
@@ -1371,10 +1375,10 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         // 150 ms (still inside opening ramp but past midpoint) → frame 2.
         let s1 = entry_slot(150, now);
-        assert_eq!(compute_door_frame_idx(&[s1], now), 2);
+        assert_eq!(compute_door_frame_idx(&[s1], now, 0), 2);
         // 2 s into the 4 s window → fully open.
         let s2 = entry_slot(2_000, now);
-        assert_eq!(compute_door_frame_idx(&[s2], now), 2);
+        assert_eq!(compute_door_frame_idx(&[s2], now, 0), 2);
     }
 
     #[test]
@@ -1382,10 +1386,10 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         // 150 ms left in the entry window → closing ramp first half → frame 1.
         let mid_close = entry_slot(pose::ENTRY_ANIMATION_MS - 150, now);
-        assert_eq!(compute_door_frame_idx(&[mid_close], now), 1);
+        assert_eq!(compute_door_frame_idx(&[mid_close], now, 0), 1);
         // 50 ms left → closing ramp final half → frame 0 (closed).
         let near_end = entry_slot(pose::ENTRY_ANIMATION_MS - 50, now);
-        assert_eq!(compute_door_frame_idx(&[near_end], now), 0);
+        assert_eq!(compute_door_frame_idx(&[near_end], now, 0), 0);
     }
 
     #[test]
@@ -1393,7 +1397,7 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         // Older than the 4 s entry window → no contribution.
         let old = entry_slot(pose::ENTRY_ANIMATION_MS + 1, now);
-        assert_eq!(compute_door_frame_idx(&[old], now), 0);
+        assert_eq!(compute_door_frame_idx(&[old], now, 0), 0);
     }
 
     #[test]
@@ -1401,7 +1405,7 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         // 2 s into a 4.5 s exit window → mid-flight → fully open.
         let exiting = exit_slot(2_000, now);
-        assert_eq!(compute_door_frame_idx(&[exiting], now), 2);
+        assert_eq!(compute_door_frame_idx(&[exiting], now, 0), 2);
     }
 
     #[test]
@@ -1409,7 +1413,33 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let opening = entry_slot(50, now); // frame 1
         let open = entry_slot(2_000, now); // frame 2
-        assert_eq!(compute_door_frame_idx(&[opening, open], now), 2);
+        assert_eq!(compute_door_frame_idx(&[opening, open], now, 0), 2);
+    }
+
+    #[test]
+    fn door_frame_uses_physics_window_when_nonzero() {
+        let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        // Slot spawned 3 s ago; with old ENTRY_ANIMATION_MS=4000 it would still
+        // be mid-flight. Supply a short physics window (2500 ms) so it reads as
+        // near the closing ramp instead.
+        let short_window_ms: u64 = 2_500;
+        // elapsed=3000, total=2500 → elapsed > total → door should be in closing
+        // ramp or closed (remaining = 0 → frame 0).
+        let slot = entry_slot(3_000, now);
+        let frame = compute_door_frame_idx(&[slot], now, short_window_ms);
+        assert_eq!(
+            frame, 0,
+            "with short physics window elapsed>total should yield closed door, got frame {frame}"
+        );
+
+        // Slot spawned 500 ms ago; physics window = 2500 ms → still well in the
+        // middle (fully open frame = 2).
+        let slot_mid = entry_slot(500, now);
+        let frame_mid = compute_door_frame_idx(&[slot_mid], now, short_window_ms);
+        assert_eq!(
+            frame_mid, 2,
+            "500ms into 2500ms window should be fully open, got frame {frame_mid}"
+        );
     }
 
     #[test]

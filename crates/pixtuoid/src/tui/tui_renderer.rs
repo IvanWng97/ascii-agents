@@ -564,6 +564,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         // Compute popup scale before the mutable borrows below.
         let popup_scale = self.version_popup_scale(now);
         let fctx = &mut self.floor_ctxs[self.current_floor];
+        let door_anim_max_ms = fctx.door_anim_max_ms;
         let mut draw_ctx = DrawCtx {
             buf: &mut self.floor_bufs[self.current_floor],
             cache: &mut fctx.cache,
@@ -571,6 +572,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             overlay: &mut fctx.overlay,
             history: &mut fctx.history,
             motion: &mut fctx.motion,
+            door_anim_max_ms,
             light: &mut fctx.light,
             mouse_pos: self.mouse_pos,
             pinned_agent: self.pinned_agent,
@@ -595,10 +597,34 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
         self.last_pet_pos = draw_ctx.last_pet_pos;
+        // Consume draw_ctx fields before the mutable borrow of floor_ctxs below.
+        // std::mem::take avoids a partial move so drop(draw_ctx) can follow.
+        let new_coffee_carriers = std::mem::take(&mut draw_ctx.new_coffee_carriers);
+        // drop draw_ctx here so we can re-borrow floor_ctxs freely.
+        drop(draw_ctx);
+        // Recompute door_anim_max_ms from the motion map for the NEXT frame.
+        // Max of all active entry/exit (duration_ms + pause_ms) values.
+        let new_max = self.floor_ctxs[self.current_floor]
+            .motion
+            .values()
+            .fold(0u64, |acc, ms| {
+                let entry_dur = ms
+                    .entry
+                    .as_ref()
+                    .map(|(_, p)| p.duration_ms + p.pause_ms)
+                    .unwrap_or(0);
+                let exit_dur = ms
+                    .exit
+                    .as_ref()
+                    .map(|(_, p)| p.duration_ms + p.pause_ms)
+                    .unwrap_or(0);
+                acc.max(entry_dur).max(exit_dur)
+            });
+        self.floor_ctxs[self.current_floor].door_anim_max_ms = new_max;
         // Persist newly detected coffee carriers. The `insert` returns
         // `true` only on the EDGE (first time this agent enters the set
         // for this pantry trip), so stain accrual fires once per trip.
-        for id in draw_ctx.new_coffee_carriers {
+        for id in new_coffee_carriers {
             if self.coffee_holders.insert(id) {
                 self.coffee_fetched_at.insert(id, now);
                 self.note_coffee_stain(id, now);
@@ -650,6 +676,7 @@ fn render_transition_floor(
         overlay: &mut fctx.overlay,
         history: &mut fctx.history,
         motion: &mut fctx.motion,
+        door_anim_max_ms: fctx.door_anim_max_ms,
         theme,
         floor: floor_meta,
         active_pet,
