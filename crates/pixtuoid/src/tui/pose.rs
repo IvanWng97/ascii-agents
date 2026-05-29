@@ -172,33 +172,21 @@ pub fn derive_with_routing(
     if let Some(last) = path.last_mut() {
         *last = to;
     }
-    // Global path-ease: apply EaseOutCubic to the walk's overall progress
-    // BEFORE leg dispatch, so the agent decelerates smoothly across the
-    // entire walk with no per-leg velocity discontinuity, and with
-    // consistent feel regardless of path length (2-point or 3+ point).
-    let normalized_t = t_x1000 as f32 / 1000.0;
-    let eased_t = crate::tui::anim::Easing::EaseOutCubic.apply(normalized_t);
-    let eased_t_x1000 = (eased_t * 1000.0).round() as u16;
-
     if path.len() <= 2 {
-        // Straight-line walk — record the eased interpolated position for
-        // next frame's snap-back lookup.
-        history.record(
-            slot.agent_id,
-            walking_position(from, to, eased_t_x1000),
-            now,
-        );
+        // Straight-line walk — record the interpolated position for next
+        // frame's snap-back lookup.
+        history.record(slot.agent_id, walking_position(from, to, t_x1000), now);
         return Some(Pose::Walking {
             from,
             to,
-            t_x1000: eased_t_x1000,
+            t_x1000,
             frame,
             carrying_coffee,
         });
     }
-    // Map global eased t to a (segment_idx, t_within_segment) using
-    // cumulative octile distance — same metric A* used to plan the path,
-    // so timing stays uniform along diagonals.
+    // Map global t to a (segment_idx, t_within_segment) using cumulative
+    // octile distance — same metric A* used to plan the path, so timing
+    // stays uniform along diagonals.
     let mut leg_lens: Vec<u32> = Vec::with_capacity(path.len() - 1);
     for w in path.windows(2) {
         leg_lens.push(octile_distance(w[0], w[1]));
@@ -207,7 +195,7 @@ pub fn derive_with_routing(
     if total == 0 {
         return Some(pose);
     }
-    let traveled = (eased_t_x1000 as u32 * total) / 1000;
+    let traveled = (t_x1000 as u32 * total) / 1000;
     let mut acc: u32 = 0;
     for (i, &leg) in leg_lens.iter().enumerate() {
         if acc + leg >= traveled {
@@ -427,9 +415,8 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let l = layout();
         // Entry animation: ENTRY_ANIMATION_MS = 4000, since_spawn = 400 →
-        // raw t_x1000 = 100. With global ease: EaseOutCubic(0.1) ≈ 0.271 →
-        // eased_t_x1000 ≈ 271. For two ~equal legs, traveled ≈ 27.1% of
-        // total → agent is on leg 0 (door→mid), seg_t ≈ 54%.
+        // raw t_x1000 = 100. For two ~equal legs, traveled ≈ 10% of total
+        // → agent is on leg 0 (door→mid), seg_t ≈ 20%.
         let slot = entry_slot(now - Duration::from_millis(400));
         let mut history = PoseHistory::new();
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
@@ -447,11 +434,11 @@ mod tests {
             }) => {
                 assert_eq!(from, door, "first segment starts at door, got {from:?}");
                 assert_eq!(to, mid, "first segment ends at mid, got {to:?}");
-                // eased(0.1) ≈ 0.271 → seg_t of first leg ≈ 0.271*2 = 0.542 → ~542.
+                // linear t=0.1 over two equal legs → seg_t of first leg ≈ 0.2 → ~200.
                 // Accept a wider band to tolerate octile rounding.
                 assert!(
-                    (300..=700).contains(&t_x1000),
-                    "expected mid-first-segment seg_t in [300,700], got t_x1000={t_x1000}"
+                    (100..=400).contains(&t_x1000),
+                    "expected mid-first-segment seg_t in [100,400], got t_x1000={t_x1000}"
                 );
                 assert!(history.recent(slot.agent_id, 1_000, now).is_some());
             }
@@ -536,110 +523,5 @@ mod tests {
         let t1 = t0 + Duration::from_millis(600);
         assert_eq!(history.recent(id, 500, t1), None);
         assert_eq!(history.recent(id, 700, t1), Some(pt));
-    }
-
-    #[test]
-    fn walk_progress_is_eased_globally() {
-        // Regression: EaseOutCubic is applied to the walk's GLOBAL progress
-        // before leg dispatch. This means:
-        //   1. No per-leg velocity discontinuity — all legs see the eased t.
-        //   2. Consistent deceleration on both 2-point and 3+ point paths.
-        //
-        // Key property: EaseOutCubic(0.5) ≈ 0.875, so at t=50% of the walk
-        // the agent should be PAST the geometric midpoint (i.e. on the second
-        // of two equal-length legs, not the first).
-        //
-        // At t=99% the agent must still be well inside [900, 1000] on the
-        // final leg (near-end correctness check).
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let l = layout();
-        let door = l.door_threshold.expect("door");
-        let desk = l.home_desks[0];
-        let entry_ms = ENTRY_ANIMATION_MS;
-
-        let mid = Point {
-            x: (door.x + desk.x) / 2,
-            y: (door.y + desk.y) / 2,
-        };
-        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
-
-        // ── At t=50%, agent should be on the SECOND leg ──────────────────
-        // EaseOutCubic(0.5) ≈ 0.875 > 0.5, so eased traveled > half of
-        // total distance → agent is past mid-point → on leg 1 (from=mid).
-        let since_500 = 500 * entry_ms / 1000;
-        let slot_500 = entry_slot(now - Duration::from_millis(since_500));
-        let mut router_500 = StubRouter::corners(vec![door, mid, desk]);
-        let mut history_500 = PoseHistory::new();
-        let p_500 = derive_with_routing(
-            &slot_500,
-            now,
-            &l,
-            &mut router_500,
-            &overlay,
-            &mut history_500,
-        );
-        match p_500 {
-            Some(Pose::Walking { from, .. }) => {
-                assert_eq!(
-                    from, mid,
-                    "at t=50%, global ease puts agent past mid-point: should be on leg 1 (from=mid), got from={from:?}"
-                );
-            }
-            other => panic!("expected Walking at t=500, got {other:?}"),
-        }
-
-        // ── At t=99%, agent should be near end: seg_t in [900, 1000] ─────
-        let since_990 = 990 * entry_ms / 1000;
-        let slot_990 = entry_slot(now - Duration::from_millis(since_990));
-        let mut router_990 = StubRouter::corners(vec![door, mid, desk]);
-        let mut history_990 = PoseHistory::new();
-        let p_990 = derive_with_routing(
-            &slot_990,
-            now,
-            &l,
-            &mut router_990,
-            &overlay,
-            &mut history_990,
-        );
-        let seg_t_990 = match p_990 {
-            Some(Pose::Walking { t_x1000, .. }) => t_x1000,
-            other => panic!("expected Walking at t=990, got {other:?}"),
-        };
-        assert!(
-            seg_t_990 >= 900,
-            "at t=99%, seg_t should be >= 900 (near end), got {seg_t_990}"
-        );
-        assert!(
-            seg_t_990 <= 1000,
-            "seg_t must not exceed 1000, got {seg_t_990}"
-        );
-
-        // ── 2-point path: same global ease applies ────────────────────────
-        // A straight-line walk (path.len()==2) should also get global ease.
-        // At t=50%, eased_t_x1000 ≈ 875. Verify via a StubRouter::straight
-        // path and a matching entry_slot at t=500.
-        let slot_2pt = entry_slot(now - Duration::from_millis(since_500));
-        let mut router_2pt = StubRouter::straight();
-        let mut history_2pt = PoseHistory::new();
-        let p_2pt = derive_with_routing(
-            &slot_2pt,
-            now,
-            &l,
-            &mut router_2pt,
-            &overlay,
-            &mut history_2pt,
-        );
-        match p_2pt {
-            Some(Pose::Walking { t_x1000, .. }) => {
-                // EaseOutCubic(0.5) ≈ 0.875 → t_x1000 ≈ 875.
-                // Without global ease, raw t_x1000 ≈ 500. Assert > 600 to
-                // distinguish eased from linear clearly.
-                assert!(
-                    t_x1000 > 600,
-                    "2-point walk at t=50% should have eased t_x1000 > 600 (EaseOutCubic(0.5)≈875), got {t_x1000}"
-                );
-            }
-            other => panic!("expected Walking for 2-point path at t=500, got {other:?}"),
-        }
     }
 }
