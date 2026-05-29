@@ -17,6 +17,7 @@ pub(in crate::tui::pixel_painter) enum Weather {
     Fog,
     Overcast,
     Windy,
+    Smog,
 }
 
 pub(in crate::tui::pixel_painter) fn weather_state(now: SystemTime) -> Weather {
@@ -29,14 +30,15 @@ pub(in crate::tui::pixel_painter) fn weather_state(now: SystemTime) -> Weather {
     h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     h ^= h >> 31;
-    match h % 14 {
+    match h % 15 {
         0..=5 => Weather::Clear,
         6..=7 => Weather::Rain,
         8 => Weather::Storm,
         9 => Weather::Snow,
         10 => Weather::Fog,
         11..=12 => Weather::Overcast,
-        _ => Weather::Windy,
+        13 => Weather::Windy,
+        _ => Weather::Smog,
     }
 }
 
@@ -80,6 +82,10 @@ pub(in crate::tui::pixel_painter) fn atmo_attenuation(w: Weather) -> AtmoAttenua
         },
         Weather::Storm => AtmoAttenuation {
             intensity: 0.25,
+            has_direct_beam: false,
+        },
+        Weather::Smog => AtmoAttenuation {
+            intensity: 0.55,
             has_direct_beam: false,
         },
     }
@@ -334,5 +340,12 @@ mod tests {
             atmo_attenuation(Weather::Storm).intensity
                 < atmo_attenuation(Weather::Overcast).intensity
         );
+    }
+
+    #[test]
+    fn smog_dims_diffusely() {
+        let a = atmo_attenuation(Weather::Smog);
+        assert!(!a.has_direct_beam);
+        assert!(a.intensity > 0.4 && a.intensity < 0.7);
     }
 }

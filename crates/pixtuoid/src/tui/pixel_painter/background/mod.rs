@@ -54,6 +54,7 @@ pub(super) fn weather_floor_tint(w: Weather) -> Rgb {
         Weather::Fog => Rgb(200, 200, 205),
         Weather::Overcast => Rgb(210, 210, 215),
         Weather::Windy => Rgb(248, 248, 245),
+        Weather::Smog => Rgb(215, 200, 165),
     }
 }
 
@@ -545,6 +546,29 @@ fn paint_floor_to_ceiling_window(
                 }
             }
         }
+        Weather::Smog => {
+            // Warm-yellow desaturated haze across the full glass. Heavier
+            // than Fog and noticeably warmer — pulls the city behind a
+            // sodium-lit veil.
+            for dy in 1..h.saturating_sub(1) {
+                for dx in 1..w.saturating_sub(1) {
+                    let px = x + dx;
+                    let py = y + dy;
+                    if px < buf.width && py < buf.height {
+                        let cur = buf.get(px, py);
+                        buf.put(
+                            px,
+                            py,
+                            Rgb(
+                                blend(cur.0, 180, 0.30),
+                                blend(cur.1, 160, 0.30),
+                                blend(cur.2, 110, 0.30),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         Weather::Clear => {}
     }
 
@@ -561,7 +585,13 @@ fn paint_floor_to_ceiling_window(
     // Golden-hour blaze on the city silhouette only fires under clear or
     // windy skies; clouds scatter the warm direct light away.
     let atmo = atmo_attenuation(weather);
-    let sunset = (raw_sunset * (1.0 - twilight_now * 0.8) * atmo.intensity).max(0.0);
+    let smog_boost = if matches!(weather, Weather::Smog) {
+        1.4
+    } else {
+        1.0
+    };
+    let sunset =
+        (raw_sunset * (1.0 - twilight_now * 0.8) * atmo.intensity * smog_boost).clamp(0.0, 1.0);
     if sunset > 0.05 {
         let min_building_h = (glass_h / 5).max(3);
         for dy in 1..h.saturating_sub(1) {

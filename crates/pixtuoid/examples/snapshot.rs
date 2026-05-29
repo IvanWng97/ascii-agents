@@ -109,6 +109,12 @@ struct SnapshotArgs {
     #[arg(long)]
     now_hour: Option<u32>,
 
+    /// Override local day-of-January-2026 used by time-of-day. Combined
+    /// with --now-hour, lets us walk through enough weather slots to hit
+    /// rare variants (Rainbow needs a Rain/Storm in the previous slot).
+    #[arg(long, default_value_t = 1)]
+    now_day: u32,
+
     /// Seed N coffee stains onto each agent's desk for screenshot demos.
     /// Stains accumulate naturally over a live session via pantry trips;
     /// this skips that warmup.
@@ -130,9 +136,11 @@ fn main() -> Result<()> {
         Some(h) => {
             use chrono::TimeZone;
             chrono::Local
-                .with_ymd_and_hms(2026, 1, 1, h, 0, 0)
+                .with_ymd_and_hms(2026, 1, args.now_day, h, 0, 0)
                 .single()
-                .ok_or_else(|| anyhow::anyhow!("invalid --now-hour {h}"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("invalid --now-day/--now-hour {}:{}", args.now_day, h)
+                })?
                 .into()
         }
         None => SystemTime::now(),
