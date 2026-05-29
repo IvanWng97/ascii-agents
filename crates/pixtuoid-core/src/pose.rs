@@ -200,6 +200,20 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
         }
     }
 
+    state_driven_pose(slot, desk, layout, now)
+}
+
+/// The state→pose tail shared by `derive` and `derive_state_only`: maps
+/// `slot.state` (relative to `state_started_at`) to the animated pose,
+/// AFTER each caller has applied its own override guards and resolved
+/// `desk`. Keeping this in one place prevents the two entry points from
+/// drifting (e.g. divergent thinking-window or frame-counter logic).
+fn state_driven_pose(
+    slot: &AgentSlot,
+    desk: Point,
+    layout: &SceneLayout,
+    now: SystemTime,
+) -> Option<Pose> {
     let elapsed = now
         .duration_since(slot.state_started_at)
         .unwrap_or(Duration::ZERO)
@@ -227,7 +241,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
 }
 
 /// Pure state → pose derivation, **excluding** the exit and entry override
-/// blocks at the top of `derive`. Only the `match slot.state { … }` tail is
+/// blocks at the top of `derive`. Only the `state_driven_pose` tail is
 /// evaluated (elapsed time since `state_started_at` drives the animation
 /// frame counters).
 ///
@@ -239,34 +253,8 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
 ///
 /// Returns `None` when `slot.desk_index` is out of range for `layout`.
 pub fn derive_state_only(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option<Pose> {
-    // Bounds-check: we still need to verify desk_index is valid.
-    let _desk = *layout.home_desks.get(slot.desk_index)?;
-
-    let elapsed = now
-        .duration_since(slot.state_started_at)
-        .unwrap_or(Duration::ZERO)
-        .as_millis() as u64;
-
-    match &slot.state {
-        ActivityState::Active { .. } => {
-            let frame = ((elapsed / TYPING_FRAME_MS) as usize) % TYPING_FRAMES;
-            Some(Pose::SeatedTyping { frame })
-        }
-        ActivityState::Waiting { .. } => Some(Pose::StandingAtDesk),
-        ActivityState::Idle => {
-            let was_active = slot.last_event_at > slot.created_at;
-            let since_last_event = now
-                .duration_since(slot.last_event_at)
-                .unwrap_or(Duration::ZERO)
-                .as_secs();
-            if was_active && since_last_event < THINKING_WINDOW_SECS {
-                Some(Pose::SeatedThinking)
-            } else {
-                let desk = *layout.home_desks.get(slot.desk_index)?;
-                Some(idle_pose(slot, desk, layout, elapsed))
-            }
-        }
-    }
+    let desk = *layout.home_desks.get(slot.desk_index)?;
+    state_driven_pose(slot, desk, layout, now)
 }
 
 /// Pick an aimless wander destination using weighted zones. Each zone

@@ -91,7 +91,9 @@ pub fn pause_ms_for(agent_id: AgentId) -> u64 {
     let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     let z = z ^ (z >> 31);
     let bits = (z >> 40) & 0xFFF; // 0..=4095
-    let t = bits as f64 / 4095.0; // [0.0, 1.0]
+                                  // f64 (not f32 like speed_mult): the output is a u64 ms count, so f64 keeps
+                                  // the bits→[0,1]→ms integer round-trip exact across the full 200..=400 range.
+    let t = bits as f64 / 4095.0;
     PAUSE_MS_MIN + (t * (PAUSE_MS_MAX - PAUSE_MS_MIN) as f64) as u64
 }
 
@@ -101,7 +103,7 @@ pub fn pause_ms_for(agent_id: AgentId) -> u64 {
 ///   L = path_len_octile, v = v_base(intent) * speed_mult(agent_id), a = WALK_ACCEL
 ///   L_crit = v²/a  (path must be ≥ L_crit to reach cruise)
 ///   Triangular  (L < L_crit): T = 2·sqrt(L/a)
-///   Trapezoidal (L ≥ L_crit): T = v/a + (L - L_crit)/v   [= 2·t_a + t_c]
+///   Trapezoidal (L ≥ L_crit): T = 2·(v/a) + (L - L_crit)/v   [= 2·t_a + t_c]
 ///
 /// Zero-length paths: duration_ms = 0 so walk_progress returns 1000 immediately.
 pub fn walk_profile(path_len_octile: u32, intent: WalkIntent, agent_id: AgentId) -> WalkProfile {
@@ -188,7 +190,9 @@ pub fn walk_progress(p: &WalkProfile, elapsed_ms: u64) -> u16 {
         }
     };
 
-    // Clamp s to [0, L] before dividing (floating-point edge cases at boundaries).
+    // INVARIANT: the `elapsed_ms >= duration_ms` guard above prevents reaching
+    // here at t ≥ t_total, but f32 rounding can still nudge s slightly outside
+    // [0, L] at phase boundaries — clamp defensively (two-layer defence).
     let s_clamped = s.max(0.0).min(l);
     (1000.0 * s_clamped / l).round() as u16
 }
@@ -327,8 +331,9 @@ mod tests {
                 (l as f32) < l_crit_v,
                 "agent {n}: L={l} should be < L_crit={l_crit_v}"
             );
-            // T = 2·sqrt(L / a)
-            let t_expected_ms = (2.0 * ((l as f32) / WALK_ACCEL).sqrt()) as u64;
+            // T = 2·sqrt(L / a). Match walk_profile's `.round()` so the
+            // expected value uses identical rounding to the implementation.
+            let t_expected_ms = (2.0 * ((l as f32) / WALK_ACCEL).sqrt()).round() as u64;
             let diff = profile.duration_ms.abs_diff(t_expected_ms);
             assert!(
                 diff <= 5,
@@ -435,6 +440,7 @@ mod tests {
             profile.duration_ms
         );
         let step = (cruise_end - cruise_start) / 5;
+        assert!(step > 0, "cruise band too narrow to sample");
         let samples: Vec<u16> = (0..=5)
             .map(|i| walk_progress(&profile, cruise_start + i * step))
             .collect();
