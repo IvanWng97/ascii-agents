@@ -42,6 +42,21 @@ const SPILL_DEPTH: u16 = 12;
 /// can derive the skip range from `layout.door` without crossing modules.
 const DOOR_SPRITE_WIDTH: u16 = 16;
 
+/// Multiplicative-ish tint applied to floor cells after the base palette,
+/// driven by current outdoor weather. Subtle (~15% blend); each variant
+/// shifts the indoor mood without overpowering the theme palette.
+pub(super) fn weather_floor_tint(w: Weather) -> Rgb {
+    match w {
+        Weather::Clear => Rgb(255, 252, 240),
+        Weather::Rain => Rgb(190, 200, 220),
+        Weather::Storm => Rgb(140, 145, 165),
+        Weather::Snow => Rgb(220, 230, 250),
+        Weather::Fog => Rgb(200, 200, 205),
+        Weather::Overcast => Rgb(210, 210, 215),
+        Weather::Windy => Rgb(248, 248, 245),
+    }
+}
+
 /// Returns one `SunbeamColumn` per floor-to-ceiling window, centred on
 /// the window and starting at the floor row (just below the wall band).
 /// Elevator-door windows are excluded — mirroring the `overlaps_door`
@@ -85,6 +100,9 @@ pub(super) fn paint_floor_and_walls(
     let wall = theme.surface.wall;
     let wall_trim_color = theme.surface.wall_trim;
 
+    let weather = weather_state(now);
+    let tint = weather_floor_tint(weather);
+
     for y in 0..buf_h {
         for x in 0..buf_w {
             let hash = (x as u32)
@@ -96,7 +114,12 @@ pub(super) fn paint_floor_and_walls(
                 2 | 3 => carpet_dark,
                 _ => carpet_base,
             };
-            buf.put(x, y, color);
+            let tinted = Rgb(
+                blend(color.0, tint.0, 0.15),
+                blend(color.1, tint.1, 0.15),
+                blend(color.2, tint.2, 0.15),
+            );
+            buf.put(x, y, tinted);
         }
     }
     for y in 0..top_wall_h.min(buf_h) {
@@ -112,7 +135,6 @@ pub(super) fn paint_floor_and_walls(
     // `window_spill_columns` so motes drift through the same x columns.
     let window_y: u16 = 1;
     let window_h: u16 = top_wall_h.saturating_sub(2).max(8);
-    let weather = weather_state(now);
     let mut x = 3u16;
     let mut idx: u32 = 0;
     while x + WINDOW_W + 2 <= buf_w {
@@ -559,5 +581,34 @@ fn paint_floor_to_ceiling_window(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weather_floor_tint_differs_by_variant() {
+        let clear = weather_floor_tint(Weather::Clear);
+        let rain = weather_floor_tint(Weather::Rain);
+        let fog = weather_floor_tint(Weather::Fog);
+        assert_ne!(clear, rain, "rain biases floor cooler");
+        assert_ne!(clear, fog, "fog desaturates");
+        assert!(
+            rain.2 >= rain.0,
+            "rain tint should be cool (blue >= red), got {:?}",
+            rain
+        );
+    }
+
+    #[test]
+    fn weather_floor_tint_clear_is_near_neutral() {
+        let clear = weather_floor_tint(Weather::Clear);
+        assert!(
+            clear.0 > 200 && clear.1 > 200 && clear.2 > 200,
+            "clear should be a near-white slight-warm tint, got {:?}",
+            clear
+        );
     }
 }
