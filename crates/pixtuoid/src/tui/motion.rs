@@ -20,8 +20,8 @@ use crate::tui::layout::{Layout, Point, WaypointKind};
 use crate::tui::pathfind::Router;
 use crate::tui::pose::octile_distance;
 use crate::tui::pose::{
-    cycle_ms_for, is_aimless_cycle, pick_aimless_dest, takes_trip, waypoint_index_for_cycle,
-    PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
+    aimless_wander_seed, cycle_ms_for, is_aimless_cycle, pick_aimless_dest, takes_trip,
+    waypoint_index_for_cycle, PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
 };
 
 /// Phase the wander cycle is currently in for a given agent.
@@ -164,9 +164,13 @@ pub fn advance_wander(
         let cycle = cycle_ms_for(id);
 
         if elapsed_idle > cycle {
-            // Jump approximation: skip full cycles anchoring the phase clock
-            // to the start of the current partial cycle.  Only seated+dwell
-            // periods are skipped — nil visual impact.
+            // Jump approximation: fast-forward cycle_n by integer division and
+            // anchor the phase clock to the start of the current partial cycle.
+            // The agent always (re)starts in Seated at that boundary, even if
+            // its true position would be mid-walk — acceptable because the
+            // agent was unobserved before this first render frame, so any
+            // starting phase is equally valid and Seated leaves no dangling
+            // walk profile.
             let cycles_elapsed = elapsed_idle / cycle;
             ms.wander_cycle_n = cycles_elapsed;
             let partial_ms = elapsed_idle % cycle;
@@ -217,7 +221,16 @@ pub fn advance_wander(
                         .get(slot.desk_index)
                         .copied()
                         .unwrap_or(dest);
-                    let path = router.route(&layout.walkable, overlay, desk, dest);
+                    // Route from desk+(6,4) (the seated anchor) so the walk-out
+                    // start matches where the seated sprite was — no stand-up
+                    // jump. This intentionally differs from core::idle_pose's
+                    // raw `from: desk`; only the routed TUI path is user-visible
+                    // and the walk-back already uses the same +(6,4) offset.
+                    let from = Point {
+                        x: desk.x + 6,
+                        y: desk.y + 4,
+                    };
+                    let path = router.route(&layout.walkable, overlay, from, dest);
                     let len = octile_path_len(&path).max(1);
                     ms.wander_profile = Some(walk_profile(len, WalkIntent::WanderOut, id));
 
@@ -234,13 +247,26 @@ pub fn advance_wander(
         WanderPhase::WalkingOut => {
             let profile = match &ms.wander_profile {
                 Some(p) => p,
-                None => return (WanderPhase::WalkingOut, 0),
+                None => {
+                    // Should be unreachable: a WalkingOut phase always has a
+                    // profile snapshotted at the Seated→WalkingOut transition.
+                    // Log + recover (project convention: never freeze silently).
+                    tracing::warn!(
+                        agent_id = ?slot.agent_id,
+                        "wander walk profile missing in WalkingOut — recovering"
+                    );
+                    return (WanderPhase::WalkingOut, 0);
+                }
             };
             let t_x1000 = pixtuoid_core::physics::walk_progress(profile, elapsed_phase);
 
             if may_transition && walk_arrived(profile, elapsed_phase) {
                 let walk_total = profile.duration_ms + profile.pause_ms;
                 // Snapshot the walk-back profile (overlay may differ now).
+                // Endpoint is desk+(6,4) to match seated_anchor so there's no
+                // jump on arrival; this intentionally differs from
+                // core::idle_pose's raw `to: desk` (only the routed TUI path is
+                // user-visible).
                 let desk = layout
                     .home_desks
                     .get(slot.desk_index)
@@ -299,7 +325,16 @@ pub fn advance_wander(
         WanderPhase::WalkingBack => {
             let profile = match &ms.wander_profile {
                 Some(p) => p,
-                None => return (WanderPhase::WalkingBack, 0),
+                None => {
+                    // Should be unreachable: a WalkingBack phase always has a
+                    // profile snapshotted at the AtWaypoint→WalkingBack
+                    // transition. Log + recover (never freeze silently).
+                    tracing::warn!(
+                        agent_id = ?slot.agent_id,
+                        "wander walk profile missing in WalkingBack — recovering"
+                    );
+                    return (WanderPhase::WalkingBack, 0);
+                }
             };
             let t_x1000 = pixtuoid_core::physics::walk_progress(profile, elapsed_phase);
 
@@ -341,8 +376,8 @@ fn pick_wander_dest(
     layout: &Layout,
 ) -> (Point, Option<WaypointKind>, Option<usize>) {
     if is_aimless_cycle(id, cycle_n) {
-        // Seed matches core::pose::idle_pose for identical destination selection.
-        let seed = id.raw() ^ cycle_n.wrapping_mul(0xd1b5_4a32_d192_ed03);
+        // Shared seed helper so this can never drift from core::pose::idle_pose.
+        let seed = aimless_wander_seed(id, cycle_n);
         let p = pick_aimless_dest(layout, seed);
         (p, None, None)
     } else {

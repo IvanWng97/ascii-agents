@@ -261,6 +261,13 @@ pub fn derive_state_only(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout
     state_driven_pose(slot, desk, layout, now)
 }
 
+/// Per-(agent, cycle) seed for `pick_aimless_dest`. Shared by core's
+/// `idle_pose` and the tui's `pick_wander_dest` so the two paths can never
+/// drift to different aimless destinations for the same (agent, cycle).
+pub fn aimless_wander_seed(agent_id: AgentId, cycle_n: u64) -> u64 {
+    agent_id.raw() ^ cycle_n.wrapping_mul(0xd1b5_4a32_d192_ed03)
+}
+
 /// Pick an aimless wander destination using weighted zones. Each zone
 /// gets a "vibe weight" — window-viewing strip + pantry are highest
 /// because that's where people naturally drift during breaks; corridor
@@ -354,7 +361,7 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
         // strip and pantry get the highest weight so the office
         // feels alive (people stretching at windows, grabbing
         // coffee), corridor/cubicle/meeting are more incidental.
-        let seed = slot.agent_id.raw() ^ cycle_n.wrapping_mul(0xd1b5_4a32_d192_ed03);
+        let seed = aimless_wander_seed(slot.agent_id, cycle_n);
         let p = pick_aimless_dest(layout, seed);
         (p, Pose::AimlessAt { dest: p })
     } else {

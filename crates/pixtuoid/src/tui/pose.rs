@@ -23,11 +23,11 @@ use pixtuoid_core::AgentId;
 use crate::tui::motion::{advance_wander, octile_path_len, MotionState, WanderPhase};
 
 pub use pixtuoid_core::pose::{
-    cycle_ms_for, derive, derive_state_only, is_aimless_cycle, personality_for, pick_aimless_dest,
-    takes_trip, waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS,
-    PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC, THINKING_WINDOW_SECS,
-    TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS,
-    WANDER_CYCLE_RANGE_MS,
+    aimless_wander_seed, cycle_ms_for, derive, derive_state_only, is_aimless_cycle,
+    personality_for, pick_aimless_dest, takes_trip, waypoint_index_for_cycle, Personality, Pose,
+    ENTRY_ANIMATION_MS, PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
+    THINKING_WINDOW_SECS, TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS,
+    WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
 };
 
 use crate::tui::layout::{Layout, Point, WaypointKind};
@@ -276,6 +276,15 @@ pub fn derive_with_routing(
                 let ms = motion.get(&slot.agent_id)?;
                 let desk_point = *layout.home_desks.get(slot.desk_index)?;
                 let dest = ms.wander_dest;
+                // Walk-out starts at desk+(6,4) (the seated anchor) so there's
+                // no stand-up jump; symmetric with walk-back's snap_target.
+                // This intentionally differs from core::idle_pose's raw
+                // `from: desk` (only the routed TUI path is user-visible) and
+                // matches the profile routed from desk+(6,4) in advance_wander.
+                let from = Point {
+                    x: desk_point.x + 6,
+                    y: desk_point.y + 4,
+                };
                 let elapsed_phase = now
                     .duration_since(ms.wander_phase_started_at)
                     .unwrap_or(Duration::ZERO)
@@ -289,7 +298,7 @@ pub fn derive_with_routing(
                     overlay,
                     history,
                     Pose::Walking {
-                        from: desk_point,
+                        from,
                         to: dest,
                         t_x1000: t_phys,
                         frame,
@@ -316,6 +325,10 @@ pub fn derive_with_routing(
             WanderPhase::WalkingBack => {
                 let ms = motion.get(&slot.agent_id)?;
                 let desk_point = *layout.home_desks.get(slot.desk_index)?;
+                // Endpoint is desk+(6,4) to match seated_anchor so there's no
+                // jump on arrival; this intentionally differs from
+                // core::idle_pose's raw `to: desk` (only the routed TUI path is
+                // user-visible).
                 let snap_target = Point {
                     x: desk_point.x + 6,
                     y: desk_point.y + 4,
