@@ -541,6 +541,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                             actual_full,
                             theme,
                             popup_scale,
+                            now,
                         );
                     }
                 }

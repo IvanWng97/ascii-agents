@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
+use pixtuoid_core::sprite::Rgb;
 use pixtuoid_core::state::ActivityState;
 use pixtuoid_core::SceneState;
 use ratatui::layout::Rect;
@@ -15,6 +16,24 @@ use crate::tui::renderer::clip_widget_rect;
 /// accent (`neon_brand`) and its dominant office surface (`carpet_base`).
 fn theme_swatch(t: &crate::tui::theme::Theme) -> (Color, Color) {
     (to_color(t.ui.neon_brand), to_color(t.surface.carpet_base))
+}
+
+/// Border glow color for the version popup: a ~3s sine pulse that lerps
+/// from 60% to 100% of `brand` toward `bg`, so the frame breathes without
+/// ever dropping so dim it reads as "off". Deterministic in `now`.
+fn pulse_border_color(bg: Rgb, brand: Rgb, now: SystemTime) -> Color {
+    let ms = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let phase = (ms % 3000) as f32 / 3000.0 * std::f32::consts::TAU;
+    let t = (phase.sin() * 0.5 + 0.5) * 0.4 + 0.6;
+    let lerp = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    Color::Rgb(
+        lerp(bg.0, brand.0),
+        lerp(bg.1, brand.1),
+        lerp(bg.2, brand.2),
+    )
 }
 
 pub(in crate::tui) fn paint_theme_picker(
@@ -374,6 +393,7 @@ pub(in crate::tui) fn paint_version_popup(
     bounds: Rect,
     theme: &crate::tui::theme::Theme,
     scale: f32,
+    now: SystemTime,
 ) {
     use ratatui::style::Modifier;
     use ratatui::text::{Line, Span as TSpan};
@@ -421,6 +441,10 @@ pub(in crate::tui) fn paint_version_popup(
     ]));
 
     let title = format!(" What's new in v{version} \u{2014} Enter to close ");
+    // Gentle ~3s glow pulse on the border: lerp between 60% and 100% of the
+    // neon_brand toward the popup background, so the frame breathes like a
+    // marketing-shot neon sign without distracting from the notes.
+    let border = pulse_border_color(theme.ui.tooltip_bg, theme.ui.neon_brand, now);
     let block = Block::default()
         .title(TSpan::styled(
             title,
@@ -429,7 +453,7 @@ pub(in crate::tui) fn paint_version_popup(
                 .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(to_color(theme.ui.neon_brand)))
+        .border_style(Style::default().fg(border))
         .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
 
     f.render_widget(Paragraph::new(items).block(block), area);
@@ -524,6 +548,7 @@ pub(in crate::tui) fn paint_elevator_indicator(
 #[cfg(test)]
 mod hud_tests {
     use super::*;
+    use std::time::Duration;
 
     fn full_bounds(w: u16, h: u16) -> Rect {
         Rect {
@@ -539,6 +564,29 @@ mod hud_tests {
         let rect = version_popup_url_rect(4, full_bounds(200, 60), 1.0).expect("should fit");
         assert_eq!(rect.width, VERSION_POPUP_URL.len() as u16);
         assert_eq!(rect.height, 1);
+    }
+
+    #[test]
+    fn pulse_border_color_breathes_within_bounds() {
+        use crate::tui::theme;
+        let bg = theme::NORMAL.ui.tooltip_bg;
+        let brand = theme::NORMAL.ui.neon_brand;
+        let at = |ms: u64| {
+            pulse_border_color(bg, brand, std::time::UNIX_EPOCH + Duration::from_millis(ms))
+        };
+        // Peak at 750ms (phase = π/2) → full brand.
+        assert_eq!(at(750), Color::Rgb(brand.0, brand.1, brand.2));
+        // Deterministic + 3s-periodic.
+        assert_eq!(at(1234), at(1234 + 3000));
+        // Trough at 2250ms (phase = 3π/2) → dimmer than peak but never fully
+        // dropped to the background.
+        let trough = at(2250);
+        assert_ne!(trough, at(750), "trough should be dimmer than peak");
+        assert_ne!(
+            trough,
+            Color::Rgb(bg.0, bg.1, bg.2),
+            "border never drops fully to background"
+        );
     }
 
     #[test]

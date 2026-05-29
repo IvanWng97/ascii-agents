@@ -331,6 +331,7 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
                     actual_full,
                     theme,
                     ctx.popup_scale,
+                    now,
                 );
             }
         }
