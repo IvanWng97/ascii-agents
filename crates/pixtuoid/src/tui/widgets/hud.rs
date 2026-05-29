@@ -363,8 +363,14 @@ pub(in crate::tui) fn version_popup_url_rect(
         return None; // URL not clickable until popup reaches 70% scale
     }
     let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
-    let w = needed_w.min(bounds.width);
-    let h = (notes_len as u16 + 6).min(bounds.height);
+    // Mirror paint_version_popup's geometry exactly: clamp to bounds first,
+    // then scale, then derive popup_x/popup_y from the SCALED w/h. Centering
+    // off the unscaled w/h leaves the click rect offset from the painted
+    // popup at any scale < 1.0.
+    let w_full = needed_w.min(bounds.width);
+    let h_full = (notes_len as u16 + 6).min(bounds.height);
+    let w = ((w_full as f32 * scale).round() as u16).max(2);
+    let h = ((h_full as f32 * scale).round() as u16).max(2);
     if w < 4 || h < 3 {
         return None;
     }
@@ -469,6 +475,28 @@ mod hud_tests {
                 popup_inner_right
             );
         }
+    }
+
+    // Regression: at scale < 1.0 the URL click rect must center off the
+    // SCALED width, mirroring paint_version_popup. Centering off unscaled
+    // w shifts the click area ~((1-scale)*needed_w)/2 columns left of the
+    // painted URL.
+    #[test]
+    fn url_rect_centering_matches_painter_at_partial_scale() {
+        let bounds = full_bounds(200, 60);
+        let scale = 0.85; // ≥ 0.7 gate and ≥ 0.8 vertical threshold for notes_len=4
+        let needed_w = 2 + URL_PREFIX.len() as u16 + VERSION_POPUP_URL.len() as u16 + 2;
+        let w_full = needed_w.min(bounds.width);
+        let w_scaled = ((w_full as f32 * scale).round() as u16).max(2);
+        let expected_popup_x = bounds.width.saturating_sub(w_scaled) / 2;
+        let expected_url_x = expected_popup_x + 1 + URL_PREFIX.len() as u16;
+        let rect = version_popup_url_rect(4, bounds, scale)
+            .expect("url rect should exist at scale=0.85 with notes_len=4");
+        assert_eq!(
+            rect.x, expected_url_x,
+            "url click rect x={} must match painter's scaled-centering popup_x+1+prefix={}",
+            rect.x, expected_url_x
+        );
     }
 
     // Regression for the off-screen URL row bug: on a too-short terminal,
