@@ -116,34 +116,36 @@ Walking→Seated/AtWaypoint flip. `pause_ms` is per-agent so simultaneous arriva
 
 ### Constant calibration
 
-The synthesis derived constants from a rigorous human-gait + pixel-scale mapping:
-comfortable walk ≈ 1.4 m/s, brisk commute ≈ 1.6 m/s, office amble ≈ 1.1 m/s; office band
-≈ 12 m across a ~160–192 px buffer → **1 px ≈ 0.075 m → 1 m ≈ 133 octile**.
+Constants are calibrated against the **measured door→desk octile distances** in the real office
+geometry (see table above), with the goal of keeping the *effective average* walk pace ≈ the old
+flat 4 s baseline while making duration distance-proportional.
 
 ```
-V_CRUISE_COMMUTE = 0.213 octile/ms   (1.6 m/s)   — Entry / Exit / SnapBack
-V_CRUISE_WANDER  = 0.146 octile/ms   (1.1 m/s)   — WanderOut / WanderBack
-WALK_ACCEL       = 3.7e-4 octile/ms² (2.8 m/s², ~0.5s ramp)
+V_CRUISE_COMMUTE = 0.36  octile/ms   — Entry / Exit / SnapBack
+V_CRUISE_WANDER  = 0.25  octile/ms   — WanderOut / WanderBack
+WALK_ACCEL       = 6.5e-4 octile/ms² (~0.55 s accel ramp: t_a = v/a)
 SPEED_MULT_MIN   = 0.85 ;  SPEED_MULT_MAX = 1.20
 PAUSE_MS_MIN     = 200  ;  PAUSE_MS_MAX   = 400
 ```
 
-**Reconciliation with measured distances (key tuning decision).** The synthesis calibrated
-its example durations against `L≈200–800` octile, but the *measured* entry distances are
-**916–1436 octile** (192×160 / 8 desks). At `v=0.213` those are **physically accurate but slow**:
-near desk `L=916 → T≈4.9s`, far desk `L=1436 → T≈7.3s`. That is correct real-world physics (a
-~7 m walk at 1.6 m/s ≈ 4–5 s), and the old `4000ms` was only ever right for an *average* desk.
+**Geometry-based rationale.** Measured entry distances on a 192×160 / 8-desk floor are
+916–1436 octile.  At `v=0.36` (commute, speed_mult=1.0):
 
-The open question for the live run: **physical accuracy vs viz snappiness.** Two stances:
-- **Physically exact (default):** keep `v=0.213`. Walks are 5–7 s; maximally "real world."
-- **Snappier:** raise to `v≈0.40` + `a≈8e-4` (still real kinematics, just a faster scale-world):
-  near `L=916 → T≈2.8s`, far `L=1436 → T≈4.1s`, tiny `L=206 → T≈1.0s` — closer to today's feel
-  while preserving the full stagger.
+| desk | L (octile) | T (ms) |
+|---|---|---|
+| near  | 916  | ≈ 3 100 ms |
+| avg   | ~1 100 | ≈ 3 800 ms |
+| far   | 1 436 | ≈ 4 500 ms |
+| tiny  | 206  | ≈ 1 100 ms (busy floor, 16 desks) |
 
-The **model is correct either way**; `v`/`a` are pure feel knobs finalized by reading a live
-render. Start at the physically-exact values, judge the snapshot, adjust toward "snappier" if
-7-second walks read as sluggish. Tests assert *relative* behavior (ordering, stagger, plateau),
-never absolute ms, so they're insensitive to this choice.
+Staggered-arrival spread: **1.4–3.4 s** on a busy floor — clearly visible at half-block scale.
+`L_crit = v²/a ≈ 199` octile (commute), `≈ 96` octile (wander); all real entry paths are in the
+trapezoidal regime.  `WALK_ACCEL = 6.5e-4` gives `t_a ≈ 0.55 s`, a natural ease-in/ease-out ramp.
+
+The initial draft proposed `v=0.213` (human-gait calibrated, giving 5–7 s walks), but
+the measured geometry showed those walks would read as sluggish against the old 4 s baseline.
+The decided values keep the **effective average walk time ≈ 4 s** while delivering the full
+stagger effect.  The model is identical either way; `v`/`a` are pure feel knobs.
 
 ## Architecture
 
@@ -326,8 +328,9 @@ test passes unchanged; snapshot example renders without panic (visual baseline c
    `core::derive`, not routing): now that wander phase is stateful in the tui, the overlay pass
    may disagree for one frame on who is AtWaypoint. Likely benign (overlay is advisory for A\*);
    consider building it from the motion map for exactness.
-4. **`v`/`a` final values:** physically-exact (`v=0.213`, ~5–7s walks) vs snappier (`v≈0.40`,
-   `a≈8e-4`, ~1–4s). Start exact, judge the live render, tune. (See Constant calibration.)
+4. ~~**`v`/`a` final values:** physically-exact vs snappier.~~ **RESOLVED:** `V_CRUISE_COMMUTE=0.36`,
+   `V_CRUISE_WANDER=0.25`, `WALK_ACCEL=6.5e-4`. Calibrated to measured office geometry;
+   effective average walk ≈ 4 s with a 1.4–3.4 s stagger. (See Constant calibration.)
 5. **Exit arrival pause:** exit ends in GC (`None`), no pose flip. Recommend no pause on exit.
 6. **Visual baseline:** the snapshot baseline changes deterministically; confirm its
    location/process so Phase 6 regenerates the right artifact and the PR documents the diff.

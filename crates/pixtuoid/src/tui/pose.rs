@@ -946,8 +946,8 @@ mod tests {
         //
         // Distance choice: prev = desk+(10,5) → snap_target = desk+(6,4)
         //   dx=4, dy=1, octile = 14*1 + 10*(4-1) = 44 units.
-        //   L_crit(max speed) ≈ 177 → 44 is firmly triangular for all agents.
-        //   T ≈ 2*sqrt(44/3.7e-4) ≈ 690 ms → T/4 ≈ 172 ms < 300 ms history gate.
+        //   L_crit(max speed) ≈ 287 → 44 is firmly triangular for all agents.
+        //   T ≈ 2*sqrt(44/6.5e-4) ≈ 520 ms → T/4 ≈ 130 ms < 300 ms history gate.
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let l = layout();
         let slot = active_slot(now, now - Duration::from_secs(60));
@@ -1478,10 +1478,10 @@ mod tests {
             .expect("exit profile set")
             .1;
         // v_cruise stored in WalkProfile is v_base * speed_mult — it must be
-        // derived from V_CRUISE_COMMUTE (0.213), NOT V_CRUISE_WANDER (0.146).
-        // The minimum possible commute v_cruise = 0.213 * 0.85 ≈ 0.181,
-        // while the maximum wander v_cruise = 0.146 * 1.20 ≈ 0.175.
-        // There's a gap: anything >= 0.176 is unambiguously commute.
+        // derived from V_CRUISE_COMMUTE (0.36), NOT V_CRUISE_WANDER (0.25).
+        // The minimum possible commute v_cruise = 0.36 * 0.85 ≈ 0.306,
+        // while the maximum wander v_cruise = 0.25 * 1.20 ≈ 0.300.
+        // There's a gap: anything >= 0.301 is unambiguously commute.
         let min_commute =
             pixtuoid_core::physics::V_CRUISE_COMMUTE * pixtuoid_core::physics::SPEED_MULT_MIN;
         let max_wander =

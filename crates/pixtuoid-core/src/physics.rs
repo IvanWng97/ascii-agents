@@ -25,12 +25,25 @@ pub enum WalkIntent {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/// Cruise speed for Entry / Exit / SnapBack walks (octile/ms ≈ 1.6 m/s).
-pub const V_CRUISE_COMMUTE: f32 = 0.213;
-/// Cruise speed for WanderOut / WanderBack walks (octile/ms ≈ 1.1 m/s).
-pub const V_CRUISE_WANDER: f32 = 0.146;
-/// Shared acceleration/deceleration constant (octile/ms²). Gives ~0.5 s ramp.
-pub const WALK_ACCEL: f32 = 3.7e-4;
+/// Cruise speed for Entry / Exit / SnapBack walks (octile/ms).
+///
+/// Calibrated against measured door→desk octile distances in the real office
+/// geometry (916–1436 octile on an 8-desk floor, 206–1436 on a 16-desk floor).
+/// Goal: keep the *effective average* walk pace ≈ the old flat 4 s baseline while
+/// making duration distance-proportional.  Resulting durations: near ≈ 3.1 s,
+/// avg ≈ 3.8 s, far ≈ 4.5 s (8-desk floor); ≈ 1.1 s for very-near desks on a
+/// busy floor → a 1.4–3.4 s staggered-arrival spread.
+pub const V_CRUISE_COMMUTE: f32 = 0.36;
+/// Cruise speed for WanderOut / WanderBack walks (octile/ms).
+///
+/// Ambling speed, slower than commute.  Calibrated in proportion to
+/// `V_CRUISE_COMMUTE` to preserve the commute-vs-wander pace contrast.
+pub const V_CRUISE_WANDER: f32 = 0.25;
+/// Shared acceleration/deceleration constant (octile/ms²).
+///
+/// Gives a ~0.55 s accel ramp (`t_a = v/a`).  Critical lengths:
+/// `L_crit = v²/a ≈ 199` octile (commute), `≈ 96` octile (wander).
+pub const WALK_ACCEL: f32 = 6.5e-4;
 
 /// Minimum per-agent speed multiplier.
 pub const SPEED_MULT_MIN: f32 = 0.85;
