@@ -1528,6 +1528,63 @@ mod tests {
     }
 
     #[test]
+    fn exit_far_completes_before_grace_window_no_vanish() {
+        // Regression: a far/slow physics exit walk whose duration exceeds the
+        // reducer's EXIT_GRACE_WINDOW (4500ms) must be time-compressed to REACH
+        // the door before the slot is GC'd. Before the fix the sprite popped out
+        // of existence mid-corridor (~85% along) when the grace window reaped it.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let door = l.door_threshold.expect("door");
+        let desk = l.home_desks[0];
+        let from = Point {
+            x: desk.x + 6,
+            y: desk.y + 4,
+        };
+        // Synthetic long route (≥1600 octile) so the physics exit duration
+        // exceeds the exit budget and the compression path is exercised.
+        let mid1 = Point {
+            x: from.x.saturating_add(80),
+            y: from.y,
+        };
+        let mid2 = Point {
+            x: mid1.x,
+            y: mid1.y.saturating_add(80),
+        };
+        let mut router = StubRouter::corners(vec![from, mid1, mid2, door]);
+        // Exit started 4300ms ago — just inside the 4500ms grace window.
+        let slot = exiting_slot(
+            now - Duration::from_millis(4300),
+            now - Duration::from_secs(60),
+        );
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut hist = PoseHistory::new();
+        let mut motion = HashMap::new();
+        match derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut hist, &mut motion) {
+            // Reached the door (Walking at the end of the path) or already
+            // arrived (None, GC imminent). Either way: NOT stuck mid-corridor.
+            Some(Pose::Walking { t_x1000, .. }) => assert!(
+                t_x1000 >= 950,
+                "far exit must reach the door by the grace window (no mid-corridor vanish), got t_x1000={t_x1000}"
+            ),
+            None => {}
+            other => panic!("expected Walking near the door or None (arrived), got {other:?}"),
+        }
+        // Sanity: the snapshotted exit profile really exceeded the budget, so the
+        // compression branch (not the pass-through) was the one under test.
+        let dur = motion[&slot.agent_id]
+            .exit
+            .as_ref()
+            .expect("exit profile snapshotted")
+            .1
+            .duration_ms;
+        assert!(
+            dur > 4200,
+            "test setup: exit duration {dur}ms should exceed the ~4200ms exit budget"
+        );
+    }
+
+    #[test]
     fn exit_uses_commute_speed_faster_than_wander() {
         // Exit profiles must use V_CRUISE_COMMUTE, not V_CRUISE_WANDER.
         // Proxy: compare v_cruise on the exit profile against the constant.
