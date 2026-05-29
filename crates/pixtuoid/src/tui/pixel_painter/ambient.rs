@@ -40,20 +40,29 @@ pub(super) fn dust_mote_positions(
         .as_millis() as u64;
     let mut out = Vec::with_capacity(MOTES_PER_COLUMN);
     for i in 0..MOTES_PER_COLUMN {
-        // Mix seed + particle id with a Fibonacci-hash constant so each
-        // mote in the column has independent phase / speed without
-        // visible regularity across columns.
-        let seed = floor_seed
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            .wrapping_add(i as u64);
-        let phase = (seed % 6283) as f32 / 1000.0;
-        let speed_y = 0.6 + ((seed >> 12) & 0x3) as f32 * 0.2;
-        let speed_x = 0.4 + ((seed >> 14) & 0x3) as f32 * 0.15;
+        // Mix floor_seed, column x, and particle id through splitmix64 so
+        // every (column, mote) pair gets an independent 64-bit seed. The
+        // prior approach `floor_seed * K + i` only varied the lowest few
+        // bits, leaving the >> 4/12/14 shifts identical across all three
+        // motes — they collapsed to a single drifting pixel per column.
+        let mut s = floor_seed
+            .wrapping_add((col.x as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9))
+            .wrapping_add((i as u64).wrapping_mul(0x94d0_49bb_1331_11eb));
+        s = (s ^ (s >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        s = (s ^ (s >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        s ^= s >> 31;
+        let phase = (s % 6283) as f32 / 1000.0;
+        let speed_y = 0.6 + ((s >> 12) & 0x3) as f32 * 0.2;
+        let speed_x = 0.4 + ((s >> 14) & 0x3) as f32 * 0.15;
         let cycle = col.depth as f32;
-        let y_offset = ((t_ms as f32 / 1000.0) * speed_y + ((seed >> 4) & 0xFF) as f32) % cycle;
+        let y_offset = ((t_ms as f32 / 1000.0) * speed_y + ((s >> 4) & 0xFF) as f32) % cycle;
         let y = col.top_y + y_offset as u16;
         let sx = (phase + (t_ms as f32 / 1000.0) * speed_x).sin();
-        let x = (col.x as f32 + sx * 2.5).round() as u16;
+        // Clamp x to [0, u16::MAX] before casting — negative f32 silently
+        // wraps to 0 via `as u16`, dragging motes to the left buffer edge
+        // on narrow terminals where col.x is small.
+        let raw_x = (col.x as f32 + sx * 2.5).round();
+        let x = raw_x.max(0.0).min(u16::MAX as f32) as u16;
         let norm = y_offset / cycle.max(1.0);
         let alpha = if norm < 0.15 {
             norm / 0.15
@@ -257,14 +266,21 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
         return;
     }
 
+    // When the wall band is shorter than the spot, fall back to projecting
+    // along across `wall_band_h` itself so the East/West spot still slides
+    // with the hour-of-day on tiny terminals (pre-fix saturating_sub gave
+    // 0 and pinned the spot to the top of the band).
+    let along_range = wall_band_h
+        .saturating_sub(h)
+        .max(wall_band_h.saturating_sub(1)) as f32;
     let (rx, ry) = match spot.wall {
         WallSide::East => {
-            let along_px = (wall_band_h.saturating_sub(h)) as f32 * spot.along.min(1.0);
+            let along_px = along_range * spot.along.min(1.0);
             let cx = layout.buf_w.saturating_sub(w);
             (cx, along_px as u16)
         }
         WallSide::West => {
-            let along_px = (wall_band_h.saturating_sub(h)) as f32 * spot.along.min(1.0);
+            let along_px = along_range * spot.along.min(1.0);
             (0u16, along_px as u16)
         }
         WallSide::South => unreachable!("guarded above"),
@@ -273,11 +289,19 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     let tint_strength = 0.35 * effective_intensity;
     let max_x = (rx + w).min(buf.width);
     let max_y = (ry + h).min(buf.height);
+    // Centre at (rx + (w-1)/2, ry + (h-1)/2) so the ellipse spans the
+    // loop's full inclusive index range symmetrically — pre-fix used
+    // `rx + w/2` which biased the centre half a cell off-grid, making
+    // the falloff sample only the top-left quadrant at small sizes.
+    let cx = rx as f32 + (w.saturating_sub(1)) as f32 * 0.5;
+    let cy = ry as f32 + (h.saturating_sub(1)) as f32 * 0.5;
+    let rx_norm = ((w.saturating_sub(1)) as f32 * 0.5).max(1.0);
+    let ry_norm = ((h.saturating_sub(1)) as f32 * 0.5).max(1.0);
     for y in ry..max_y {
         for x in rx..max_x {
             // Quadratic radial falloff so the spot reads round, not boxy.
-            let nx = (x as f32 - (rx as f32 + w as f32 / 2.0)) / (w as f32 / 2.0).max(1.0);
-            let ny = (y as f32 - (ry as f32 + h as f32 / 2.0)) / (h as f32 / 2.0).max(1.0);
+            let nx = (x as f32 - cx) / rx_norm;
+            let ny = (y as f32 - cy) / ry_norm;
             let r2 = nx * nx + ny * ny;
             if r2 > 1.0 {
                 continue;

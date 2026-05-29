@@ -110,8 +110,8 @@ struct SnapshotArgs {
     now_hour: Option<u32>,
 
     /// Override local day-of-January-2026 used by time-of-day. Combined
-    /// with --now-hour, lets us walk through enough weather slots to hit
-    /// rare variants (Rainbow needs a Rain/Storm in the previous slot).
+    /// with --now-hour, lets us walk through enough 10-minute weather
+    /// slots to hit rare variants.
     #[arg(long, default_value_t = 1)]
     now_day: u32,
 

@@ -420,3 +420,30 @@ fn coffee_stains_independent_per_agent() {
     assert_eq!(renderer.coffee_stains_for(a).len(), 1);
     assert_eq!(renderer.coffee_stains_for(b).len(), 0);
 }
+
+// Regression: after FIFO eviction, the new stain must NOT land on the
+// pixel of the just-evicted entry. Pre-fix the seed used stains.len()
+// after the pop, reusing the prior count value → identical offset.
+#[test]
+fn coffee_stains_no_duplicate_after_fifo_eviction() {
+    let mut renderer = make_renderer();
+    let agent_id = AgentId::from_transcript_path("/p/z.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    for i in 0..5 {
+        renderer.note_coffee_stain(agent_id, t0 + Duration::from_millis(i));
+    }
+    let stains = renderer.coffee_stains_for(agent_id);
+    assert_eq!(stains.len(), 4);
+    let positions: std::collections::HashSet<_> =
+        stains.iter().map(|s| (s.offset_x, s.offset_y)).collect();
+    // With per-call timestamp mixed into the seed, at least three of the
+    // four visible stains should occupy distinct (offset_x, offset_y).
+    assert!(
+        positions.len() >= 3,
+        "stains should not collapse to identical offsets after FIFO eviction: {:?}",
+        stains
+            .iter()
+            .map(|s| (s.offset_x, s.offset_y))
+            .collect::<Vec<_>>()
+    );
+}

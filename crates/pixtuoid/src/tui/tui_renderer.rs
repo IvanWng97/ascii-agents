@@ -253,11 +253,18 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
         if stains.len() >= MAX_STAINS_PER_DESK {
             stains.remove(0);
         }
-        let count = stains.len() as u64;
+        // Mix in the wall-clock millis so the per-stain seed is fresh on
+        // every call. The prior approach used `stains.len()` after the
+        // FIFO pop, which silently reused the just-evicted entry's count
+        // → new stain landed on the same pixel as the previous newest one.
+        let now_ms = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let seed = agent_id
             .raw()
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            .wrapping_add(count);
+            .wrapping_add(now_ms.wrapping_mul(0xbf58_476d_1ce4_e5b9));
         let offset_x = ((seed & 0x7) as i8) - 3;
         let offset_y = (((seed >> 3) & 0x3) as i8) - 1;
         stains.push(StainPos {

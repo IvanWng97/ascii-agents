@@ -582,8 +582,10 @@ fn paint_floor_to_ceiling_window(
         let hf = local.hour() as f32 + local.minute() as f32 / 60.0;
         super::palette::bell(hf, 6.5, 1.5).max(super::palette::bell(hf, 18.5, 1.5))
     };
-    // Golden-hour blaze on the city silhouette only fires under clear or
-    // windy skies; clouds scatter the warm direct light away.
+    // Golden-hour blaze on the city silhouette is attenuated by atmo —
+    // clouds scatter the direct warm light away (Storm at sunset reaches
+    // only ~25% of Clear's strength), Smog amplifies the warm cast by 1.4×
+    // for the sodium-lit "Blade Runner" sunset.
     let atmo = atmo_attenuation(weather);
     let smog_boost = if matches!(weather, Weather::Smog) {
         1.4

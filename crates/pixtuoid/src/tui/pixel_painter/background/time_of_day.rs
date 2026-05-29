@@ -8,7 +8,7 @@ use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 use crate::tui::pixel_painter::palette::{blend, lerp_rgb};
 use crate::tui::theme::Theme;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(in crate::tui::pixel_painter) enum Weather {
     Clear,
     Rain,
@@ -209,24 +209,40 @@ pub(in crate::tui::pixel_painter) struct SunSpot {
 /// Time-of-day sun position projected onto an office wall. Uses local
 /// hour-of-day so the sun's wall (East / West) matches what the rendered
 /// wall clock shows; same pattern as `paint_clock` / `sunset_strength` /
-/// `time_of_day_look`. Returns `None` outside daylight (6:00–19:00).
+/// `time_of_day_look`. Returns `None` outside the extended daylight
+/// window 5:30–19:30; the extra 30 minutes on each end carry a fade-in
+/// / fade-out ramp so the sun spot doesn't pop on/off at the boundary.
 pub(in crate::tui::pixel_painter) fn sun_on_wall(now: SystemTime) -> Option<SunSpot> {
     use chrono::Timelike;
+    const SUN_RAMP_HOURS: f32 = 0.5;
+    const LOWER: f32 = 6.0 - SUN_RAMP_HOURS;
+    const UPPER: f32 = 19.0 + SUN_RAMP_HOURS;
     let unix_now = now.duration_since(std::time::UNIX_EPOCH).ok()?;
     let local = chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + unix_now);
     let hour = local.hour() as f32 + local.minute() as f32 / 60.0;
-    if !(6.0..=19.0).contains(&hour) {
+    if !(LOWER..=UPPER).contains(&hour) {
         return None;
     }
-    let (wall, along) = if hour < 8.5 {
-        (WallSide::East, (hour - 6.0) / 2.5)
-    } else if hour < 16.0 {
-        (WallSide::South, (hour - 8.5) / 7.5)
+    // Wall partition uses the position-hour clamped to [6, 19] so the
+    // along/warmth/noon formulas stay in their valid ranges through the
+    // boundary fade.
+    let position_hour = hour.clamp(6.0, 19.0);
+    let (wall, along) = if position_hour < 8.5 {
+        (WallSide::East, (position_hour - 6.0) / 2.5)
+    } else if position_hour < 16.0 {
+        (WallSide::South, (position_hour - 8.5) / 7.5)
     } else {
-        (WallSide::West, (hour - 16.0) / 3.0)
+        (WallSide::West, (position_hour - 16.0) / 3.0)
     };
-    let noon_distance = (hour - 12.0).abs() / 6.0;
-    let intensity = (1.0 - noon_distance * 0.7).clamp(0.3, 1.0);
+    let noon_distance = (position_hour - 12.0).abs() / 6.0;
+    let boundary_fade = if hour < 6.0 {
+        ((hour - LOWER) / SUN_RAMP_HOURS).clamp(0.0, 1.0)
+    } else if hour > 19.0 {
+        ((UPPER - hour) / SUN_RAMP_HOURS).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let intensity = (1.0 - noon_distance * 0.7).clamp(0.0, 1.0) * boundary_fade;
     let warmth = noon_distance.clamp(0.0, 1.0);
     Some(SunSpot {
         wall,
@@ -347,5 +363,31 @@ mod tests {
         let a = atmo_attenuation(Weather::Smog);
         assert!(!a.has_direct_beam);
         assert!(a.intensity > 0.4 && a.intensity < 0.7);
+    }
+
+    #[test]
+    fn weather_state_emits_every_variant_within_a_week() {
+        use std::collections::HashSet;
+        use std::time::Duration;
+        let start = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let mut seen: HashSet<Weather> = HashSet::new();
+        for slot in 0..(7u64 * 24 * 6) {
+            seen.insert(weather_state(start + Duration::from_secs(slot * 600)));
+        }
+        for w in [
+            Weather::Clear,
+            Weather::Rain,
+            Weather::Storm,
+            Weather::Snow,
+            Weather::Fog,
+            Weather::Overcast,
+            Weather::Windy,
+            Weather::Smog,
+        ] {
+            assert!(
+                seen.contains(&w),
+                "weather_state never emitted {w:?} in a week of slots"
+            );
+        }
     }
 }
