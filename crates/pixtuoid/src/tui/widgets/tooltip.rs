@@ -230,8 +230,17 @@ fn paint_simple_tooltip(
     scene_rect: Rect,
     theme: &crate::tui::theme::Theme,
 ) {
+    let line = Line::from(Span::styled(
+        text,
+        Style::default()
+            .fg(to_color(theme.ui.tooltip_title))
+            .add_modifier(ratatui::style::Modifier::BOLD),
+    ));
     // +2 cols / +2 rows wrap the single content line in the rounded border.
-    let tip_w = (text.chars().count() as u16 + 2).min(scene_rect.width);
+    // Size by DISPLAY width, not char count: wide glyphs (e.g. the coffee
+    // ☕, 2 cells) would otherwise undersize the box by a column and clip
+    // the trailing content. Matches paint_hover_tooltip's `l.width()`.
+    let tip_w = (line.width() as u16 + 2).min(scene_rect.width);
     let tip_h = 3u16.min(scene_rect.height);
     let mut tx = mx.saturating_add(2);
     if tx.saturating_add(tip_w) > scene_rect.x + scene_rect.width {
@@ -254,12 +263,6 @@ fn paint_simple_tooltip(
         },
         scene_rect,
     ) {
-        let line = Line::from(Span::styled(
-            text,
-            Style::default()
-                .fg(to_color(theme.ui.tooltip_title))
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        ));
         f.render_widget(ratatui::widgets::Clear, r);
         f.render_widget(framed_tooltip(vec![line], theme), r);
     }

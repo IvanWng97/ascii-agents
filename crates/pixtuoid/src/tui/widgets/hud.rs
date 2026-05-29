@@ -47,7 +47,11 @@ pub(in crate::tui) fn paint_theme_picker(
     use ratatui::text::{Line, Span as TSpan};
     use ratatui::widgets::{Block, Borders, Clear};
 
-    let w = 28u16;
+    // Clamp to bounds.width: `Clear::render` (unlike Block/Paragraph) does
+    // not intersect with the buffer area, so an over-wide `area` panics on
+    // narrow terminals. The floor-transition paint path has no layout gate,
+    // so this is reachable at widths the normal path rejects.
+    let w = 28u16.min(bounds.width);
     let h = (theme::ALL_THEMES.len() as u16 + 2).min(bounds.height);
     let x = bounds.width.saturating_sub(w) / 2;
     let y = bounds.height.saturating_sub(h) / 2;
@@ -587,6 +591,22 @@ mod hud_tests {
             Color::Rgb(bg.0, bg.1, bg.2),
             "border never drops fully to background"
         );
+    }
+
+    // Regression: paint_theme_picker rendered Clear onto an unclamped
+    // 28-wide area; on a narrower buffer (reachable via the gate-less
+    // floor-transition paint path) Clear panics indexing past the buffer.
+    #[test]
+    fn theme_picker_narrow_terminal_does_not_panic() {
+        use ratatui::backend::TestBackend;
+        use ratatui::layout::Rect;
+        use ratatui::Terminal;
+        let mut term = Terminal::new(TestBackend::new(24, 30)).unwrap();
+        term.draw(|f| {
+            paint_theme_picker(f, 0, Rect::new(0, 0, 24, 30), &crate::tui::theme::NORMAL);
+        })
+        .unwrap();
+        // Reaching here without a panic is the assertion.
     }
 
     #[test]

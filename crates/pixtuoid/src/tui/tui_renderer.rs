@@ -505,6 +505,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
             let theme = self.theme;
             let theme_picker = self.theme_picker;
+            let help_open = self.help_open;
             // Floor label tracks the destination floor for the duration of the
             // slide so the per-floor agent count in the footer matches the
             // label (otherwise users see "F1/3 ... 5 agents" with floor 2's
@@ -544,6 +545,9 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                             now,
                         );
                     }
+                }
+                if help_open {
+                    crate::tui::renderer::paint_help_overlay(f, actual_scene, theme);
                 }
             })?;
 
