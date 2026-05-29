@@ -131,8 +131,6 @@ pub(in crate::tui::pixel_painter) struct SunSpot {
     pub wall: WallSide,
     /// 0.0..=1.0 along the wall (left→right for South, top→bottom for East/West).
     pub along: f32,
-    /// 0.0=high on wall, 1.0=low.
-    pub vertical: f32,
     /// 0.0=dim, 1.0=brightest at noon.
     pub intensity: f32,
     /// 0.0=neutral white (noon), 1.0=very warm gold (sunrise/sunset).
@@ -161,14 +159,9 @@ pub(in crate::tui::pixel_painter) fn sun_on_wall(now: SystemTime) -> Option<SunS
     let noon_distance = (hour - 12.0).abs() / 6.0;
     let intensity = (1.0 - noon_distance * 0.7).clamp(0.3, 1.0);
     let warmth = noon_distance.clamp(0.0, 1.0);
-    let vertical = match wall {
-        WallSide::South => 0.15,
-        WallSide::East | WallSide::West => 0.55 + noon_distance * 0.2,
-    };
     Some(SunSpot {
         wall,
         along,
-        vertical,
         intensity,
         warmth,
     })
