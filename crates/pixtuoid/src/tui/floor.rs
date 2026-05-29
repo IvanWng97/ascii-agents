@@ -94,6 +94,26 @@ impl FloorCtx {
             door_anim_max_ms: 0,
         }
     }
+
+    /// Recompute `door_anim_max_ms` from the current `motion` map: the max
+    /// `duration_ms + pause_ms` over all in-flight entry/exit profiles.
+    /// Called after each render (normal + transition paths) so the door
+    /// cosmetic on the NEXT frame matches the actual physics walk windows.
+    pub fn recompute_door_anim_max_ms(&mut self) {
+        self.door_anim_max_ms = self.motion.values().fold(0u64, |acc, ms| {
+            let entry_dur = ms
+                .entry
+                .as_ref()
+                .map(|(_, p)| p.duration_ms + p.pause_ms)
+                .unwrap_or(0);
+            let exit_dur = ms
+                .exit
+                .as_ref()
+                .map(|(_, p)| p.duration_ms + p.pause_ms)
+                .unwrap_or(0);
+            acc.max(entry_dur).max(exit_dur)
+        });
+    }
 }
 
 /// Per-floor indoor-lighting fade state.

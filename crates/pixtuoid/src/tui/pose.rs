@@ -100,7 +100,21 @@ pub fn derive_with_routing(
     // ---- EXIT branch -------------------------------------------------------
     // Takes priority over entry and state-driven poses.
     if let Some(exit_time) = slot.exiting_at {
-        let door_target = layout.door_threshold?;
+        let Some(door_target) = layout.door_threshold else {
+            // No door in this layout (very narrow terminal — Layout can
+            // return door_threshold: None). Skip the physics exit walk and
+            // let the reducer's grace window GC the slot. Returning None
+            // here would make the exiting agent VANISH on its first frame
+            // instead of holding at the desk; the old linear exit code
+            // handled this gracefully too.
+            let raw = derive_state_only(slot, now, layout)?;
+            return match raw {
+                Pose::Walking { .. } => {
+                    route_walking_pose(slot, now, layout, router, overlay, history, raw)
+                }
+                other => Some(other),
+            };
+        };
 
         let mstate = motion
             .entry(slot.agent_id)
@@ -1104,6 +1118,45 @@ mod tests {
             profile.v_cruise >= min_commute * 0.99, // small f32 tolerance
             "exit v_cruise {:.4} must be in commute range (>= {min_commute:.4})",
             profile.v_cruise
+        );
+    }
+
+    #[test]
+    fn exit_with_no_door_does_not_vanish() {
+        // Regression: on a layout with no door_threshold (very narrow
+        // terminal), an exiting agent must NOT return None on its first
+        // frame (None is the GC signal — the agent would vanish instantly).
+        // It should fall through to the state-driven pose and let the
+        // reducer's grace window GC the slot instead.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let mut l = layout();
+        l.door_threshold = None;
+        let slot = exiting_slot(now, now - Duration::from_secs(60));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let mut hist = PoseHistory::new();
+        let mut router = StubRouter::straight();
+
+        let p = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut hist,
+            &mut motion,
+        );
+        assert!(
+            p.is_some(),
+            "exiting agent on a no-door layout must not vanish (got None)"
+        );
+        // No exit profile should have been snapshotted — we never reached
+        // the physics exit branch.
+        assert!(
+            motion
+                .get(&slot.agent_id)
+                .is_none_or(|ms| ms.exit.is_none()),
+            "no exit profile should be snapshotted when there is no door"
         );
     }
 }

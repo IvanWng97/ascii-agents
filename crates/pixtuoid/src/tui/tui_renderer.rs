@@ -603,24 +603,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         // drop draw_ctx here so we can re-borrow floor_ctxs freely.
         drop(draw_ctx);
         // Recompute door_anim_max_ms from the motion map for the NEXT frame.
-        // Max of all active entry/exit (duration_ms + pause_ms) values.
-        let new_max = self.floor_ctxs[self.current_floor]
-            .motion
-            .values()
-            .fold(0u64, |acc, ms| {
-                let entry_dur = ms
-                    .entry
-                    .as_ref()
-                    .map(|(_, p)| p.duration_ms + p.pause_ms)
-                    .unwrap_or(0);
-                let exit_dur = ms
-                    .exit
-                    .as_ref()
-                    .map(|(_, p)| p.duration_ms + p.pause_ms)
-                    .unwrap_or(0);
-                acc.max(entry_dur).max(exit_dur)
-            });
-        self.floor_ctxs[self.current_floor].door_anim_max_ms = new_max;
+        self.floor_ctxs[self.current_floor].recompute_door_anim_max_ms();
         // Persist newly detected coffee carriers. The `insert` returns
         // `true` only on the EDGE (first time this agent enters the set
         // for this pantry trip), so stain accrual fires once per trip.
@@ -687,4 +670,8 @@ fn render_transition_floor(
         coffee_stains,
         light: &mut fctx.light,
     });
+    // Mirror the normal-path refresh: render_to_rgb_buffer may have
+    // snapshotted new entry/exit profiles into fctx.motion during the
+    // ≤900ms slide, so refresh door_anim_max_ms for the next frame.
+    fctx.recompute_door_anim_max_ms();
 }
