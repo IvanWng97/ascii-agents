@@ -377,3 +377,46 @@ fn cancel_transition_lands_on_destination_floor() {
         "cancel_transition should snap to the destination floor"
     );
 }
+
+fn make_renderer() -> TuiRenderer<TestBackend> {
+    let backend = TestBackend::new(96, 36);
+    let terminal = Terminal::new(backend).expect("terminal");
+    TuiRenderer::new(
+        terminal,
+        &pixtuoid::tui::theme::NORMAL,
+        pixtuoid::tui::pet::PetKind::ALL.to_vec(),
+    )
+}
+
+#[test]
+fn coffee_stain_added_on_note() {
+    let mut renderer = make_renderer();
+    let agent_id = AgentId::from_transcript_path("/p/a.jsonl");
+    renderer.note_coffee_stain(agent_id, SystemTime::UNIX_EPOCH);
+    assert_eq!(renderer.coffee_stains_for(agent_id).len(), 1);
+}
+
+#[test]
+fn coffee_stains_capped_at_4_per_desk() {
+    let mut renderer = make_renderer();
+    let agent_id = AgentId::from_transcript_path("/p/b.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    for i in 0..6 {
+        renderer.note_coffee_stain(agent_id, t0 + Duration::from_secs(i));
+    }
+    assert_eq!(
+        renderer.coffee_stains_for(agent_id).len(),
+        4,
+        "oldest evicted past 4"
+    );
+}
+
+#[test]
+fn coffee_stains_independent_per_agent() {
+    let mut renderer = make_renderer();
+    let a = AgentId::from_transcript_path("/p/x.jsonl");
+    let b = AgentId::from_transcript_path("/p/y.jsonl");
+    renderer.note_coffee_stain(a, SystemTime::UNIX_EPOCH);
+    assert_eq!(renderer.coffee_stains_for(a).len(), 1);
+    assert_eq!(renderer.coffee_stains_for(b).len(), 0);
+}

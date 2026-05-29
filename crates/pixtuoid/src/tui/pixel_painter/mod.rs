@@ -83,6 +83,7 @@ pub struct PixelCtx<'a> {
     pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
+    pub coffee_stains: &'a HashMap<pixtuoid_core::AgentId, Vec<crate::tui::tui_renderer::StainPos>>,
     pub light: &'a mut crate::tui::floor::LightingState,
 }
 
@@ -560,6 +561,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     .and_then(|t| ctx.now.duration_since(*t).ok())
                     .is_some_and(|d| d.as_secs() < COFFEE_STEAM_WINDOW_SECS)
             });
+        let stains: &[crate::tui::tui_renderer::StainPos] = occupant
+            .and_then(|a| ctx.coffee_stains.get(&a.agent_id))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         drawables.push(Drawable {
             anchor_y: desk.y + 8,
             kind: DrawableKind::DeskCubicle {
@@ -570,6 +575,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 session_age_secs,
                 has_coffee,
                 coffee_steam,
+                stains,
             },
         });
     }

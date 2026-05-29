@@ -195,6 +195,7 @@ fn main() -> Result<()> {
         chitchat_bubbles: Vec::new(),
         coffee_holders: &std::collections::HashSet::new(),
         coffee_fetched_at: &std::collections::HashMap::new(),
+        coffee_stains: &std::collections::HashMap::new(),
         new_coffee_carriers: Vec::new(),
         popup_scale: 0.0,
     };
@@ -653,6 +654,7 @@ fn save_as_gif(
             chitchat_bubbles: Vec::new(),
             coffee_holders: &std::collections::HashSet::new(),
             coffee_fetched_at: &std::collections::HashMap::new(),
+            coffee_stains: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
             popup_scale: 0.0,
         };
