@@ -280,18 +280,26 @@ pub fn derive_with_routing(
                     y: desk.y + 4,
                 };
                 // Retrieve or snapshot the physics profile for this snap-back.
-                // `get_or_insert_with` snapshots exactly once; subsequent frames
-                // reuse the frozen profile. Tests pass a fresh HashMap each call,
-                // so every test call also snapshots (same semantics — first sighting).
+                // Re-arm when EITHER there's no profile yet OR a NEW state
+                // transition began (stored `started_at != slot.state_started_at`):
+                // a second desk-bound transition within the 900ms window would
+                // otherwise reuse the stale T0 clock and jump mid-progress. The
+                // stored key is `slot.state_started_at` (not `now`) so the elapsed
+                // clock and the re-arm key agree. A fresh HashMap each call (tests)
+                // still snapshots on first sight — `snap_back` is None.
                 let ms_entry = motion
                     .entry(slot.agent_id)
                     .or_insert_with(|| MotionState::new(slot.agent_id));
-                ms_entry.snap_back.get_or_insert_with(|| {
+                let needs_arm = match &ms_entry.snap_back {
+                    Some((started_at, _, _)) => *started_at != slot.state_started_at,
+                    None => true,
+                };
+                if needs_arm {
                     let path = [prev, snap_target];
                     let len = octile_path_len(&path);
                     let p = walk_profile(len, WalkIntent::SnapBack, slot.agent_id);
-                    (now, p, prev)
-                });
+                    ms_entry.snap_back = Some((slot.state_started_at, p, prev));
+                }
                 // Clone out what we need so we can mutably clear snap_back if done.
                 let (started_at, profile, _snap_prev) =
                     ms_entry.snap_back.as_ref().unwrap().clone();
@@ -952,6 +960,79 @@ mod tests {
         assert_eq!(
             dur1, dur2,
             "snap-back profile must be snapshotted once and reused across frames"
+        );
+    }
+
+    #[test]
+    fn snap_back_rearms_on_new_state_transition() {
+        // A SECOND desk-bound transition within the 900ms window (state_started_at
+        // advances while snap_back still holds the T0 tuple) must RE-ARM: the
+        // stored `snap_back.0` should track the new `state_started_at`, not the
+        // stale T0 — otherwise the snap-back clock jumps mid-progress.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let desk = l.home_desks[0];
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut router = StubRouter::straight();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let mut history = PoseHistory::new();
+
+        // T0: first transition fires a snap-back.
+        let t0 = now;
+        let slot0 = active_slot(t0, now - Duration::from_secs(60));
+        let prev0 = Point {
+            x: desk.x + 50,
+            y: desk.y + 30,
+        };
+        history.record(slot0.agent_id, prev0, t0 - Duration::from_millis(50));
+        let _ = derive_with_routing(
+            &slot0,
+            t0,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let stored0 = motion
+            .get(&slot0.agent_id)
+            .and_then(|ms| ms.snap_back.as_ref())
+            .map(|(s, _, _)| *s)
+            .expect("snap_back armed at T0");
+        assert_eq!(stored0, t0, "first arm should key on T0 state_started_at");
+
+        // T0+400ms: a NEW transition (state_started_at advanced) within the window.
+        let t1_state = t0 + Duration::from_millis(400);
+        // Same agent_id (active_slot uses a fixed transcript path) so the motion
+        // entry is reused; only state_started_at moved.
+        let slot1 = active_slot(t1_state, now - Duration::from_secs(60));
+        let now1 = t1_state; // observe at the new transition instant
+        let prev1 = Point {
+            x: desk.x + 40,
+            y: desk.y + 25,
+        };
+        history.record(slot1.agent_id, prev1, now1 - Duration::from_millis(50));
+        let _ = derive_with_routing(
+            &slot1,
+            now1,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let stored1 = motion
+            .get(&slot1.agent_id)
+            .and_then(|ms| ms.snap_back.as_ref())
+            .map(|(s, _, _)| *s)
+            .expect("snap_back still present after new transition");
+        assert_eq!(
+            stored1, t1_state,
+            "snap-back must re-arm to the NEW state_started_at, not the stale T0"
+        );
+        assert_ne!(
+            stored1, t0,
+            "re-armed clock must differ from the old T0 clock"
         );
     }
 
