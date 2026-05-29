@@ -6,8 +6,8 @@ use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::{AgentId, SceneState};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::text::Span;
-use ratatui::widgets::Paragraph;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use super::to_color;
 use crate::tui::layout::{Layout, DESK_W};
@@ -16,6 +16,20 @@ use crate::tui::pet::PetKind;
 use crate::tui::pixel_painter::character_anchor;
 use crate::tui::pose;
 use crate::tui::renderer::clip_widget_rect;
+use crate::tui::theme::Theme;
+
+/// Rounded-border tooltip frame shared by every hover/click tooltip. Mirrors
+/// the version popup / keyboard help framing so all overlays read as one
+/// visual family. Border colour is `label_idle` — gentler than `neon_brand`,
+/// which we reserve for actionable popups (help / version notes).
+pub(super) fn framed_tooltip<'a>(lines: Vec<Line<'a>>, theme: &Theme) -> Paragraph<'a> {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(to_color(theme.ui.label_idle)))
+        .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
+    Paragraph::new(lines).block(block)
+}
 
 /// Labels above each character — uses `character_anchor` to follow the
 /// agent along its current path, color-codes by activity, falls back to
@@ -150,40 +164,41 @@ pub(crate) fn paint_hover_tooltip(
         "--%".to_string()
     };
 
-    let mut lines: Vec<ratatui::text::Line> = Vec::new();
-    lines.push(ratatui::text::Line::from(Span::styled(
-        format!(" {} ", agent.label),
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        agent.label.to_string(),
         Style::default()
             .fg(to_color(theme.ui.tooltip_title))
             .add_modifier(ratatui::style::Modifier::BOLD),
     )));
-    lines.push(ratatui::text::Line::from(vec![
-        Span::raw(" ●  "),
+    lines.push(Line::from(vec![
+        Span::raw("● "),
         Span::styled(state_label, Style::default().fg(state_color)),
     ]));
     if !state_detail.is_empty() {
         let trimmed: String = state_detail.chars().take(34).collect();
-        lines.push(ratatui::text::Line::from(Span::styled(
-            format!("    {}", trimmed),
+        lines.push(Line::from(Span::styled(
+            format!("  {}", trimmed),
             Style::default().fg(to_color(theme.ui.tooltip_text)),
         )));
     }
-    lines.push(ratatui::text::Line::from(Span::styled(
-        format!(" \u{1f4c1} {}", cwd_short),
-        Style::default().fg(to_color(theme.ui.tooltip_text)),
+    lines.push(Line::from(Span::styled(
+        format!("\u{1f4c1} {}", cwd_short),
+        Style::default().fg(to_color(theme.ui.label_idle)),
     )));
-    lines.push(ratatui::text::Line::from(Span::styled(
+    lines.push(Line::from(Span::styled(
         format!(
-            " \u{23f1} {} \u{00b7} {} calls \u{00b7} {} active",
+            "\u{23f1} {} \u{00b7} {} calls \u{00b7} {} active",
             duration_str, agent.tool_call_count, active_str
         ),
-        Style::default().fg(to_color(theme.ui.tooltip_dim)),
+        Style::default().fg(to_color(theme.ui.label_idle)),
     )));
 
-    let lines_h = lines.len() as u16;
-    let max_w = lines.iter().map(|l| l.width() as u16).max().unwrap_or(20) + 2;
-    let tip_w = max_w.min(scene_rect.width).max(18);
-    let tip_h = lines_h;
+    let content_h = lines.len() as u16;
+    let content_w = lines.iter().map(|l| l.width() as u16).max().unwrap_or(20);
+    // +2 cols / +2 rows accounts for the rounded Block border on all sides.
+    let tip_w = (content_w + 2).min(scene_rect.width).max(20);
+    let tip_h = (content_h + 2).min(scene_rect.height);
 
     let mut tx = mx.saturating_add(2);
     if tx.saturating_add(tip_w) > scene_rect.x + scene_rect.width {
@@ -203,13 +218,8 @@ pub(crate) fn paint_hover_tooltip(
         return;
     };
 
-    let para = Paragraph::new(lines).style(
-        Style::default()
-            .bg(to_color(theme.ui.tooltip_bg))
-            .fg(Color::White),
-    );
     f.render_widget(ratatui::widgets::Clear, clipped);
-    f.render_widget(para, clipped);
+    f.render_widget(framed_tooltip(lines, theme), clipped);
 }
 
 fn paint_simple_tooltip(
@@ -220,17 +230,19 @@ fn paint_simple_tooltip(
     scene_rect: Rect,
     theme: &crate::tui::theme::Theme,
 ) {
-    use ratatui::text::Line;
-    use ratatui::widgets::Block;
-
-    let tip_w = text.len() as u16;
-    let tip_h = 1u16;
+    // +2 cols / +2 rows wrap the single content line in the rounded border.
+    let tip_w = (text.chars().count() as u16 + 2).min(scene_rect.width);
+    let tip_h = 3u16.min(scene_rect.height);
     let mut tx = mx.saturating_add(2);
     if tx.saturating_add(tip_w) > scene_rect.x + scene_rect.width {
         tx = mx.saturating_sub(tip_w + 1);
     }
-    let mut ty = my.saturating_sub(1);
-    if ty < scene_rect.y {
+    // Float above the cursor; flip below if there isn't room for the framed
+    // tooltip above. Guard on geometry (cursor within tip_h of the top) rather
+    // than the post-saturation `ty`, which can't detect overflow when
+    // scene_rect.y == 0 (saturating_sub floors at 0, never < 0).
+    let mut ty = my.saturating_sub(tip_h);
+    if my < scene_rect.y + tip_h {
         ty = my.saturating_add(1);
     }
     if let Some(r) = clip_widget_rect(
@@ -242,12 +254,14 @@ fn paint_simple_tooltip(
         },
         scene_rect,
     ) {
-        let block = Block::default().style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
         let line = Line::from(Span::styled(
             text,
-            Style::default().fg(to_color(theme.ui.tooltip_title)),
+            Style::default()
+                .fg(to_color(theme.ui.tooltip_title))
+                .add_modifier(ratatui::style::Modifier::BOLD),
         ));
-        f.render_widget(Paragraph::new(line).block(block), r);
+        f.render_widget(ratatui::widgets::Clear, r);
+        f.render_widget(framed_tooltip(vec![line], theme), r);
     }
 }
 
