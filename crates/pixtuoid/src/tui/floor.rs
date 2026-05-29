@@ -7,8 +7,9 @@
 //! own router, overlay, pose history, and frame cache.
 
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
+use pixtuoid_core::physics::{walk_arrived, WalkProfile};
 use pixtuoid_core::state::{AgentSlot, SceneState};
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentId;
@@ -94,22 +95,30 @@ impl FloorCtx {
     }
 
     /// Recompute `door_anim_max_ms` from the current `motion` map: the max
-    /// `duration_ms + pause_ms` over all in-flight entry/exit profiles.
-    /// Called after each render (normal + transition paths) so the door
-    /// cosmetic on the NEXT frame matches the actual physics walk windows.
-    pub fn recompute_door_anim_max_ms(&mut self) {
+    /// `duration_ms + pause_ms` over the **in-flight** entry/exit profiles only.
+    /// Called after each render (normal + transition paths) so the door cosmetic
+    /// on the NEXT frame matches the actual physics walk windows.
+    ///
+    /// An ARRIVED profile is excluded (gated on `walk_arrived`): `MotionState`
+    /// keeps an agent's `entry` profile for the agent's whole lifetime (it is
+    /// only re-snapshotted, never cleared, to avoid re-walking entry), so
+    /// without this gate the door would stay "open" for as long as the agent
+    /// lives rather than just while they're actually walking through it.
+    pub fn recompute_door_anim_max_ms(&mut self, now: SystemTime) {
+        let in_flight = |opt: &Option<(SystemTime, WalkProfile)>| -> u64 {
+            opt.as_ref()
+                .filter(|(started_at, p)| {
+                    let elapsed = now
+                        .duration_since(*started_at)
+                        .unwrap_or(Duration::ZERO)
+                        .as_millis() as u64;
+                    !walk_arrived(p, elapsed)
+                })
+                .map(|(_, p)| p.duration_ms + p.pause_ms)
+                .unwrap_or(0)
+        };
         self.door_anim_max_ms = self.motion.values().fold(0u64, |acc, ms| {
-            let entry_dur = ms
-                .entry
-                .as_ref()
-                .map(|(_, p)| p.duration_ms + p.pause_ms)
-                .unwrap_or(0);
-            let exit_dur = ms
-                .exit
-                .as_ref()
-                .map(|(_, p)| p.duration_ms + p.pause_ms)
-                .unwrap_or(0);
-            acc.max(entry_dur).max(exit_dur)
+            acc.max(in_flight(&ms.entry)).max(in_flight(&ms.exit))
         });
     }
 }
@@ -271,6 +280,42 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn door_anim_excludes_arrived_entry_profiles() {
+        use crate::tui::motion::MotionState;
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let id = AgentId::from_transcript_path("/p/door.jsonl");
+        let mut fctx = FloorCtx::new();
+        let mut ms = MotionState::new(id);
+        // Entry walk: duration 2000ms + pause 300ms → walk_arrived at 2300ms.
+        ms.entry = Some((
+            t0,
+            WalkProfile {
+                duration_ms: 2000,
+                pause_ms: 300,
+                path_len_octile: 500,
+                v_cruise: 0.36,
+                accel: 6.5e-4,
+            },
+        ));
+        fctx.motion.insert(id, ms);
+
+        // Mid-walk → profile is in-flight → it sets the door window.
+        fctx.recompute_door_anim_max_ms(t0 + Duration::from_millis(1000));
+        assert_eq!(
+            fctx.door_anim_max_ms, 2300,
+            "in-flight entry walk should drive the door cosmetic window"
+        );
+
+        // Past arrival (>= duration + pause) → excluded so the door closes,
+        // even though MotionState.entry is never cleared for this agent.
+        fctx.recompute_door_anim_max_ms(t0 + Duration::from_millis(3000));
+        assert_eq!(
+            fctx.door_anim_max_ms, 0,
+            "an arrived entry profile must not hold the door open for the agent's lifetime"
+        );
+    }
 
     fn make_scene(n: usize, max_desks: usize) -> SceneState {
         let mut s = SceneState::uniform(max_desks);

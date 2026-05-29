@@ -604,7 +604,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
         // drop draw_ctx here so we can re-borrow floor_ctxs freely.
         drop(draw_ctx);
         // Recompute door_anim_max_ms from the motion map for the NEXT frame.
-        self.floor_ctxs[self.current_floor].recompute_door_anim_max_ms();
+        self.floor_ctxs[self.current_floor].recompute_door_anim_max_ms(now);
         // Persist newly detected coffee carriers. The `insert` returns
         // `true` only on the EDGE (first time this agent enters the set
         // for this pantry trip), so stain accrual fires once per trip.
@@ -674,5 +674,5 @@ fn render_transition_floor(
     // Mirror the normal-path refresh: render_to_rgb_buffer may have
     // snapshotted new entry/exit profiles into fctx.motion during the
     // ≤900ms slide, so refresh door_anim_max_ms for the next frame.
-    fctx.recompute_door_anim_max_ms();
+    fctx.recompute_door_anim_max_ms(now);
 }
