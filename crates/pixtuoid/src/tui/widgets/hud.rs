@@ -11,6 +11,12 @@ use ratatui::widgets::Paragraph;
 use super::{to_color, TickerQueue};
 use crate::tui::renderer::clip_widget_rect;
 
+/// The two colors that characterize a theme in the picker swatch: its
+/// accent (`neon_brand`) and its dominant office surface (`carpet_base`).
+fn theme_swatch(t: &crate::tui::theme::Theme) -> (Color, Color) {
+    (to_color(t.ui.neon_brand), to_color(t.surface.carpet_base))
+}
+
 pub(in crate::tui) fn paint_theme_picker(
     f: &mut ratatui::Frame<'_>,
     selected: usize,
@@ -22,7 +28,7 @@ pub(in crate::tui) fn paint_theme_picker(
     use ratatui::text::{Line, Span as TSpan};
     use ratatui::widgets::{Block, Borders, Clear};
 
-    let w = 30u16;
+    let w = 28u16;
     let h = (theme::ALL_THEMES.len() as u16 + 2).min(bounds.height);
     let x = bounds.width.saturating_sub(w) / 2;
     let y = bounds.height.saturating_sub(h) / 2;
@@ -37,19 +43,28 @@ pub(in crate::tui) fn paint_theme_picker(
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let prefix = if i == selected { "▸ " } else { "  " };
-            let style = if i == selected {
+            let prefix = if i == selected { "\u{25b8} " } else { "  " };
+            let name_style = if i == selected {
                 Style::default()
                     .fg(to_color(theme.ui.neon_brand))
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(to_color(theme.ui.label_idle))
             };
-            Line::from(TSpan::styled(format!("{prefix}{}", t.name), style))
+            // Each row previews the theme it would switch to via a 2-cell
+            // swatch (accent + office floor), so the picker reads visually
+            // rather than by name alone.
+            let (brand, surface) = theme_swatch(t);
+            Line::from(vec![
+                TSpan::styled(format!("{prefix}{:<12}", t.name), name_style),
+                TSpan::raw(" "),
+                TSpan::styled("\u{2588}", Style::default().fg(brand)),
+                TSpan::styled("\u{2588}", Style::default().fg(surface)),
+            ])
         })
         .collect();
     let block = Block::default()
-        .title(" Theme [↑↓/jk] Enter/Esc ")
+        .title(" Theme [\u{2191}\u{2193}/jk] Enter/Esc ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(to_color(theme.ui.neon_brand)))
         .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
@@ -524,6 +539,22 @@ mod hud_tests {
         let rect = version_popup_url_rect(4, full_bounds(200, 60), 1.0).expect("should fit");
         assert_eq!(rect.width, VERSION_POPUP_URL.len() as u16);
         assert_eq!(rect.height, 1);
+    }
+
+    #[test]
+    fn theme_swatch_distinguishes_themes() {
+        use crate::tui::theme;
+        // Each theme's (accent, surface) pair should reflect that theme's
+        // own palette, not the currently-active one — so the picker rows
+        // preview distinct colors.
+        let cyber = theme_swatch(&theme::CYBERPUNK);
+        let normal = theme_swatch(&theme::NORMAL);
+        assert_ne!(
+            cyber, normal,
+            "distinct themes must yield distinct swatches"
+        );
+        assert_eq!(cyber.0, to_color(theme::CYBERPUNK.ui.neon_brand));
+        assert_eq!(cyber.1, to_color(theme::CYBERPUNK.surface.carpet_base));
     }
 
     // Regression for the phantom-browser-launch bug: on a narrow terminal
