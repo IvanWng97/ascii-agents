@@ -120,6 +120,18 @@ struct SnapshotArgs {
     /// this skips that warmup.
     #[arg(long)]
     demo_stains: Option<usize>,
+
+    /// Force the `?` keyboard help overlay open (for screenshots).
+    #[arg(long)]
+    help_open: bool,
+
+    /// Force the theme picker open at the given row index (for screenshots).
+    #[arg(long)]
+    theme_picker: Option<usize>,
+
+    /// Force the version popup fully visible (for screenshots).
+    #[arg(long)]
+    popup: bool,
 }
 
 fn default_projects_root() -> String {
@@ -237,7 +249,7 @@ fn main() -> Result<()> {
         pinned_agent: None,
         ticker: &ticker,
         theme,
-        theme_picker: None,
+        theme_picker: args.theme_picker,
         floor_info: None,
         floor: {
             let mut m = pixtuoid::tui::floor::FloorMeta::ground();
@@ -253,8 +265,8 @@ fn main() -> Result<()> {
         coffee_fetched_at: &std::collections::HashMap::new(),
         coffee_stains: &demo_stains_map,
         new_coffee_carriers: Vec::new(),
-        popup_scale: 0.0,
-        help_open: false,
+        popup_scale: if args.popup { 1.0 } else { 0.0 },
+        help_open: args.help_open,
     };
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx)?;
 
