@@ -44,9 +44,12 @@ pub const WALKING_FRAME_MS: u64 = 220;
 pub const TYPING_FRAMES: usize = 2;
 pub const WALKING_FRAMES: usize = 2;
 
-/// Milliseconds of one-shot walk-from-door entry animation. Overrides the
-/// normal state→pose mapping for any newly-spawned agent so SessionStart
-/// reads as "someone just walked into the office".
+/// Spawn-window guard for entry routing in `tui::pose::derive_with_routing`.
+/// After `physics::walk_profile` took over motion timing this constant is no
+/// longer used to compute walk duration — it is only the *upper bound* on the
+/// time window during which the tui layer will attempt to route an entry walk
+/// and (via `FloorCtx::door_anim_max_ms`) drive door-open cosmetics. The
+/// actual walk completes when `physics::walk_arrived` returns true.
 pub const ENTRY_ANIMATION_MS: u64 = 4000;
 
 /// Deterministic wander-cycle length for one agent. Each agent picks a
