@@ -63,9 +63,9 @@ pub(in crate::tui) fn paint_footer(
     theme: &crate::tui::theme::Theme,
     floor_info: Option<crate::tui::renderer::FloorInfo>,
 ) {
-    let summary = build_status_summary(scene, full_rect.width, floor_info);
-    let footer = Paragraph::new(Span::raw(summary))
-        .style(Style::default().fg(to_color(theme.ui.label_idle)));
+    use ratatui::text::Line;
+    let spans = build_status_spans(scene, full_rect.width, floor_info, theme);
+    let footer = Paragraph::new(Line::from(spans));
     f.render_widget(
         footer,
         Rect {
@@ -77,10 +77,34 @@ pub(in crate::tui) fn paint_footer(
     );
 }
 
-/// Compose the footer's single-line summary, picking the widest variant
-/// (full / medium / minimal) that fits inside `term_width` alongside the
-/// fixed-right `[q] quit` suffix. Pure function — drives `paint_footer`
-/// and is unit-tested directly.
+/// Per-segment color role for the footer. The counting / tier-selection
+/// logic emits a list of `(text, role)` pieces once; the plain-string and
+/// colored-span renderers both consume that list, so their text is always
+/// byte-identical and only the color differs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SegRole {
+    /// Labels, separators, counts, tools, padding, quit hint — muted.
+    Neutral,
+    Active,
+    Waiting,
+    Idle,
+}
+
+impl SegRole {
+    fn color(self, theme: &crate::tui::theme::Theme) -> Color {
+        match self {
+            SegRole::Neutral | SegRole::Idle => to_color(theme.ui.label_idle),
+            SegRole::Active => to_color(theme.ui.label_active),
+            SegRole::Waiting => to_color(theme.ui.label_waiting),
+        }
+    }
+}
+
+/// Build the footer as an ordered list of `(text, role)` segments, picking
+/// the widest tier (full / medium / minimal) that fits inside `term_width`
+/// alongside the fixed-right quit suffix. Single source of truth for both
+/// the plain-string footer (`build_status_summary`) and the colored footer
+/// (`build_status_spans`).
 ///
 /// Tier breakdown:
 ///   * **full** (~50+ cells) — total count, per-state counts, top tool
@@ -90,11 +114,11 @@ pub(in crate::tui) fn paint_footer(
 ///   * **minimal** — just the total, e.g. `12a`.
 ///   * **fallback** — only the quit hint (any narrower terminal will
 ///     truncate this naturally).
-pub(in crate::tui) fn build_status_summary(
+fn status_segments(
     scene: &SceneState,
     term_width: u16,
     floor_info: Option<crate::tui::renderer::FloorInfo>,
-) -> String {
+) -> Vec<(String, SegRole)> {
     let n = scene.agents.len();
     // Multi-floor view always shows `n/total` so the total stays visible
     // even when an agent migrates and per-floor matches total transiently.
@@ -138,37 +162,84 @@ pub(in crate::tui) fn build_status_summary(
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let stats_full = if n == 0 {
-        format!(" {count_str} agents ")
+
+    // Each tier is a list of (text, role) segments whose concatenation is
+    // exactly the old plain-string output for that tier.
+    let seg_full: Vec<(String, SegRole)> = if n == 0 {
+        vec![(format!(" {count_str} agents "), SegRole::Neutral)]
     } else {
-        let mut s =
-            format!(" {count_str} agents · {active} active · {waiting} waiting · {idle} idle");
-        if !tools_str.is_empty() {
-            s.push_str(" · ");
-            s.push_str(&tools_str);
-        }
-        s.push(' ');
-        s
+        let tail = if tools_str.is_empty() {
+            " ".to_string()
+        } else {
+            format!(" · {tools_str} ")
+        };
+        vec![
+            (format!(" {count_str} agents · "), SegRole::Neutral),
+            (format!("{active} active"), SegRole::Active),
+            (" · ".to_string(), SegRole::Neutral),
+            (format!("{waiting} waiting"), SegRole::Waiting),
+            (" · ".to_string(), SegRole::Neutral),
+            (format!("{idle} idle"), SegRole::Idle),
+            (tail, SegRole::Neutral),
+        ]
     };
     // Narrow tiers use bare `n` — "5/12a" parses as "5 slash 12a" at a glance.
-    let stats_medium = format!(" {n}a · {active}A · {waiting}W · {idle}I ");
-    let stats_min = format!(" {n}a ");
+    let seg_medium: Vec<(String, SegRole)> = vec![
+        (format!(" {n}a · "), SegRole::Neutral),
+        (format!("{active}A"), SegRole::Active),
+        (" · ".to_string(), SegRole::Neutral),
+        (format!("{waiting}W"), SegRole::Waiting),
+        (" · ".to_string(), SegRole::Neutral),
+        (format!("{idle}I"), SegRole::Idle),
+        (" ".to_string(), SegRole::Neutral),
+    ];
+    let seg_min: Vec<(String, SegRole)> = vec![(format!(" {n}a "), SegRole::Neutral)];
 
     let w = term_width as usize;
     let q = quit.len();
-    for stats in [&stats_full, &stats_medium, &stats_min] {
-        if stats.len() + q <= w {
-            let pad = w.saturating_sub(stats.len() + q);
-            let mut out = String::with_capacity(w);
-            out.push_str(stats);
-            for _ in 0..pad {
-                out.push(' ');
+    for tier in [seg_full, seg_medium, seg_min] {
+        let stats_len: usize = tier.iter().map(|(s, _)| s.len()).sum();
+        if stats_len + q <= w {
+            let pad = w.saturating_sub(stats_len + q);
+            let mut out = tier;
+            if pad > 0 {
+                out.push((" ".repeat(pad), SegRole::Neutral));
             }
-            out.push_str(&quit);
+            out.push((quit, SegRole::Neutral));
             return out;
         }
     }
-    quit
+    vec![(quit, SegRole::Neutral)]
+}
+
+/// Plain-string footer — renders `status_segments` to text. Test-only: it
+/// is the text-contract oracle (insta snapshots + direct substring asserts)
+/// that locks the exact footer wording, byte-identical to the colored
+/// `build_status_spans` content. Production paints via `build_status_spans`.
+#[cfg(test)]
+pub(in crate::tui) fn build_status_summary(
+    scene: &SceneState,
+    term_width: u16,
+    floor_info: Option<crate::tui::renderer::FloorInfo>,
+) -> String {
+    status_segments(scene, term_width, floor_info)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect()
+}
+
+/// Colored footer — same segments as `build_status_summary`, each tinted by
+/// its state role so active/waiting/idle counts scan by hue.
+pub(in crate::tui) fn build_status_spans<'a>(
+    scene: &SceneState,
+    term_width: u16,
+    floor_info: Option<crate::tui::renderer::FloorInfo>,
+    theme: &crate::tui::theme::Theme,
+) -> Vec<Span<'a>> {
+    status_segments(scene, term_width, floor_info)
+        .into_iter()
+        .map(|(s, role)| Span::styled(s, Style::default().fg(role.color(theme))))
+        .collect()
 }
 
 pub(in crate::tui) fn paint_wall_display(

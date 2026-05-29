@@ -98,7 +98,7 @@ impl TickerQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hud::build_status_summary;
+    use hud::{build_status_spans, build_status_summary};
     use pixtuoid_core::source::Activity;
     use pixtuoid_core::{AgentId, AgentSlot};
     use std::path::PathBuf;
@@ -327,5 +327,56 @@ mod tests {
             "medium tier should not show slash: {line}"
         );
         assert!(line.contains("3a"), "got: {line}");
+    }
+
+    // --- build_status_spans ------------------------------------------------
+
+    // Drift guard: the colored footer must render the SAME text as the
+    // plain-string footer across every tier — they share `status_segments`,
+    // so concatenating the spans must equal build_status_summary exactly.
+    #[test]
+    fn status_spans_text_matches_summary_across_tiers() {
+        let theme = &crate::tui::theme::NORMAL;
+        let s = scene_of(vec![
+            active_with("Edit src/a.rs", "a"),
+            waiting("b"),
+            idle("c"),
+            idle("d"),
+        ]);
+        for (w, fl) in [
+            (120u16, None),
+            (60, None),
+            (28, None),
+            (10, None),
+            (120, Some(fi(2, 3, 9))),
+        ] {
+            let summary = build_status_summary(&s, w, fl);
+            let spans_text: String = build_status_spans(&s, w, fl, theme)
+                .iter()
+                .map(|sp| sp.content.as_ref())
+                .collect();
+            assert_eq!(spans_text, summary, "tier width {w} drifted");
+        }
+    }
+
+    #[test]
+    fn status_spans_color_code_state_segments() {
+        let theme = &crate::tui::theme::NORMAL;
+        let s = scene_of(vec![
+            active_with("Edit src/a.rs", "a"),
+            waiting("b"),
+            idle("c"),
+        ]);
+        let spans = build_status_spans(&s, 120, None, theme);
+        let active = spans
+            .iter()
+            .find(|sp| sp.content.contains("active"))
+            .unwrap();
+        let waiting = spans
+            .iter()
+            .find(|sp| sp.content.contains("waiting"))
+            .unwrap();
+        assert_eq!(active.style.fg, Some(to_color(theme.ui.label_active)));
+        assert_eq!(waiting.style.fg, Some(to_color(theme.ui.label_waiting)));
     }
 }
