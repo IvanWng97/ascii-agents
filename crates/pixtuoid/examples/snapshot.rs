@@ -254,6 +254,7 @@ fn main() -> Result<()> {
         coffee_stains: &demo_stains_map,
         new_coffee_carriers: Vec::new(),
         popup_scale: 0.0,
+        help_open: false,
     };
     draw_scene(&mut term, &scene, &pack, now, &mut draw_ctx)?;
 
@@ -713,6 +714,7 @@ fn save_as_gif(
             coffee_stains: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
             popup_scale: 0.0,
+            help_open: false,
         };
         draw_scene(term, scene, pack, now, &mut draw_ctx)?;
 

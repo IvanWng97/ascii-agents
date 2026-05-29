@@ -68,6 +68,7 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     coffee_stains: std::collections::HashMap<pixtuoid_core::AgentId, Vec<StainPos>>,
     version_popup: bool,
     version_popup_started_at: Option<SystemTime>,
+    help_open: bool,
     /// Scale captured at the moment of the last visible↔hidden edge so that
     /// an interrupted animation continues from its current position instead
     /// of snapping back to the start/end.
@@ -105,9 +106,18 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             coffee_stains: std::collections::HashMap::new(),
             version_popup: false,
             version_popup_started_at: None,
+            help_open: false,
             version_popup_scale_at_edge: 0.0,
             last_popup_scale: 0.0,
         }
+    }
+
+    pub fn help_open(&self) -> bool {
+        self.help_open
+    }
+
+    pub fn set_help_open(&mut self, v: bool) {
+        self.help_open = v;
     }
 
     pub fn current_floor(&self) -> usize {
@@ -587,6 +597,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             coffee_stains: &self.coffee_stains,
             new_coffee_carriers: Vec::new(),
             popup_scale,
+            help_open: self.help_open,
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
         self.last_pet_pos = draw_ctx.last_pet_pos;

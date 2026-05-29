@@ -389,6 +389,16 @@ fn make_renderer() -> TuiRenderer<TestBackend> {
 }
 
 #[test]
+fn help_open_toggles_via_setter() {
+    let mut r = make_renderer();
+    assert!(!r.help_open());
+    r.set_help_open(true);
+    assert!(r.help_open());
+    r.set_help_open(false);
+    assert!(!r.help_open());
+}
+
+#[test]
 fn coffee_stain_added_on_note() {
     let mut renderer = make_renderer();
     let agent_id = AgentId::from_transcript_path("/p/a.jsonl");

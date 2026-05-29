@@ -120,7 +120,20 @@ pub async fn run_tui(
             while polled {
                 match event::read()? {
                     Event::Key(k) => {
-                        if version_popup {
+                        if renderer.help_open() {
+                            match (k.code, k.modifiers) {
+                                (KeyCode::Enter, _)
+                                | (KeyCode::Esc, _)
+                                | (KeyCode::Char('?'), _) => {
+                                    renderer.set_help_open(false);
+                                }
+                                (KeyCode::Char('q'), _)
+                                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                                    quit = true;
+                                }
+                                _ => {}
+                            }
+                        } else if version_popup {
                             match (k.code, k.modifiers) {
                                 (KeyCode::Enter, _) => {
                                     version_popup = false;
@@ -173,6 +186,10 @@ pub async fn run_tui(
                                 }
                                 (KeyCode::Char('t'), _) => {
                                     theme_picker = Some(saved_theme_idx);
+                                }
+                                (KeyCode::Char('?'), _) => {
+                                    let open = renderer.help_open();
+                                    renderer.set_help_open(!open);
                                 }
                                 (KeyCode::PageUp, _)
                                 | (KeyCode::Up, _)

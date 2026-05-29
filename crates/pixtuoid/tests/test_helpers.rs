@@ -53,6 +53,7 @@ macro_rules! make_draw_ctx {
             coffee_stains: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
             popup_scale: 0.0,
+            help_open: false,
         };
     };
 

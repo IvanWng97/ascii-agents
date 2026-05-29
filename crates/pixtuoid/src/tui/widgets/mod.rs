@@ -1,9 +1,11 @@
 //! Ratatui widget paint functions: footer, labels, wall display, tooltips,
 //! ticker queue, and theme picker overlay.
 
+mod help;
 mod hud;
 mod tooltip;
 
+pub(super) use help::paint_help_overlay;
 pub(super) use hud::{
     paint_elevator_indicator, paint_footer, paint_theme_picker, paint_version_popup,
     paint_wall_display, version_popup_url_rect, VERSION_POPUP_URL,

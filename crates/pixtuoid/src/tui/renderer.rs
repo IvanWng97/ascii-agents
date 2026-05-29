@@ -41,8 +41,8 @@ pub(crate) use crate::tui::widgets::paint_hover_tooltip;
 pub use crate::tui::widgets::TickerQueue;
 pub(super) use crate::tui::widgets::{
     paint_chitchat_bubbles, paint_coffee_tooltip, paint_elevator_indicator, paint_footer,
-    paint_furniture_tooltip, paint_label_widgets, paint_pet_tooltip, paint_theme_picker,
-    paint_version_popup, paint_wall_display,
+    paint_furniture_tooltip, paint_help_overlay, paint_label_widgets, paint_pet_tooltip,
+    paint_theme_picker, paint_version_popup, paint_wall_display,
 };
 
 pub use crate::tui::pet::PetState;
@@ -101,6 +101,7 @@ pub struct DrawCtx<'a> {
     /// Animated scale for the version popup (0.0 = hidden, 1.0 = fully shown).
     /// Drives entrance (EaseOutCubic/200ms) and dismissal (EaseInQuad/120ms).
     pub popup_scale: f32,
+    pub help_open: bool,
 }
 
 /// Clip a widget rect to fit inside `bounds`. Returns `None` if the rect
@@ -332,6 +333,9 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
                     ctx.popup_scale,
                 );
             }
+        }
+        if ctx.help_open {
+            paint_help_overlay(f, actual_scene, theme);
         }
     })?;
     Ok(Some(layout))
