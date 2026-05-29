@@ -279,14 +279,45 @@ pub fn derive_with_routing(
                     x: desk.x + 6,
                     y: desk.y + 4,
                 };
-                let t = (since_state * 1000 / SNAP_BACK_MS).min(1000) as u16;
-                let frame = ((since_state / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
-                Pose::Walking {
-                    from: prev,
-                    to: snap_target,
-                    t_x1000: t,
-                    frame,
-                    carrying_coffee: false,
+                // Retrieve or snapshot the physics profile for this snap-back.
+                // `get_or_insert_with` snapshots exactly once; subsequent frames
+                // reuse the frozen profile. Tests pass a fresh HashMap each call,
+                // so every test call also snapshots (same semantics — first sighting).
+                let ms_entry = motion
+                    .entry(slot.agent_id)
+                    .or_insert_with(|| MotionState::new(slot.agent_id));
+                ms_entry.snap_back.get_or_insert_with(|| {
+                    let path = [prev, snap_target];
+                    let len = octile_path_len(&path);
+                    let p = walk_profile(len, WalkIntent::SnapBack, slot.agent_id);
+                    (now, p, prev)
+                });
+                // Clone out what we need so we can mutably clear snap_back if done.
+                let (started_at, profile, _snap_prev) =
+                    ms_entry.snap_back.as_ref().unwrap().clone();
+                let elapsed_ms = now
+                    .duration_since(started_at)
+                    .unwrap_or(Duration::ZERO)
+                    .as_millis() as u64;
+                // Cap effective elapsed at SNAP_BACK_MS so physics never drives
+                // beyond the hard 900ms wall (profile.duration_ms may exceed it
+                // for very long snap distances).
+                let capped_elapsed = elapsed_ms.min(SNAP_BACK_MS);
+                if walk_arrived(&profile, capped_elapsed) {
+                    // Physics + pause completed — clear stale profile so the next
+                    // state transition gets a fresh snapshot.
+                    ms_entry.snap_back = None;
+                    raw
+                } else {
+                    let t_x1000 = walk_progress(&profile, capped_elapsed);
+                    let frame = ((capped_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+                    Pose::Walking {
+                        from: prev,
+                        to: snap_target,
+                        t_x1000,
+                        frame,
+                        carrying_coffee: false,
+                    }
                 }
             } else {
                 raw
@@ -295,6 +326,13 @@ pub fn derive_with_routing(
             raw
         }
     } else {
+        // Hard wall: clear any stale snap-back profile so the next state
+        // transition gets a fresh snapshot rather than replaying a previous one.
+        if let Some(ms) = motion.get_mut(&slot.agent_id) {
+            if ms.snap_back.is_some() {
+                ms.snap_back = None;
+            }
+        }
         raw
     };
 
@@ -773,6 +811,148 @@ mod tests {
         let t1 = t0 + Duration::from_millis(600);
         assert_eq!(history.recent(id, 500, t1), None);
         assert_eq!(history.recent(id, 700, t1), Some(pt));
+    }
+
+    // ---- Phase 4: snap-back physics tests ---------------------------------
+
+    #[test]
+    fn snap_back_progress_is_physics_eased_not_linear() {
+        // Use a SHORT path (desk + 10px) so the walk is in the TRIANGULAR
+        // kinematic regime — distance ∝ t², so at 25% of duration the agent
+        // covers only 1/16 of the path (t_x1000 ≈ 62), well below linear's 250.
+        //
+        // Distance choice: prev = desk+(10,5) → snap_target = desk+(6,4)
+        //   dx=4, dy=1, octile = 14*1 + 10*(4-1) = 44 units.
+        //   L_crit(max speed) ≈ 177 → 44 is firmly triangular for all agents.
+        //   T ≈ 2*sqrt(44/3.7e-4) ≈ 690 ms → T/4 ≈ 172 ms < 300 ms history gate.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let slot = active_slot(now, now - Duration::from_secs(60));
+        let desk = l.home_desks[0];
+        // Short-but-qualifying distance (manhattan 15 ≥ SNAP_BACK_MIN_DIST=8).
+        let prev = Point {
+            x: desk.x + 10,
+            y: desk.y + 5,
+        };
+
+        let mut history = PoseHistory::new();
+        history.record(slot.agent_id, prev, now - Duration::from_millis(50));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut router = StubRouter::straight();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        // Frame 0: state just flipped — snapshots the physics profile.
+        let _pose0 = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let ms = motion
+            .get(&slot.agent_id)
+            .expect("MotionState created on frame 0");
+        let (_, ref profile, _) = *ms.snap_back.as_ref().expect("snap_back profile stored");
+        let dur_ms = profile.duration_ms;
+        assert!(
+            dur_ms > 0,
+            "profile duration must be > 0 for a non-trivial distance"
+        );
+
+        // Frame 1: exactly 25% of profile duration elapsed.
+        // Record history at quarter_now - 50ms so it's fresh (age = 50ms < 300ms gate).
+        let slot_q = active_slot(now, now - Duration::from_secs(60));
+        let quarter_now = now + Duration::from_millis(dur_ms / 4);
+        let mut history2 = PoseHistory::new();
+        history2.record(
+            slot_q.agent_id,
+            prev,
+            quarter_now - Duration::from_millis(50),
+        );
+        let p = derive_with_routing(
+            &slot_q,
+            quarter_now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history2,
+            &mut motion,
+        );
+
+        match p {
+            Some(Pose::Walking { t_x1000, .. }) => {
+                // Triangular profile: s(T/4) = (1/2)*a*(T/4)² = L/16
+                // → t_x1000 ≈ 1000*L/16/L = 62. Linear would be 250.
+                // We assert strictly < 250 (generous threshold).
+                assert!(
+                    t_x1000 < 250,
+                    "physics ease-in: expected t_x1000 < 250 at 25% of duration (triangular), got {t_x1000}"
+                );
+            }
+            other => panic!("expected Walking pose at 25% of snap-back duration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snap_back_profile_stored_in_motion_state() {
+        // Second call for the same snap-back must REUSE the frozen profile
+        // (same duration_ms), not re-snapshot a new one.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let slot = active_slot(now, now - Duration::from_secs(60));
+        let desk = l.home_desks[0];
+        let prev = Point {
+            x: desk.x + 50,
+            y: desk.y + 30,
+        };
+
+        let mut history = PoseHistory::new();
+        history.record(slot.agent_id, prev, now - Duration::from_millis(50));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut router = StubRouter::straight();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        // Frame 1: creates the profile.
+        let _p1 = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let dur1 = motion
+            .get(&slot.agent_id)
+            .and_then(|ms| ms.snap_back.as_ref())
+            .map(|(_, p, _)| p.duration_ms)
+            .expect("snap_back profile created on frame 1");
+
+        // Frame 2: 100ms later with fresh history but SAME persistent motion map.
+        let slot2 = active_slot(now, now - Duration::from_secs(60));
+        let t2 = now + Duration::from_millis(100);
+        history.record(slot2.agent_id, prev, t2 - Duration::from_millis(50));
+        let _p2 = derive_with_routing(
+            &slot2,
+            t2,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let dur2 = motion
+            .get(&slot2.agent_id)
+            .and_then(|ms| ms.snap_back.as_ref())
+            .map(|(_, p, _)| p.duration_ms)
+            .expect("snap_back profile still present on frame 2");
+
+        assert_eq!(
+            dur1, dur2,
+            "snap-back profile must be snapshotted once and reused across frames"
+        );
     }
 
     // ---- Phase 3: entry/exit physics tests --------------------------------
