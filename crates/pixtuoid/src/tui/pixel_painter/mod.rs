@@ -1410,13 +1410,13 @@ mod tests {
     fn weather_state_covers_all_variants() {
         let mut seen = std::collections::HashSet::new();
         let base = SystemTime::UNIX_EPOCH;
-        for cycle in 0..100u64 {
+        for cycle in 0..200u64 {
             let now = base + std::time::Duration::from_secs(cycle * 600);
             seen.insert(std::mem::discriminant(&background::weather_state(now)));
         }
         assert!(
-            seen.len() >= 5,
-            "expected at least 5 weather variants in 100 cycles, got {}",
+            seen.len() >= 8,
+            "expected all 8 weather variants in 200 cycles, got {}",
             seen.len()
         );
     }
