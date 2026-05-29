@@ -236,7 +236,7 @@ pub fn derive_with_routing(
 /// only (we want the deterministic position, not the breath offset).
 use crate::tui::pixel_painter::walking_position;
 
-fn octile_distance(a: Point, b: Point) -> u32 {
+pub(in crate::tui) fn octile_distance(a: Point, b: Point) -> u32 {
     let dx = (a.x as i32 - b.x as i32).unsigned_abs();
     let dy = (a.y as i32 - b.y as i32).unsigned_abs();
     14 * dx.min(dy) + 10 * (dx.max(dy) - dx.min(dy))

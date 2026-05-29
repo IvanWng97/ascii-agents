@@ -6,12 +6,15 @@
 //! and the per-floor rendering context (`FloorCtx`) so each floor owns its
 //! own router, overlay, pose history, and frame cache.
 
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use pixtuoid_core::state::{AgentSlot, SceneState};
 use pixtuoid_core::walkable::OccupancyOverlay;
+use pixtuoid_core::AgentId;
 
 use crate::tui::frame_cache::FrameCache;
+use crate::tui::motion::MotionState;
 use crate::tui::pathfind::AStarRouter;
 use crate::tui::pose::PoseHistory;
 
@@ -53,14 +56,26 @@ impl FloorMeta {
 }
 
 /// Per-floor rendering state. Each floor gets its own pathfinder,
-/// occupancy overlay, pose history, recolored-frame cache, and lighting
-/// fade state so floors are fully independent.
+/// occupancy overlay, pose history, recolored-frame cache, lighting
+/// fade state, and motion map so floors are fully independent.
 pub struct FloorCtx {
     pub router: AStarRouter,
     pub overlay: OccupancyOverlay,
     pub history: PoseHistory,
     pub cache: FrameCache,
     pub light: LightingState,
+    /// Per-agent walk-timing state (physics profiles for entry/exit/wander).
+    /// Evicted alongside `history` and `cache` when the agent leaves.
+    // wired in Phase 2/3
+    #[allow(dead_code)]
+    pub motion: HashMap<AgentId, MotionState>,
+    /// Longest in-flight entry- or exit-walk `duration_ms + pause_ms` on
+    /// this floor (ms). Written each frame by `derive_with_routing`; read by
+    /// `compute_door_frame_idx` to drive door-open cosmetics without a
+    /// hardcoded `ENTRY_ANIMATION_MS`.
+    // wired in Phase 2/3
+    #[allow(dead_code)]
+    pub door_anim_max_ms: u64,
 }
 
 impl Default for FloorCtx {
@@ -77,6 +92,8 @@ impl FloorCtx {
             history: PoseHistory::new(),
             cache: FrameCache::new(),
             light: LightingState::new(),
+            motion: HashMap::new(),
+            door_anim_max_ms: 0,
         }
     }
 }
