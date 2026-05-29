@@ -11,6 +11,7 @@ use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentSlot;
 
 use crate::tui::layout::{Point, WaypointKind, DESK_W};
+use crate::tui::motion::MotionState;
 use crate::tui::pathfind::Router;
 use crate::tui::pose::{self, Pose};
 
@@ -129,9 +130,10 @@ pub(in crate::tui) fn character_anchor(
     router: &mut dyn Router,
     overlay: &OccupancyOverlay,
     history: &mut pose::PoseHistory,
+    motion: &mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
 ) -> Option<Point> {
     let desk = *layout.home_desks.get(agent.desk_index)?;
-    let pose = pose::derive_with_routing(agent, now, layout, router, overlay, history)?;
+    let pose = pose::derive_with_routing(agent, now, layout, router, overlay, history, motion)?;
     let anchor = match pose {
         Pose::SeatedIdle | Pose::SeatedThinking | Pose::SeatedTyping { .. } => seated_anchor(desk),
         Pose::StandingAtDesk => standing_at_desk_anchor(desk),

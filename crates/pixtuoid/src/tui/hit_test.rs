@@ -7,6 +7,7 @@ use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::{AgentId, SceneState};
 
 use crate::tui::layout::Layout;
+use crate::tui::motion::MotionState;
 use crate::tui::pathfind::Router;
 use crate::tui::pet::PetKind;
 use crate::tui::pixel_painter::character_anchor;
@@ -27,6 +28,7 @@ pub(crate) fn hit_test_agent(
     router: &mut dyn Router,
     overlay: &OccupancyOverlay,
     history: &mut pose::PoseHistory,
+    motion: &mut std::collections::HashMap<AgentId, MotionState>,
     mx: u16,
     my: u16,
 ) -> Option<AgentId> {
@@ -36,7 +38,8 @@ pub(crate) fn hit_test_agent(
     // Height-in-cells: sprite is 12 px tall = 6 cells.
     const SPRITE_H_CELLS: u16 = 6;
     for agent in scene.agents.values() {
-        let Some(anchor) = character_anchor(agent, layout, now, router, overlay, history) else {
+        let Some(anchor) = character_anchor(agent, layout, now, router, overlay, history, motion)
+        else {
             continue;
         };
         let cell_x = anchor.x;

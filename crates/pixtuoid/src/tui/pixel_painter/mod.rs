@@ -23,6 +23,7 @@ use crate::tui::chitchat::{self, ActiveChitchat, ChitchatBubble};
 use crate::tui::floor::LightingState;
 use crate::tui::frame_cache::FrameCache;
 use crate::tui::layout::{Layout, Point, DESK_W};
+use crate::tui::motion::MotionState;
 use crate::tui::pathfind::Router;
 use crate::tui::pet::PetKind;
 use crate::tui::pose::{self, Pose};
@@ -76,6 +77,9 @@ pub struct PixelCtx<'a> {
     pub router: &'a mut dyn Router,
     pub overlay: &'a mut OccupancyOverlay,
     pub history: &'a mut pose::PoseHistory,
+    /// Forwarded from `DrawCtx.motion` — identical lifetime, identical
+    /// borrow rules. Phase 3+ will read/write entries; Phase 2 just stores the reference.
+    pub motion: &'a mut std::collections::HashMap<pixtuoid_core::AgentId, MotionState>,
     pub theme: &'a crate::tui::theme::Theme,
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a crate::tui::renderer::PetState>,
@@ -535,6 +539,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 ctx.router,
                 ctx.overlay,
                 ctx.history,
+                ctx.motion,
             );
             let seated = matches!(p, Some(Pose::SeatedTyping { .. } | Pose::SeatedThinking));
             (a.desk_index, seated)
@@ -845,6 +850,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             ctx.router,
             ctx.overlay,
             ctx.history,
+            ctx.motion,
         ) else {
             continue;
         };

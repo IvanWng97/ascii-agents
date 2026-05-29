@@ -555,6 +555,10 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             .retain(|id, _| scene.agents.contains_key(id));
         self.coffee_stains
             .retain(|id, _| scene.agents.contains_key(id));
+        // Phase 2: evict motion state for departed agents.
+        self.floor_ctxs[self.current_floor]
+            .motion
+            .retain(|id, _| scene.agents.contains_key(id));
 
         let floor_meta = FloorMeta::for_floor(self.current_floor, nf);
         // Compute popup scale before the mutable borrows below.
@@ -566,6 +570,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             router: &mut fctx.router,
             overlay: &mut fctx.overlay,
             history: &mut fctx.history,
+            motion: &mut fctx.motion,
             light: &mut fctx.light,
             mouse_pos: self.mouse_pos,
             pinned_agent: self.pinned_agent,
@@ -644,6 +649,7 @@ fn render_transition_floor(
         router: &mut fctx.router,
         overlay: &mut fctx.overlay,
         history: &mut fctx.history,
+        motion: &mut fctx.motion,
         theme,
         floor: floor_meta,
         active_pet,

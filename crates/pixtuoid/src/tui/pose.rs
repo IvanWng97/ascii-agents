@@ -12,11 +12,14 @@
 //! depend on the pathfinder — the trait lives in the binary because A* is
 //! TUI-rendering-adjacent and may differ for non-terminal renderers.
 
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 use pixtuoid_core::state::AgentSlot;
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentId;
+
+use crate::tui::motion::MotionState;
 
 pub use pixtuoid_core::pose::{
     cycle_ms_for, derive, is_aimless_cycle, personality_for, takes_trip, waypoint_index_for_cycle,
@@ -84,7 +87,10 @@ pub fn derive_with_routing(
     router: &mut dyn Router,
     overlay: &OccupancyOverlay,
     history: &mut PoseHistory,
+    motion: &mut HashMap<AgentId, MotionState>,
 ) -> Option<Pose> {
+    // Phase 2: motion is threaded but not yet read — Phase 3+ will populate it.
+    let _ = &motion;
     let raw = derive(slot, now, layout)?;
     // Snap-back override: state-driven poses (SeatedTyping etc.) at the
     // desk would teleport the agent if they were mid-wander when state
@@ -340,7 +346,16 @@ mod tests {
         history.record(slot.agent_id, prev, now - Duration::from_millis(50));
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        match derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history) {
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        match derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        ) {
             Some(Pose::Walking { from, .. }) => {
                 assert_eq!(from, prev, "snap-back walk should start from recorded prev");
             }
@@ -363,7 +378,16 @@ mod tests {
         history.record(slot.agent_id, close, now - Duration::from_millis(50));
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        let p = derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history);
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let p = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
         assert!(
             matches!(p, Some(Pose::SeatedTyping { .. })),
             "close prev should NOT trigger snap-back, got {p:?}"
@@ -388,7 +412,16 @@ mod tests {
         history.record(slot.agent_id, prev, now - Duration::from_millis(50));
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        let p = derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history);
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let p = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
         assert!(
             matches!(p, Some(Pose::SeatedTyping { .. })),
             "snap-back window should be expired at 1.5s, got {p:?}"
@@ -403,7 +436,16 @@ mod tests {
         let mut history = PoseHistory::new(); // empty
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        let p = derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history);
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let p = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
         assert!(
             matches!(p, Some(Pose::SeatedTyping { .. })),
             "no prev history → raw pose, got {p:?}"
@@ -427,7 +469,16 @@ mod tests {
             y: (door.y + desk.y) / 2,
         };
         let mut router = StubRouter::corners(vec![door, mid, desk]);
-        let p = derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history);
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let p = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
         match p {
             Some(Pose::Walking {
                 from, to, t_x1000, ..
@@ -482,7 +533,16 @@ mod tests {
         let mut history = PoseHistory::new();
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        let _ = derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history);
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let _ = derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
         // SeatedIdle isn't recorded — that's the contract.
         assert!(
             history.recent(slot.agent_id, 1_000, now).is_none(),
@@ -499,7 +559,17 @@ mod tests {
         let mut history = PoseHistory::new();
         let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
         let mut router = StubRouter::straight();
-        assert!(derive_with_routing(&slot, now, &l, &mut router, &overlay, &mut history).is_none());
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        assert!(derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion
+        )
+        .is_none());
     }
 
     #[test]
