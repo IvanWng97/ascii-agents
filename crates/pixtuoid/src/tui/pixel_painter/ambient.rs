@@ -179,14 +179,14 @@ pub(super) fn paint_dust_motes(
         return;
     }
     // Dust motes scatter direct beam light; under any overcast there's no
-    // beam to scatter, so they vanish entirely. Scaled further by daylight
-    // ramp so they fade in/out with the spill instead of popping on at 06:00.
-    let atmo = atmo_attenuation(weather_state(now));
-    if !atmo.has_direct_beam {
+    // beam to scatter, so they vanish entirely. Otherwise alpha rides
+    // look.spill_strength (which already carries atmo attenuation) so they
+    // fade in/out with the daylight ramp.
+    if !atmo_attenuation(weather_state(now)).has_direct_beam {
         return;
     }
     let look = time_of_day_look(now, theme);
-    let visibility = atmo.intensity * look.spill_strength;
+    let visibility = look.spill_strength;
     if visibility <= 0.0 {
         return;
     }
@@ -223,16 +223,14 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     }
     // The wall sunspot is a projected direct beam: clouds erase it
     // entirely. Diffuse light under overcast/storm reaches the wall but
-    // never as a defined rectangle.
-    let atmo = atmo_attenuation(weather_state(now));
-    if !atmo.has_direct_beam {
+    // never as a defined rectangle. look.spill_strength rides the daylight
+    // ramp (and already carries atmo attenuation) so the spot fades in/out
+    // smoothly instead of popping on at 06:00 sharp.
+    if !atmo_attenuation(weather_state(now)).has_direct_beam {
         return;
     }
-    // Scale intensity by both atmospheric attenuation AND the time-of-day
-    // daylight curve so the spot ramps in/out with the warm spill rather
-    // than appearing full-strength at 06:01.
     let look = time_of_day_look(now, theme);
-    let effective_intensity = spot.intensity * atmo.intensity * look.spill_strength;
+    let effective_intensity = spot.intensity * look.spill_strength;
     if effective_intensity <= 0.0 {
         return;
     }

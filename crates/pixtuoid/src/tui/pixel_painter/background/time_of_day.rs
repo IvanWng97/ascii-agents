@@ -135,6 +135,16 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     let twilight = crate::tui::pixel_painter::palette::bell(h, 6.5, 1.5)
         .max(crate::tui::pixel_painter::palette::bell(h, 18.5, 1.5));
 
+    // Atmospheric attenuation makes the sky base + twilight blaze respond
+    // to outdoor weather. Storm at noon shouldn't read as full day-blue
+    // with rain streaks pasted over it — the sky itself goes dim under
+    // heavy weather. `day_eff` is the effective daylight reaching the
+    // glass; consumers of `spill_strength` / `darkness` see weather
+    // automatically applied without each caller having to multiply.
+    let atmo = atmo_attenuation(weather_state(now));
+    let day_eff = day * atmo.intensity;
+    let twilight_eff = twilight * atmo.intensity;
+
     let day_a = theme.lighting.day_sky_a;
     let day_b = theme.lighting.day_sky_b;
     let night_a = theme.lighting.night_sky_a;
@@ -142,8 +152,16 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     let twilight_a = theme.lighting.twilight_a;
     let twilight_b = theme.lighting.twilight_b;
 
-    let glass_a = lerp_rgb(lerp_rgb(night_a, day_a, day), twilight_a, twilight * 0.5);
-    let glass_b = lerp_rgb(lerp_rgb(night_b, day_b, day), twilight_b, twilight * 0.5);
+    let glass_a = lerp_rgb(
+        lerp_rgb(night_a, day_a, day_eff),
+        twilight_a,
+        twilight_eff * 0.5,
+    );
+    let glass_b = lerp_rgb(
+        lerp_rgb(night_b, day_b, day_eff),
+        twilight_b,
+        twilight_eff * 0.5,
+    );
 
     // Spill slant: ±0.7 px per row at peak hours (6am leftmost, 6pm
     // rightmost), zero at noon. Conventional read: morning sun on the east
@@ -158,9 +176,9 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     TimeOfDayLook {
         glass_a,
         glass_b,
-        spill_strength: day,
+        spill_strength: day_eff,
         spill_slant: slant,
-        darkness: 1.0 - day,
+        darkness: 1.0 - day_eff,
     }
 }
 

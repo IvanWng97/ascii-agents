@@ -158,19 +158,16 @@ pub(super) fn paint_floor_and_walls(
                 weather,
                 altitude,
             );
-            // Atmospheric attenuation: cloudy/rainy/foggy weather dims the
-            // warm sunbeam reaching the floor. has_direct_beam isn't gated
-            // here — diffuse light still pours through under overcast — but
-            // intensity drops, so the spill goes pale + dim instead of warm.
-            let atmo = atmo_attenuation(weather);
-            let effective_spill = look.spill_strength * atmo.intensity;
-            if effective_spill > 0.0 {
+            // look.spill_strength already includes atmospheric attenuation
+            // (time_of_day_look multiplies by atmo.intensity), so heavy
+            // weather automatically dims the spill below windows.
+            if look.spill_strength > 0.0 {
                 paint_window_light_spill(
                     buf,
                     x,
                     WINDOW_W,
                     top_wall_h,
-                    effective_spill,
+                    look.spill_strength,
                     look.spill_slant,
                     theme,
                 );
