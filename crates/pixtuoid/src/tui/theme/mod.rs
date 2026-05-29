@@ -176,11 +176,11 @@ mod tests {
         assert_eq!(DRACULA.kind, ThemeKind::Dark);
         assert_eq!(TOKYO_NIGHT.kind, ThemeKind::Dark);
         assert_eq!(GRUVBOX.kind, ThemeKind::Dark);
+        assert_eq!(CATPPUCCIN.kind, ThemeKind::Dark);
     }
 
     #[test]
     fn light_themes_marked_light() {
         assert_eq!(NORMAL.kind, ThemeKind::Light);
-        assert_eq!(CATPPUCCIN.kind, ThemeKind::Light);
     }
 }
