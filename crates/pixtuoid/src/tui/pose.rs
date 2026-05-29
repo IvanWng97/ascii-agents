@@ -25,8 +25,9 @@ use crate::tui::motion::{advance_wander, octile_path_len, MotionState, WanderPha
 pub use pixtuoid_core::pose::{
     cycle_ms_for, derive, derive_state_only, is_aimless_cycle, personality_for, pick_aimless_dest,
     takes_trip, waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS,
-    PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC, TYPING_FRAMES, TYPING_FRAME_MS,
-    WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
+    PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC, THINKING_WINDOW_SECS,
+    TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS,
+    WANDER_CYCLE_RANGE_MS,
 };
 
 use crate::tui::layout::{Layout, Point, WaypointKind};
@@ -263,7 +264,7 @@ pub fn derive_with_routing(
             .duration_since(slot.last_event_at)
             .unwrap_or(Duration::ZERO)
             .as_secs();
-        if was_active && since_last_event < 20 {
+        if was_active && since_last_event < THINKING_WINDOW_SECS {
             // Thinking window active — return SeatedThinking directly.
             return Some(Pose::SeatedThinking);
         }

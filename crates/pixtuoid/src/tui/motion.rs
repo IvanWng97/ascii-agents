@@ -1115,11 +1115,13 @@ mod tests {
         advance_wander(&slot, now, &l, &mut router, &overlay, &mut motion);
 
         let ms = motion.get(&id).expect("state present");
-        // Bootstrap jump: cycle_n should equal 10 (elapsed / cycle_ms = 10).
+        // Bootstrap jump is integer `elapsed_idle / cycle_ms`. Elapsed is set
+        // to exactly 10*cycle, so cycle_n must equal EXACTLY 10 (Correction M:
+        // no guessed tolerance).
         let approx_cycles = ms.wander_cycle_n;
-        assert!(
-            (8..=12).contains(&approx_cycles),
-            "bootstrap cycle_n={approx_cycles}, expected ~10 for 10-cycle idle"
+        assert_eq!(
+            approx_cycles, 10,
+            "bootstrap: elapsed = 10*cycle_ms => cycle_n must equal exactly 10 (integer elapsed/cycle)"
         );
     }
 }

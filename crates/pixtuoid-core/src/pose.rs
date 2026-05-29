@@ -22,7 +22,11 @@ use crate::AgentId;
 /// How long after the last event an Idle agent stays in the "thinking"
 /// pose (seated, awake, no z's) before entering the wander/sleep cycle.
 /// 20s covers typical CC thinking pauses between tool bursts.
-const THINKING_WINDOW_SECS: u64 = 20;
+///
+/// `pub` so `tui::pose::derive_with_routing`'s wander dispatch references the
+/// same window — otherwise the thinking gate could silently drift between
+/// core's `derive` and the tui-side dispatch.
+pub const THINKING_WINDOW_SECS: u64 = 20;
 
 /// Base cycle length. Each agent's actual cycle = base + per-agent jitter.
 pub const WANDER_CYCLE_BASE_MS: u64 = 7_000;
