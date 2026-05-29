@@ -92,6 +92,28 @@ pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(bak))
 }
 
+/// Delete the pixtuoid-created backup, if present. Returns the removed path so
+/// the caller can report it. Conservative by design: it only removes our own
+/// `.pixtuoid.bak` footprint and never restores from it (the live file may hold
+/// edits the user made after install — uninstall already reverses our hooks
+/// surgically via the sentinel).
+pub fn remove_backup(path: &Path) -> Result<Option<PathBuf>> {
+    let target = resolve_symlink(path);
+    let bak = target.with_extension("json.pixtuoid.bak");
+    if !bak.exists() {
+        return Ok(None);
+    }
+    std::fs::remove_file(&bak)?;
+    Ok(Some(bak))
+}
+
+/// Whether the bare `pixtuoid-hook` name resolves on PATH. settings.json stores
+/// the bare name for portability, and Claude Code spawns hooks via PATH — so if
+/// this is false the installed hooks silently never fire.
+pub fn hook_on_path() -> bool {
+    which::which("pixtuoid-hook").is_ok()
+}
+
 /// Follow symlink chain to the final target, even if that target doesn't exist
 /// yet (stow creates the link before the dotfiles repo is fully set up).
 /// `canonicalize` fails on a dangling symlink, so we walk `read_link` manually.
@@ -239,5 +261,39 @@ mod tests {
         assert!(bak.exists());
         let bak2 = backup_once(&path).unwrap().unwrap();
         assert_eq!(bak, bak2);
+    }
+
+    #[test]
+    fn remove_backup_deletes_existing_bak() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"v":1}"#).unwrap();
+        let bak = backup_once(&path).unwrap().unwrap();
+        assert!(bak.exists());
+        let removed = remove_backup(&path).unwrap();
+        assert_eq!(removed, Some(bak.clone()));
+        assert!(!bak.exists());
+    }
+
+    #[test]
+    fn remove_backup_no_bak_returns_none() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, r#"{"v":1}"#).unwrap();
+        assert_eq!(remove_backup(&path).unwrap(), None);
+    }
+
+    #[test]
+    fn remove_backup_resolves_symlink() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("real.json");
+        std::fs::write(&target, r#"{"v":1}"#).unwrap();
+        let link = dir.path().join("link.json");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let bak = backup_once(&link).unwrap().unwrap();
+        assert!(bak.exists());
+        let removed = remove_backup(&link).unwrap();
+        assert_eq!(removed, Some(bak));
+        assert!(!std::path::Path::new(&target.with_extension("json.pixtuoid.bak")).exists());
     }
 }
