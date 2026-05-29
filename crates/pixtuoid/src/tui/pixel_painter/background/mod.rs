@@ -15,16 +15,72 @@ pub(super) use lighting::{
     paint_neon_panel, paint_shadow,
 };
 pub(super) use time_of_day::{
-    dim_floor_overlay, sunset_strength, time_of_day_look, weather_state, TimeOfDayLook, Weather,
+    atmo_attenuation, dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look,
+    weather_state, TimeOfDayLook, WallSide, Weather,
 };
 
 use std::time::SystemTime;
 
 use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 
+use super::ambient::SunbeamColumn;
 use super::palette::{blend, lerp_rgb};
 
+use crate::tui::layout::Layout;
 use crate::tui::theme::Theme;
+
+/// Floor-to-ceiling window stride. Mirrors `paint_floor_and_walls` —
+/// kept in sync so `window_spill_columns` returns the same x positions
+/// the floor pass paints.
+const WINDOW_W: u16 = 22;
+const WINDOW_GAP: u16 = 3;
+/// Vertical depth of the warm spill band below each window. Mirrors the
+/// `DEPTH` constant inside `paint_window_light_spill`.
+const SPILL_DEPTH: u16 = 12;
+/// Width of the elevator door sprite (same value as
+/// `pixel_painter::DOOR_SPRITE_WIDTH`). Local copy so `window_spill_columns`
+/// can derive the skip range from `layout.door` without crossing modules.
+const DOOR_SPRITE_WIDTH: u16 = 16;
+
+/// Multiplicative-ish tint applied to floor cells after the base palette,
+/// driven by current outdoor weather. Subtle (~15% blend); each variant
+/// shifts the indoor mood without overpowering the theme palette.
+pub(super) fn weather_floor_tint(w: Weather) -> Rgb {
+    match w {
+        Weather::Clear => Rgb(255, 252, 240),
+        Weather::Rain => Rgb(190, 200, 220),
+        Weather::Storm => Rgb(140, 145, 165),
+        Weather::Snow => Rgb(220, 230, 250),
+        Weather::Fog => Rgb(200, 200, 205),
+        Weather::Overcast => Rgb(210, 210, 215),
+        Weather::Windy => Rgb(248, 248, 245),
+        Weather::Smog => Rgb(215, 200, 165),
+    }
+}
+
+/// Returns one `SunbeamColumn` per floor-to-ceiling window, centred on
+/// the window and starting at the floor row (just below the wall band).
+/// Elevator-door windows are excluded — mirroring the `overlaps_door`
+/// guard in `paint_floor_and_walls`. Used by `paint_dust_motes` so the
+/// motes drift through the same warm spill the floor pass paints.
+pub(in crate::tui::pixel_painter) fn window_spill_columns(layout: &Layout) -> Vec<SunbeamColumn> {
+    let top_wall_h = layout.top_margin.saturating_sub(4);
+    let skip = layout.door.map(|d| (d.x, d.x + DOOR_SPRITE_WIDTH));
+    let mut out = Vec::new();
+    let mut x = 3u16;
+    while x + WINDOW_W + 2 <= layout.buf_w {
+        let overlaps_door = skip.is_some_and(|(dx0, dx1)| x < dx1 && x + WINDOW_W > dx0);
+        if !overlaps_door {
+            out.push(SunbeamColumn {
+                x: x + WINDOW_W / 2,
+                top_y: top_wall_h,
+                depth: SPILL_DEPTH,
+            });
+        }
+        x += WINDOW_W + WINDOW_GAP;
+    }
+    out
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint_floor_and_walls(
@@ -45,6 +101,9 @@ pub(super) fn paint_floor_and_walls(
     let wall = theme.surface.wall;
     let wall_trim_color = theme.surface.wall_trim;
 
+    let weather = weather_state(now);
+    let tint = weather_floor_tint(weather);
+
     for y in 0..buf_h {
         for x in 0..buf_w {
             let hash = (x as u32)
@@ -56,7 +115,12 @@ pub(super) fn paint_floor_and_walls(
                 2 | 3 => carpet_dark,
                 _ => carpet_base,
             };
-            buf.put(x, y, color);
+            let tinted = Rgb(
+                blend(color.0, tint.0, 0.15),
+                blend(color.1, tint.1, 0.15),
+                blend(color.2, tint.2, 0.15),
+            );
+            buf.put(x, y, tinted);
         }
     }
     for y in 0..top_wall_h.min(buf_h) {
@@ -68,11 +132,10 @@ pub(super) fn paint_floor_and_walls(
     // Floor-to-ceiling windows: 落地窗 — height grows with the wall band so
     // taller terminals get dramatic floor-to-ceiling glass. Width stays
     // fixed (mullion every 22 px) so the skyline detail reads consistently.
-    const WINDOW_W: u16 = 22;
-    const WINDOW_GAP: u16 = 3;
+    // WINDOW_W / WINDOW_GAP are module constants — kept in sync with
+    // `window_spill_columns` so motes drift through the same x columns.
     let window_y: u16 = 1;
     let window_h: u16 = top_wall_h.saturating_sub(2).max(8);
-    let weather = weather_state(now);
     let mut x = 3u16;
     let mut idx: u32 = 0;
     while x + WINDOW_W + 2 <= buf_w {
@@ -96,6 +159,9 @@ pub(super) fn paint_floor_and_walls(
                 weather,
                 altitude,
             );
+            // look.spill_strength already includes atmospheric attenuation
+            // (time_of_day_look multiplies by atmo.intensity), so heavy
+            // weather automatically dims the spill below windows.
             if look.spill_strength > 0.0 {
                 paint_window_light_spill(
                     buf,
@@ -170,9 +236,8 @@ fn paint_window_light_spill(
     theme: &Theme,
 ) {
     let warm = theme.lighting.sun_spill;
-    const DEPTH: u16 = 12;
     let fade_start = 0.32 * intensity;
-    for dy in 0..DEPTH {
+    for dy in 0..SPILL_DEPTH {
         let widen = (dy / 2).min(3);
         let shift = (slant_per_row * dy as f32).round() as i32;
         let base_x = (window_x as i32 + shift).max(0) as u16;
@@ -182,7 +247,7 @@ fn paint_window_light_spill(
         if y >= buf.height {
             break;
         }
-        let strength = fade_start * (1.0 - dy as f32 / DEPTH as f32);
+        let strength = fade_start * (1.0 - dy as f32 / SPILL_DEPTH as f32);
         for x in start_x..end_x {
             let cur = buf.get(x, y);
             buf.put(
@@ -481,6 +546,29 @@ fn paint_floor_to_ceiling_window(
                 }
             }
         }
+        Weather::Smog => {
+            // Warm-yellow desaturated haze across the full glass. Heavier
+            // than Fog and noticeably warmer — pulls the city behind a
+            // sodium-lit veil.
+            for dy in 1..h.saturating_sub(1) {
+                for dx in 1..w.saturating_sub(1) {
+                    let px = x + dx;
+                    let py = y + dy;
+                    if px < buf.width && py < buf.height {
+                        let cur = buf.get(px, py);
+                        buf.put(
+                            px,
+                            py,
+                            Rgb(
+                                blend(cur.0, 180, 0.30),
+                                blend(cur.1, 160, 0.30),
+                                blend(cur.2, 110, 0.30),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
         Weather::Clear => {}
     }
 
@@ -494,7 +582,18 @@ fn paint_floor_to_ceiling_window(
         let hf = local.hour() as f32 + local.minute() as f32 / 60.0;
         super::palette::bell(hf, 6.5, 1.5).max(super::palette::bell(hf, 18.5, 1.5))
     };
-    let sunset = (raw_sunset * (1.0 - twilight_now * 0.8)).max(0.0);
+    // Golden-hour blaze on the city silhouette is attenuated by atmo —
+    // clouds scatter the direct warm light away (Storm at sunset reaches
+    // only ~25% of Clear's strength), Smog amplifies the warm cast by 1.4×
+    // for the sodium-lit "Blade Runner" sunset.
+    let atmo = atmo_attenuation(weather);
+    let smog_boost = if matches!(weather, Weather::Smog) {
+        1.4
+    } else {
+        1.0
+    };
+    let sunset =
+        (raw_sunset * (1.0 - twilight_now * 0.8) * atmo.intensity * smog_boost).clamp(0.0, 1.0);
     if sunset > 0.05 {
         let min_building_h = (glass_h / 5).max(3);
         for dy in 1..h.saturating_sub(1) {
@@ -520,5 +619,34 @@ fn paint_floor_to_ceiling_window(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weather_floor_tint_differs_by_variant() {
+        let clear = weather_floor_tint(Weather::Clear);
+        let rain = weather_floor_tint(Weather::Rain);
+        let fog = weather_floor_tint(Weather::Fog);
+        assert_ne!(clear, rain, "rain biases floor cooler");
+        assert_ne!(clear, fog, "fog desaturates");
+        assert!(
+            rain.2 >= rain.0,
+            "rain tint should be cool (blue >= red), got {:?}",
+            rain
+        );
+    }
+
+    #[test]
+    fn weather_floor_tint_clear_is_near_neutral() {
+        let clear = weather_floor_tint(Weather::Clear);
+        assert!(
+            clear.0 > 200 && clear.1 > 200 && clear.2 > 200,
+            "clear should be a near-white slight-warm tint, got {:?}",
+            clear
+        );
     }
 }

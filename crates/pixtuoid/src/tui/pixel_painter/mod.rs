@@ -40,6 +40,7 @@ pub struct PixelPassResult {
     pub new_coffee_carriers: Vec<pixtuoid_core::AgentId>,
 }
 
+mod ambient;
 mod anchors;
 mod background;
 mod drawable;
@@ -82,6 +83,7 @@ pub struct PixelCtx<'a> {
     pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
+    pub coffee_stains: &'a HashMap<pixtuoid_core::AgentId, Vec<crate::tui::tui_renderer::StainPos>>,
     pub light: &'a mut crate::tui::floor::LightingState,
 }
 
@@ -487,6 +489,8 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         );
     }
 
+    ambient::paint_ambient(ctx);
+
     // Build per-frame occupancy from STATIONARY agent positions only.
     // Walkers are deliberately excluded — their position interpolates
     // every frame, which would change the overlay signature every frame,
@@ -557,6 +561,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     .and_then(|t| ctx.now.duration_since(*t).ok())
                     .is_some_and(|d| d.as_secs() < COFFEE_STEAM_WINDOW_SECS)
             });
+        let stains: &[crate::tui::tui_renderer::StainPos] = occupant
+            .and_then(|a| ctx.coffee_stains.get(&a.agent_id))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         drawables.push(Drawable {
             anchor_y: desk.y + 8,
             kind: DrawableKind::DeskCubicle {
@@ -567,6 +575,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 session_age_secs,
                 has_coffee,
                 coffee_steam,
+                stains,
             },
         });
     }
@@ -1401,13 +1410,13 @@ mod tests {
     fn weather_state_covers_all_variants() {
         let mut seen = std::collections::HashSet::new();
         let base = SystemTime::UNIX_EPOCH;
-        for cycle in 0..100u64 {
+        for cycle in 0..200u64 {
             let now = base + std::time::Duration::from_secs(cycle * 600);
             seen.insert(std::mem::discriminant(&background::weather_state(now)));
         }
         assert!(
-            seen.len() >= 5,
-            "expected at least 5 weather variants in 100 cycles, got {}",
+            seen.len() >= 8,
+            "expected all 8 weather variants in 200 cycles, got {}",
             seen.len()
         );
     }

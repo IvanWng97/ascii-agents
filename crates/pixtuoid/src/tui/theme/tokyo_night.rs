@@ -4,6 +4,7 @@ use super::*;
 
 pub static TOKYO_NIGHT: Theme = Theme {
     name: "tokyo-night",
+    kind: ThemeKind::Dark,
     surface: SurfaceColors {
         wall: Rgb(26, 27, 38),
         wall_trim: Rgb(65, 72, 104),

@@ -1,0 +1,408 @@
+//! Ambient pass — non-character, non-furniture effects painted between
+//! the background and the y-sorted drawables: sun spot on wall, dust
+//! motes in window spill, ceiling halos above active monitors.
+//!
+//! Each subroutine is independently togglable and self-contained. New
+//! ambient effects go here, not in `background/` or `drawable.rs`.
+
+use std::time::{Duration, SystemTime};
+
+use pixtuoid_core::sprite::{Rgb, RgbBuffer};
+
+use crate::tui::layout::Layout;
+use crate::tui::pixel_painter::background::{
+    atmo_attenuation, sun_on_wall, time_of_day_look, weather_state, window_spill_columns, WallSide,
+};
+use crate::tui::pixel_painter::palette::blend;
+use crate::tui::pixel_painter::PixelCtx;
+use crate::tui::theme::Theme;
+
+pub(super) struct SunbeamColumn {
+    pub x: u16,
+    pub top_y: u16,
+    pub depth: u16,
+}
+
+const MOTES_PER_COLUMN: usize = 3;
+
+/// Deterministic per `(floor_seed, particle_id, now)`. Returns up to
+/// `MOTES_PER_COLUMN` positions inside the column: sine drift in x,
+/// slow fall in y, alpha fades in/out at the top/bottom 15% bands so
+/// motes don't pop on/off at the spill boundary.
+pub(super) fn dust_mote_positions(
+    floor_seed: u64,
+    now: SystemTime,
+    col: &SunbeamColumn,
+) -> Vec<(u16, u16, f32)> {
+    let t_ms = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as u64;
+    let mut out = Vec::with_capacity(MOTES_PER_COLUMN);
+    for i in 0..MOTES_PER_COLUMN {
+        // Mix floor_seed, column x, and particle id through splitmix64 so
+        // every (column, mote) pair gets an independent 64-bit seed. The
+        // prior approach `floor_seed * K + i` only varied the lowest few
+        // bits, leaving the >> 4/12/14 shifts identical across all three
+        // motes — they collapsed to a single drifting pixel per column.
+        let mut s = floor_seed
+            .wrapping_add((col.x as u64).wrapping_mul(0xbf58_476d_1ce4_e5b9))
+            .wrapping_add((i as u64).wrapping_mul(0x94d0_49bb_1331_11eb));
+        s = (s ^ (s >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        s = (s ^ (s >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        s ^= s >> 31;
+        let phase = (s % 6283) as f32 / 1000.0;
+        let speed_y = 0.6 + ((s >> 12) & 0x3) as f32 * 0.2;
+        let speed_x = 0.4 + ((s >> 14) & 0x3) as f32 * 0.15;
+        let cycle = col.depth as f32;
+        let y_offset = ((t_ms as f32 / 1000.0) * speed_y + ((s >> 4) & 0xFF) as f32) % cycle;
+        let y = col.top_y + y_offset as u16;
+        let sx = (phase + (t_ms as f32 / 1000.0) * speed_x).sin();
+        // Clamp x to [0, u16::MAX] before casting — negative f32 silently
+        // wraps to 0 via `as u16`, dragging motes to the left buffer edge
+        // on narrow terminals where col.x is small.
+        let raw_x = (col.x as f32 + sx * 2.5).round();
+        let x = raw_x.max(0.0).min(u16::MAX as f32) as u16;
+        let norm = y_offset / cycle.max(1.0);
+        let alpha = if norm < 0.15 {
+            norm / 0.15
+        } else if norm > 0.85 {
+            (1.0 - norm) / 0.15
+        } else {
+            1.0
+        };
+        out.push((x, y, alpha));
+    }
+    out
+}
+
+pub(super) fn paint_ambient(ctx: &mut PixelCtx<'_>) {
+    paint_sun_spot(ctx.buf, ctx.theme, ctx.layout, ctx.now);
+    paint_dust_motes(
+        ctx.buf,
+        ctx.theme,
+        ctx.layout,
+        ctx.floor.floor_seed,
+        ctx.now,
+    );
+    let halos = collect_ceiling_halos(ctx);
+    paint_ceiling_halos(ctx.buf, ctx.theme, &halos);
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct CeilingHalo {
+    pub x: u16,
+    pub y: u16,
+    pub color: Rgb,
+    pub intensity: f32,
+}
+
+/// Soft 5×2 tinted halo above each lit monitor — tied to the active
+/// tool's glow color so the ceiling reads "this desk is doing edits"
+/// at a glance. Painted only on dark themes; on light themes the warm
+/// tint reads as grime, not glow, so we short-circuit.
+pub(super) fn paint_ceiling_halos(buf: &mut RgbBuffer, theme: &Theme, halos: &[CeilingHalo]) {
+    use crate::tui::theme::ThemeKind;
+    if theme.kind != ThemeKind::Dark {
+        return;
+    }
+    for halo in halos {
+        for dy in 0..2u16 {
+            for dx in 0..5u16 {
+                let x = halo.x.saturating_sub(2).saturating_add(dx);
+                let y = halo.y.saturating_sub(dy);
+                if x >= buf.width || y >= buf.height {
+                    continue;
+                }
+                let dist = ((dx as i32 - 2).abs() as f32 + dy as f32) / 3.0;
+                let strength = (halo.intensity * (1.0 - dist).max(0.0) * 0.4).clamp(0.0, 1.0);
+                let cur = buf.get(x, y);
+                buf.put(
+                    x,
+                    y,
+                    Rgb(
+                        blend(cur.0, halo.color.0, strength),
+                        blend(cur.1, halo.color.1, strength),
+                        blend(cur.2, halo.color.2, strength),
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// Gather one halo per agent currently mid-tool-call. Monitor x is the
+/// centre of the screen sprite that `paint_screen_glow` lights up
+/// (desk.x + 6, matching the 4..=9 lit column band). Ceiling y is one
+/// row above the desk's top edge so the halo sits in the wall band
+/// rather than on the monitor frame itself.
+fn collect_ceiling_halos(ctx: &PixelCtx<'_>) -> Vec<CeilingHalo> {
+    use pixtuoid_core::state::ActivityState;
+    let mut halos = Vec::new();
+    for agent in ctx.scene.agents.values() {
+        if !matches!(
+            agent.state,
+            ActivityState::Active {
+                detail: Some(_),
+                ..
+            }
+        ) {
+            continue;
+        }
+        if agent.exiting_at.is_some() {
+            continue;
+        }
+        if agent.floor_idx != ctx.floor.floor_idx {
+            continue;
+        }
+        let Some(desk) = ctx.layout.home_desks.get(agent.desk_index) else {
+            continue;
+        };
+        let Some(color) =
+            crate::tui::pixel_painter::palette::tool_glow_tint(agent, &ctx.theme.tool_glow)
+        else {
+            continue;
+        };
+        halos.push(CeilingHalo {
+            x: desk.x + 6,
+            y: desk.y.saturating_sub(1),
+            color,
+            intensity: 0.8,
+        });
+    }
+    halos
+}
+
+/// Drift 1-pixel warm specks through each window's sunbeam spill column.
+/// Only paints when `sun_on_wall(now)` reports the sun is visible —
+/// otherwise there's no sunbeam for motes to ride. Cheap: 3 motes per
+/// column × ~6-8 columns × 1 px each.
+pub(super) fn paint_dust_motes(
+    buf: &mut RgbBuffer,
+    theme: &Theme,
+    layout: &Layout,
+    floor_seed: u64,
+    now: SystemTime,
+) {
+    if sun_on_wall(now).is_none() {
+        return;
+    }
+    // Dust motes scatter direct beam light; under any overcast there's no
+    // beam to scatter, so they vanish entirely. Otherwise alpha rides
+    // look.spill_strength (which already carries atmo attenuation) so they
+    // fade in/out with the daylight ramp.
+    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+        return;
+    }
+    let look = time_of_day_look(now, theme);
+    let visibility = look.spill_strength;
+    if visibility <= 0.0 {
+        return;
+    }
+    let warm = theme.lighting.sun_spill;
+    for col in window_spill_columns(layout) {
+        for (x, y, alpha) in dust_mote_positions(floor_seed, now, &col) {
+            if x >= buf.width || y >= buf.height {
+                continue;
+            }
+            let cur = buf.get(x, y);
+            let strength = alpha * 0.7 * visibility;
+            buf.put(
+                x,
+                y,
+                Rgb(
+                    blend(cur.0, warm.0, strength),
+                    blend(cur.1, warm.1, strength),
+                    blend(cur.2, warm.2, strength),
+                ),
+            );
+        }
+    }
+}
+
+pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout, now: SystemTime) {
+    let Some(spot) = sun_on_wall(now) else {
+        return;
+    };
+    // South wall is the window wall — paint_window_light_spill already
+    // conveys midday sun via warm spill on the floor under the glass.
+    // Painting on the glass itself would ghost-glow over the skyline.
+    if matches!(spot.wall, WallSide::South) {
+        return;
+    }
+    // The wall sunspot is a projected direct beam: clouds erase it
+    // entirely. Diffuse light under overcast/storm reaches the wall but
+    // never as a defined rectangle. look.spill_strength rides the daylight
+    // ramp (and already carries atmo attenuation) so the spot fades in/out
+    // smoothly instead of popping on at 06:00 sharp.
+    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+        return;
+    }
+    let look = time_of_day_look(now, theme);
+    let effective_intensity = spot.intensity * look.spill_strength;
+    if effective_intensity <= 0.0 {
+        return;
+    }
+    let warm = theme.lighting.sun_spill;
+    // Blend warm toward white as the sun climbs (warmth → 0 at noon).
+    let cool = 1.0 - spot.warmth;
+    let color = Rgb(
+        blend(warm.0, 255, cool * 0.6),
+        blend(warm.1, 255, cool * 0.6),
+        blend(warm.2, 255, cool * 0.6),
+    );
+
+    let base_w = 8u16;
+    let base_h = 3u16;
+    let w = ((base_w as f32) * effective_intensity).round() as u16;
+    let h = ((base_h as f32) * effective_intensity).round() as u16;
+    let w = w.max(4);
+    let h = h.max(2);
+
+    // The top wall band is the visible window wall; East/West sun spots
+    // project onto the outer 1-px column at the left/right edge of that band.
+    let wall_band_h = layout.top_margin.saturating_sub(4);
+    if wall_band_h == 0 {
+        return;
+    }
+
+    // When the wall band is shorter than the spot, fall back to projecting
+    // along across `wall_band_h` itself so the East/West spot still slides
+    // with the hour-of-day on tiny terminals (pre-fix saturating_sub gave
+    // 0 and pinned the spot to the top of the band).
+    let along_range = wall_band_h
+        .saturating_sub(h)
+        .max(wall_band_h.saturating_sub(1)) as f32;
+    let (rx, ry) = match spot.wall {
+        WallSide::East => {
+            let along_px = along_range * spot.along.min(1.0);
+            let cx = layout.buf_w.saturating_sub(w);
+            (cx, along_px as u16)
+        }
+        WallSide::West => {
+            let along_px = along_range * spot.along.min(1.0);
+            (0u16, along_px as u16)
+        }
+        WallSide::South => unreachable!("guarded above"),
+    };
+
+    let tint_strength = 0.35 * effective_intensity;
+    let max_x = (rx + w).min(buf.width);
+    let max_y = (ry + h).min(buf.height);
+    // Centre at (rx + (w-1)/2, ry + (h-1)/2) so the ellipse spans the
+    // loop's full inclusive index range symmetrically — pre-fix used
+    // `rx + w/2` which biased the centre half a cell off-grid, making
+    // the falloff sample only the top-left quadrant at small sizes.
+    let cx = rx as f32 + (w.saturating_sub(1)) as f32 * 0.5;
+    let cy = ry as f32 + (h.saturating_sub(1)) as f32 * 0.5;
+    let rx_norm = ((w.saturating_sub(1)) as f32 * 0.5).max(1.0);
+    let ry_norm = ((h.saturating_sub(1)) as f32 * 0.5).max(1.0);
+    for y in ry..max_y {
+        for x in rx..max_x {
+            // Quadratic radial falloff so the spot reads round, not boxy.
+            let nx = (x as f32 - cx) / rx_norm;
+            let ny = (y as f32 - cy) / ry_norm;
+            let r2 = nx * nx + ny * ny;
+            if r2 > 1.0 {
+                continue;
+            }
+            let t = (1.0 - r2) * tint_strength;
+            let cur = buf.get(x, y);
+            buf.put(
+                x,
+                y,
+                Rgb(
+                    blend(cur.0, color.0, t),
+                    blend(cur.1, color.1, t),
+                    blend(cur.2, color.2, t),
+                ),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dust_mote_positions_deterministic_per_seed() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(12 * 3600 + 5);
+        let col = SunbeamColumn {
+            x: 100,
+            top_y: 12,
+            depth: 12,
+        };
+        let a = dust_mote_positions(42, now, &col);
+        let b = dust_mote_positions(42, now, &col);
+        assert_eq!(a, b, "same seed + time → same positions");
+        assert_eq!(a.len(), MOTES_PER_COLUMN);
+    }
+
+    #[test]
+    fn dust_motes_drift_over_time() {
+        let now1 = SystemTime::UNIX_EPOCH + Duration::from_secs(12 * 3600);
+        let now2 = now1 + Duration::from_millis(500);
+        let col = SunbeamColumn {
+            x: 100,
+            top_y: 12,
+            depth: 12,
+        };
+        let a = dust_mote_positions(7, now1, &col);
+        let b = dust_mote_positions(7, now2, &col);
+        assert_ne!(a, b, "positions should advance over time");
+    }
+
+    #[test]
+    fn ceiling_halo_painted_on_dark_theme() {
+        let mut buf = RgbBuffer::filled(160, 90, Rgb(0, 0, 0));
+        let theme = &crate::tui::theme::CYBERPUNK;
+        let halos = vec![CeilingHalo {
+            x: 50,
+            y: 10,
+            color: Rgb(0, 200, 255),
+            intensity: 0.8,
+        }];
+        let baseline = buf.get(50, 10);
+        paint_ceiling_halos(&mut buf, theme, &halos);
+        assert_ne!(baseline, buf.get(50, 10), "halo should brighten the pixel");
+    }
+
+    #[test]
+    fn ceiling_halo_skipped_on_light_theme() {
+        let mut buf = RgbBuffer::filled(160, 90, Rgb(0, 0, 0));
+        let theme = &crate::tui::theme::NORMAL;
+        let halos = vec![CeilingHalo {
+            x: 50,
+            y: 10,
+            color: Rgb(0, 200, 255),
+            intensity: 0.8,
+        }];
+        let baseline = buf.get(50, 10);
+        paint_ceiling_halos(&mut buf, theme, &halos);
+        assert_eq!(baseline, buf.get(50, 10), "no halo on light themes");
+    }
+
+    #[test]
+    fn dust_motes_alpha_fades_at_edges() {
+        let col = SunbeamColumn {
+            x: 100,
+            top_y: 12,
+            depth: 20,
+        };
+        let mut saw_partial = false;
+        'outer: for ms in 0..5000u64 {
+            let now = SystemTime::UNIX_EPOCH + Duration::from_millis(ms * 50);
+            for (_, _, alpha) in dust_mote_positions(123, now, &col) {
+                if alpha < 0.5 {
+                    saw_partial = true;
+                    break 'outer;
+                }
+            }
+        }
+        assert!(
+            saw_partial,
+            "expected at least one frame where a mote is in its fade band"
+        );
+    }
+}

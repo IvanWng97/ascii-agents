@@ -4,6 +4,7 @@ use super::*;
 
 pub static CYBERPUNK: Theme = Theme {
     name: "cyberpunk",
+    kind: ThemeKind::Dark,
     surface: SurfaceColors {
         wall: Rgb(22, 18, 35),
         wall_trim: Rgb(50, 40, 70),

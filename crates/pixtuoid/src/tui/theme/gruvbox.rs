@@ -10,6 +10,7 @@ use super::*;
 /// Blue: #83a598, Purple: #d3869b, Aqua: #8ec07c, Orange: #fe8019
 pub static GRUVBOX: Theme = Theme {
     name: "gruvbox",
+    kind: ThemeKind::Dark,
     surface: SurfaceColors {
         wall: Rgb(40, 40, 40),
         wall_trim: Rgb(80, 73, 69),

@@ -4,6 +4,7 @@ use super::*;
 
 pub static NORMAL: Theme = Theme {
     name: "normal",
+    kind: ThemeKind::Light,
     surface: SurfaceColors {
         wall: Rgb(56, 56, 70),
         wall_trim: Rgb(80, 80, 100),

@@ -14,7 +14,20 @@ use anyhow::Result;
 use pixtuoid_core::sprite::format::Pack;
 use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 use pixtuoid_core::state::SceneState;
+use pixtuoid_core::AgentId;
 use pixtuoid_core::Renderer;
+
+/// Position + timestamp of one coffee-ring stain on a desk. Up to
+/// `MAX_STAINS_PER_DESK` accumulate per agent over the lifetime of a
+/// session; oldest evicted FIFO. Cleared when the agent leaves.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StainPos {
+    pub offset_x: i8,
+    pub offset_y: i8,
+    pub painted_at: SystemTime,
+}
+
+const MAX_STAINS_PER_DESK: usize = 4;
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 
@@ -49,6 +62,10 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     coffee_holders: std::collections::HashSet<pixtuoid_core::AgentId>,
     /// Timestamp when each agent first returned with coffee (for steam).
     coffee_fetched_at: std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
+    /// Accumulated coffee-ring stains per agent's desk. One entry recorded
+    /// per pantry trip (EDGE on `coffee_holders.insert`), capped at
+    /// `MAX_STAINS_PER_DESK` with FIFO eviction. Cleared on agent exit.
+    coffee_stains: std::collections::HashMap<pixtuoid_core::AgentId, Vec<StainPos>>,
     version_popup: bool,
     version_popup_started_at: Option<SystemTime>,
     /// Scale captured at the moment of the last visible↔hidden edge so that
@@ -85,6 +102,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             chitchat_state: std::collections::HashMap::new(),
             coffee_holders: std::collections::HashSet::new(),
             coffee_fetched_at: std::collections::HashMap::new(),
+            coffee_stains: std::collections::HashMap::new(),
             version_popup: false,
             version_popup_started_at: None,
             version_popup_scale_at_edge: 0.0,
@@ -224,6 +242,43 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
         for ctx in &mut self.floor_ctxs {
             ctx.cache.evict_missing(scene);
         }
+    }
+
+    /// Record a coffee-ring stain at a pseudo-random offset on the agent's
+    /// desk. Called once per pantry trip (set-membership EDGE on
+    /// `coffee_holders`), NOT every frame. Offsets are deterministic per
+    /// agent + stain index so re-renders are stable.
+    pub fn note_coffee_stain(&mut self, agent_id: AgentId, now: SystemTime) {
+        let stains = self.coffee_stains.entry(agent_id).or_default();
+        if stains.len() >= MAX_STAINS_PER_DESK {
+            stains.remove(0);
+        }
+        // Mix in the wall-clock millis so the per-stain seed is fresh on
+        // every call. The prior approach used `stains.len()` after the
+        // FIFO pop, which silently reused the just-evicted entry's count
+        // → new stain landed on the same pixel as the previous newest one.
+        let now_ms = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let seed = agent_id
+            .raw()
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(now_ms.wrapping_mul(0xbf58_476d_1ce4_e5b9));
+        let offset_x = ((seed & 0x7) as i8) - 3;
+        let offset_y = (((seed >> 3) & 0x3) as i8) - 1;
+        stains.push(StainPos {
+            offset_x,
+            offset_y,
+            painted_at: now,
+        });
+    }
+
+    pub fn coffee_stains_for(&self, id: AgentId) -> &[StainPos] {
+        self.coffee_stains
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Invalidate all floors' router path caches. Call when the static
@@ -397,6 +452,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 self.theme,
                 &self.coffee_holders,
                 &self.coffee_fetched_at,
+                &self.coffee_stains,
                 &mut transition_chitchat,
                 pack,
                 now,
@@ -413,6 +469,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 self.theme,
                 &self.coffee_holders,
                 &self.coffee_fetched_at,
+                &self.coffee_stains,
                 &mut transition_chitchat,
                 pack,
                 now,
@@ -496,6 +553,8 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             .retain(|id| scene.agents.contains_key(id));
         self.coffee_fetched_at
             .retain(|id, _| scene.agents.contains_key(id));
+        self.coffee_stains
+            .retain(|id, _| scene.agents.contains_key(id));
 
         let floor_meta = FloorMeta::for_floor(self.current_floor, nf);
         // Compute popup scale before the mutable borrows below.
@@ -525,15 +584,19 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             chitchat_bubbles: Vec::new(),
             coffee_holders: &self.coffee_holders,
             coffee_fetched_at: &self.coffee_fetched_at,
+            coffee_stains: &self.coffee_stains,
             new_coffee_carriers: Vec::new(),
             popup_scale,
         };
         let result = draw_scene(&mut self.terminal, &floor_scene, pack, now, &mut draw_ctx);
         self.last_pet_pos = draw_ctx.last_pet_pos;
-        // Persist newly detected coffee carriers.
+        // Persist newly detected coffee carriers. The `insert` returns
+        // `true` only on the EDGE (first time this agent enters the set
+        // for this pantry trip), so stain accrual fires once per trip.
         for id in draw_ctx.new_coffee_carriers {
             if self.coffee_holders.insert(id) {
                 self.coffee_fetched_at.insert(id, now);
+                self.note_coffee_stain(id, now);
             }
         }
         if let Ok(ref layout_opt) = result {
@@ -557,6 +620,7 @@ fn render_transition_floor(
     theme: &'static crate::tui::theme::Theme,
     coffee_holders: &std::collections::HashSet<pixtuoid_core::AgentId>,
     coffee_fetched_at: &std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
+    coffee_stains: &std::collections::HashMap<pixtuoid_core::AgentId, Vec<StainPos>>,
     chitchat_state: &mut std::collections::HashMap<
         (usize, usize),
         crate::tui::chitchat::ActiveChitchat,
@@ -587,6 +651,7 @@ fn render_transition_floor(
         chitchat_state,
         coffee_holders,
         coffee_fetched_at,
+        coffee_stains,
         light: &mut fctx.light,
     });
 }

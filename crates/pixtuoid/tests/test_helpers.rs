@@ -50,6 +50,7 @@ macro_rules! make_draw_ctx {
             chitchat_bubbles: Vec::new(),
             coffee_holders: &std::collections::HashSet::new(),
             coffee_fetched_at: &std::collections::HashMap::new(),
+            coffee_stains: &std::collections::HashMap::new(),
             new_coffee_carriers: Vec::new(),
             popup_scale: 0.0,
         };
