@@ -52,7 +52,7 @@ crates/
 │                           drawable.rs (y-sort), effects.rs (glow/z's/dots/steam/dust/bubble),
 │                           palette.rs (tool_glow_tint), anchors.rs (breath, walk position, character_anchor),
 │                           furniture.rs (coffee table, area rug, side table, pantry table/chair)
-└── pixtuoid-hook/      tiny shim CC invokes — stdin JSON → Unix socket, 200ms write timeout
+└── pixtuoid-hook/      tiny shim agent CLIs invoke — stdin JSON → Unix socket, 200ms write timeout
 │   └── sprites/
 │       ├── default/        coworking-lounge pack (embedded via include_str!)
 │       ├── robot/          proof-of-concept robot character pack (loadable via --pack-dir)
@@ -120,8 +120,8 @@ These are load-bearing; don't break them without updating the spec.
 1. **`pixtuoid-core` has no terminal dependencies.** No `ratatui`, no `crossterm`, no `stdout` writes. If you need one, the abstraction belongs behind the `Renderer` trait.
 2. **Events flow through ONE channel** typed `mpsc::Sender<(Transport, AgentEvent)>`. The `Transport` tag is load-bearing — the reducer uses it for hook-wins dedup. Do not hardcode `Transport::Hook` on the consumer side; the producer (each Source impl) tags its own events.
 3. **`Source` trait is the only seam for adding agent CLIs** (Codex / Cursor / Copilot). Don't bypass it. Per-source JSONL format knowledge lives in the source's own decoder fn (injected into `JsonlWatcher` via fn pointers), not in a shared decoder.
-4. **`install-hooks` writes through symlinks.** `resolve_symlink` in `install/io.rs` is critical for stow-managed `~/.claude/settings.json`. Don't replace it with `fs::rename` on the symlink path.
-5. **The hook shim must never block CC.** Always exit 0 silently on any error. The 200ms write timeout is non-negotiable.
+4. **`install-hooks` writes through symlinks.** `resolve_symlink` in `install/io.rs` is critical for stow-managed `~/.claude/settings.json` and `~/.codex/config.toml`. Don't replace it with `fs::rename` on the symlink path.
+5. **The hook shim must never block the invoking agent CLI.** Always exit 0 silently on any error. The 200ms write timeout is non-negotiable.
 6. **Walkable mask = ground footprint only.** This is a top-down view. Visual sprites can be wider/taller than their ground footprint (elevation effects, shadows, wall trim). The walkable mask must only block the ground-level projection — e.g., a 3px-wide wall visual has a 1px walkable mask because the wall's base is 1px. Characters walk right next to walls, not 3px away.
 
 ## Known sharp edges (don't be surprised by these)
@@ -139,7 +139,7 @@ These are load-bearing; don't break them without updating the spec.
 ## Things NOT to do
 
 - Don't add `ratatui` / `crossterm` / terminal anything to `pixtuoid-core`.
-- Don't write to `~/.claude/settings.json` directly. Always go through `install/io.rs::write_settings_atomic` (advisory lock + atomic rename + symlink resolution).
+- Don't write to `~/.claude/settings.json` or `~/.codex/config.toml` directly. Always go through `install/io.rs` atomic writers (advisory lock + atomic rename + symlink resolution).
 - Don't add `println!` / `eprintln!` to any production path other than the headless summary and explicit user-facing CLI output. Use `tracing::{info, warn, error}` instead.
 - Don't relax the hook shim's "always exit 0" contract. Blocking CC = breaking the user's primary workflow.
 - Don't add `--no-verify` / hook-skipping flags to any git operations performed in this repo.
@@ -158,7 +158,7 @@ These are load-bearing; don't break them without updating the spec.
 - "Why don't old idle sessions show on startup?" → `source::jsonl::initial_seed_walk`. Checks `check_session_ended` (tail-scans last 8KB for `session_end`/`SessionEnd` markers) and skips files not modified in 5+ min. mtime > `DEFAULT_INITIAL_WINDOW` (1 hour) → cursor seeded at EOF, no `SessionStart`.
 - "How does the default character pack get into the binary?" → `tui::embedded_pack` does the `include_str!` at compile time; `sprite::format::load_pack_from_strings` parses it.
 - "How do custom sprite packs work?" → `pixtuoid init-pack ./dir` extracts the skeleton template from `sprites/skeleton/` (embedded via `include_str!`). `pixtuoid validate-pack ./dir` loads the pack and checks against `REQUIRED_CHARACTER_ANIMATIONS` / `OPTIONAL_*` registries in `sprite::format`. `--pack-dir` CLI flag or `pack-dir` config key loads a custom pack at runtime. Custom packs only need character sprites — furniture/environment animations are merged from the embedded default via `Pack::merge_from()` (only `OPTIONAL_FURNITURE_ANIMATIONS`, never character poses). The robot pack at `sprites/robot/` is a TV-head character set (10×12 sprites).
-- "How do hooks get installed?" → `install::merge::merge_install` for the JSON merge logic, `install::io::write_settings_atomic` for the safe filesystem write.
+- "How do hooks get installed?" → `install::merge::merge_install` for Claude JSON, `install::merge::merge_codex_install` for Codex TOML, and `install::io` atomic writers for safe filesystem writes. `pixtuoid install-hooks` defaults to Claude for compatibility; use `--target codex` or `--target all` for Codex.
 - "How does the neon wall display work?" → `pixel_painter/background/lighting.rs::paint_neon_panel` paints the dark panel with pulsing cyan border in the pixel buffer; `widgets/hud.rs::paint_wall_display` overlays ratatui text (branding, state dots, scrolling ticker); `widgets/mod.rs::TickerQueue` manages the persistent scrolling message buffer.
 - "How do pets work?" → `tui/pet.rs::PetKind` enum (Cat, Dog) with per-kind static data (sprite names, hitboxes, behavior). One pet per floor selected via `select_pet_for_floor(floor_seed, enabled_pets)`. Config: `enabled-pets = ["cat", "dog"]` (absent = all, empty = none). `pixel_painter/drawable.rs::pet_position` — 40s cycle, picks a destination from all spots (desks, pantry, sofas, couch, corridor), walks there (35%), sits/sleeps (65%). Cat sleeps with z's near idle agents; both pets sleep when all agents are idle. Sprites per kind: `*_walk` (8×6), `*_sit` (6×6), `*_sleep` (6×4). Click to pet → hearts animation via `PetState` on `TuiRenderer`. `hit_test_pet` / `paint_pet_tooltip` parameterized on `PetKind`.
 - "How does desk personalization work?" → `drawable.rs::paint_desk_personalization` — procedural pixel items appear on desks based on `session_age_secs`: coffee cup (event-driven, after pantry visit), plant (30min), photo frame (1hr).

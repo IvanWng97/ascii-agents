@@ -72,8 +72,14 @@ fn main() -> Result<()> {
         Cmd::InstallHooks {
             hook_path,
             settings,
-        } => install::install(hook_path, settings),
-        Cmd::UninstallHooks { settings } => install::uninstall(settings),
+            codex_config,
+            target,
+        } => install::install(hook_path, settings, codex_config, target),
+        Cmd::UninstallHooks {
+            settings,
+            codex_config,
+            target,
+        } => install::uninstall(settings, codex_config, target),
         Cmd::ValidatePack { pack_dir } => validate::validate_pack(&pack_dir),
         Cmd::InitPack { dest, force } => init_pack::init_pack(&dest, force),
     }

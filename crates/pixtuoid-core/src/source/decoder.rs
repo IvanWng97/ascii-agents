@@ -11,10 +11,11 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
     let obj = v
         .as_object()
         .ok_or_else(|| anyhow!("hook payload must be an object"))?;
-    let event = obj
+    let raw_event = obj
         .get("hook_event_name")
         .and_then(|s| s.as_str())
         .ok_or_else(|| anyhow!("missing hook_event_name"))?;
+    let event = normalize_hook_event(raw_event);
 
     let session_id = obj
         .get("session_id")
@@ -22,25 +23,33 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
         .ok_or_else(|| anyhow!("missing session_id"))?
         .to_string();
     let transcript_path = obj
-        .get("transcript_path")
+        .get("agent_transcript_path")
+        .or_else(|| obj.get("transcript_path"))
         .and_then(|s| s.as_str())
         .ok_or_else(|| anyhow!("missing transcript_path"))?;
     let source = obj
         .get("source")
         .and_then(|s| s.as_str())
-        .unwrap_or(crate::source::claude_code::SOURCE_NAME);
+        .unwrap_or_else(|| infer_hook_source(transcript_path, raw_event));
     let agent_id = AgentId::from_parts(source, transcript_path);
 
     match event {
-        "SessionStart" => {
+        "SessionStart" | "SubagentStart" => {
             let cwd = obj.get("cwd").and_then(|s| s.as_str()).unwrap_or("").into();
             let source = source.to_string();
+            let parent_id = if event == "SubagentStart" {
+                obj.get("transcript_path")
+                    .and_then(|s| s.as_str())
+                    .map(|path| AgentId::from_parts(&source, path))
+            } else {
+                None
+            };
             Ok(AgentEvent::SessionStart {
                 agent_id,
                 source,
                 session_id,
                 cwd,
-                parent_id: None,
+                parent_id,
             })
         }
         "PreToolUse" => {
@@ -77,8 +86,40 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
                 reason: msg.into(),
             })
         }
-        "SessionEnd" => Ok(AgentEvent::SessionEnd { agent_id }),
+        "SessionEnd" | "Stop" | "SubagentStop" => Ok(AgentEvent::SessionEnd { agent_id }),
+        "UserPromptSubmit" => Ok(AgentEvent::Waiting {
+            agent_id,
+            reason: "prompt submitted".into(),
+        }),
         other => bail!("unsupported hook_event_name: {other}"),
+    }
+}
+
+fn normalize_hook_event(event: &str) -> &str {
+    match event {
+        "session_start" => "SessionStart",
+        "pre_tool_use" => "PreToolUse",
+        "post_tool_use" => "PostToolUse",
+        "notification" => "Notification",
+        "session_end" => "SessionEnd",
+        "stop" => "Stop",
+        "user_prompt_submit" => "UserPromptSubmit",
+        "subagent_start" => "SubagentStart",
+        "subagent_stop" => "SubagentStop",
+        other => other,
+    }
+}
+
+fn infer_hook_source(transcript_path: &str, event: &str) -> &'static str {
+    if transcript_path.contains("/.codex/")
+        || matches!(
+            normalize_hook_event(event),
+            "Stop" | "UserPromptSubmit" | "SubagentStart" | "SubagentStop"
+        )
+    {
+        "codex"
+    } else {
+        crate::source::claude_code::SOURCE_NAME
     }
 }
 

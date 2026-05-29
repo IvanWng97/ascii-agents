@@ -424,3 +424,69 @@ fn decode_hook_payload_missing_tool_name_still_succeeds() {
         other => panic!("expected ActivityStart, got {other:?}"),
     }
 }
+
+#[test]
+fn decode_codex_hook_infers_source_from_transcript_path() {
+    let transcript = "/Users/me/.codex/sessions/ses-abc.jsonl";
+    let payload = serde_json::json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "ses-abc",
+        "transcript_path": transcript,
+        "tool_name": "Bash",
+        "tool_input": { "command": "cargo test" }
+    });
+    let ev = decode_hook_payload(payload).unwrap();
+    match ev {
+        AgentEvent::ActivityStart {
+            agent_id, detail, ..
+        } => {
+            assert_eq!(agent_id, AgentId::from_parts("codex", transcript));
+            assert_eq!(detail.unwrap().display(), "Bash: cargo test");
+        }
+        other => panic!("expected ActivityStart, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_codex_stop_ends_session() {
+    let transcript = "/Users/me/.codex/sessions/ses-abc.jsonl";
+    let payload = serde_json::json!({
+        "hook_event_name": "Stop",
+        "session_id": "ses-abc",
+        "transcript_path": transcript
+    });
+    let ev = decode_hook_payload(payload).unwrap();
+    assert_eq!(
+        ev,
+        AgentEvent::SessionEnd {
+            agent_id: AgentId::from_parts("codex", transcript)
+        }
+    );
+}
+
+#[test]
+fn decode_codex_subagent_start_uses_agent_transcript_path() {
+    let parent = "/Users/me/.codex/sessions/parent.jsonl";
+    let child = "/Users/me/.codex/sessions/child.jsonl";
+    let payload = serde_json::json!({
+        "hook_event_name": "SubagentStart",
+        "session_id": "ses-abc",
+        "transcript_path": parent,
+        "agent_transcript_path": child,
+        "cwd": "/repo"
+    });
+    let ev = decode_hook_payload(payload).unwrap();
+    match ev {
+        AgentEvent::SessionStart {
+            agent_id,
+            source,
+            parent_id,
+            ..
+        } => {
+            assert_eq!(source, "codex");
+            assert_eq!(agent_id, AgentId::from_parts("codex", child));
+            assert_eq!(parent_id, Some(AgentId::from_parts("codex", parent)));
+        }
+        other => panic!("expected SessionStart, got {other:?}"),
+    }
+}

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,17 +38,25 @@ pub enum Cmd {
         #[arg(long, default_value_t = false)]
         headless: bool,
     },
-    /// Install Claude Code hooks into ~/.claude/settings.json.
+    /// Install agent hooks.
     InstallHooks {
         #[arg(long)]
         hook_path: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, alias = "claude-settings")]
         settings: Option<PathBuf>,
+        #[arg(long)]
+        codex_config: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = HookTarget::Claude)]
+        target: HookTarget,
     },
-    /// Remove pixtuoid hook entries from settings.json.
+    /// Remove pixtuoid hook entries.
     UninstallHooks {
-        #[arg(long)]
+        #[arg(long, alias = "claude-settings")]
         settings: Option<PathBuf>,
+        #[arg(long)]
+        codex_config: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = HookTarget::Claude)]
+        target: HookTarget,
     },
     /// Validate a custom sprite pack directory.
     ValidatePack {
@@ -63,6 +71,13 @@ pub enum Cmd {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum HookTarget {
+    Claude,
+    Codex,
+    All,
 }
 
 impl Cli {
@@ -107,7 +122,11 @@ mod tests {
     #[test]
     fn cmd_or_default_preserves_explicit_subcommand() {
         let cli = Cli {
-            cmd: Some(Cmd::UninstallHooks { settings: None }),
+            cmd: Some(Cmd::UninstallHooks {
+                settings: None,
+                codex_config: None,
+                target: HookTarget::Claude,
+            }),
             log_level: "debug".into(),
             theme: Some("cyberpunk".into()),
         };

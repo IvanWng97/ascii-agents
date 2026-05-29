@@ -54,6 +54,12 @@ pixtuoid
 
 In another terminal, start a Claude Code session. A character walks in from the elevator within a second.
 
+For Codex CLI:
+
+```bash
+pixtuoid install-hooks --target codex
+```
+
 **Keyboard shortcuts:** `q` quit · `p` pause · `t` themes · `↑↓/jk/PgUp/PgDn` floors · click to pin tooltip
 
 <details>
@@ -109,7 +115,7 @@ cargo build --release
 |---|---|---|
 | [**Claude Code**](https://code.claude.com) | ✅ Supported | Hook shim + JSONL watcher |
 | [**Antigravity CLI**](https://github.com/antiGravity-AI/antigravity-cli) | ✅ Supported | JSONL watcher |
-| [**Codex CLI**](https://github.com/openai/codex) | 🔜 Planned | Same hook pattern as CC |
+| [**Codex CLI**](https://github.com/openai/codex) | ✅ Supported | Hook shim |
 | [**Copilot CLI**](https://github.com/github/copilot-cli) | 🔜 Planned | Identical event names |
 | [**OpenCode**](https://github.com/opencode-ai/opencode) | 🔜 Planned | Any LLM (DeepSeek / GPT / Claude / Gemini) |
 | [**Cursor CLI**](https://cursor.com/cli) | 🔜 Planned | NDJSON stream |
@@ -192,7 +198,7 @@ Three Rust crates:
 |---|---|
 | **pixtuoid-core** | Headless library — no terminal deps. Source trait, reducer, pose, layout, sprites. |
 | **pixtuoid** | TUI binary — ratatui + crossterm + tokio. Half-block rendering + theme system. |
-| **pixtuoid-hook** | Tiny shim CC invokes from hooks. 200ms timeout, always exits 0. |
+| **pixtuoid-hook** | Tiny shim agent CLIs invoke from hooks. 200ms timeout, always exits 0. |
 
 </details>
 
@@ -238,7 +244,7 @@ Three Rust crates:
 
 ## Contributing
 
-See [`CLAUDE.md`](CLAUDE.md) for architecture and conventions. PRs welcome — especially new themes and `Source` adapters for other agent CLIs (Codex, Cursor, Gemini).
+See [`CLAUDE.md`](CLAUDE.md) for architecture and conventions. PRs welcome — especially new themes and `Source` adapters for other agent CLIs (Cursor, Gemini).
 
 <details>
 <summary><strong>Adding a new agent CLI</strong></summary>

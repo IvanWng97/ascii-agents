@@ -11,6 +11,11 @@ pub fn default_settings_path() -> PathBuf {
     PathBuf::from(format!("{home}/.claude/settings.json"))
 }
 
+pub fn default_codex_config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(format!("{home}/.codex/config.toml"))
+}
+
 pub fn default_hook_binary() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("PIXTUOID_HOOK") {
         return Ok(PathBuf::from(p));
@@ -49,6 +54,34 @@ pub fn read_settings(path: &Path) -> Result<Value> {
 /// of `path` (resolving any symlink), then renames onto the target. This avoids
 /// destroying a stow-managed `~/.claude/settings.json` symlink.
 pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
+    let serialized = serde_json::to_string_pretty(doc)?;
+    write_string_atomic(path, &serialized, "json")
+}
+
+pub fn read_toml_config(path: &Path) -> Result<toml::Value> {
+    let target = resolve_symlink(path);
+    if !target.exists() {
+        return Ok(toml::Value::Table(toml::value::Table::new()));
+    }
+    let mut s = String::new();
+    File::open(&target)?.read_to_string(&mut s)?;
+    if s.trim().is_empty() {
+        return Ok(toml::Value::Table(toml::value::Table::new()));
+    }
+    toml::from_str::<toml::Value>(&s).with_context(|| {
+        format!(
+            "{} is not valid TOML — refusing to overwrite",
+            target.display()
+        )
+    })
+}
+
+pub fn write_toml_atomic(path: &Path, doc: &toml::Value) -> Result<()> {
+    let serialized = toml::to_string_pretty(doc)?;
+    write_string_atomic(path, &serialized, "toml")
+}
+
+fn write_string_atomic(path: &Path, contents: &str, extension: &str) -> Result<()> {
     let target = resolve_symlink(path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
@@ -63,15 +96,14 @@ pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
     lock.try_lock_exclusive()
         .map_err(|e| anyhow!("could not lock {}: {e}", lock_path.display()))?;
 
-    let tmp = target.with_extension("json.tmp");
+    let tmp = target.with_extension(format!("{extension}.tmp"));
     {
         let mut f = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&tmp)?;
-        let serialized = serde_json::to_string_pretty(doc)?;
-        f.write_all(serialized.as_bytes())?;
+        f.write_all(contents.as_bytes())?;
         f.sync_all()?;
     }
     std::fs::rename(&tmp, &target)?;
