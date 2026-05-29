@@ -53,8 +53,11 @@ pub(in crate::tui) fn paint_theme_picker(
     // so this is reachable at widths the normal path rejects.
     let w = 28u16.min(bounds.width);
     let h = (theme::ALL_THEMES.len() as u16 + 2).min(bounds.height);
-    let x = bounds.width.saturating_sub(w) / 2;
-    let y = bounds.height.saturating_sub(h) / 2;
+    // Center within `bounds`, anchoring off its origin (not 0,0) so a
+    // non-zero-origin rect positions correctly — matches paint_help_overlay
+    // and paint_version_popup.
+    let x = bounds.x + bounds.width.saturating_sub(w) / 2;
+    let y = bounds.y + bounds.height.saturating_sub(h) / 2;
     let area = Rect {
         x,
         y,

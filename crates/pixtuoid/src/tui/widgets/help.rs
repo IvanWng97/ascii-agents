@@ -66,3 +66,28 @@ pub(in crate::tui) fn paint_help_overlay(f: &mut ratatui::Frame<'_>, bounds: Rec
         .style(Style::default().bg(to_color(theme.ui.tooltip_bg)));
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    // The overlay renders Clear + a Block; assert it never panics across the
+    // full size range, including narrow/short buffers reachable on small
+    // terminals (width clamp + bounds-origin centering must hold).
+    fn render_at(w: u16, h: u16) {
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        term.draw(|f| {
+            paint_help_overlay(f, Rect::new(0, 0, w, h), &crate::tui::theme::NORMAL);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn help_overlay_renders_without_panic_across_sizes() {
+        for (w, h) in [(200, 60), (40, 20), (24, 30), (10, 4), (4, 3)] {
+            render_at(w, h);
+        }
+    }
+}
