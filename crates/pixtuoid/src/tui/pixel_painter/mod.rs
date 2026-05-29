@@ -40,6 +40,7 @@ pub struct PixelPassResult {
     pub new_coffee_carriers: Vec<pixtuoid_core::AgentId>,
 }
 
+mod ambient;
 mod anchors;
 mod background;
 mod drawable;
@@ -486,6 +487,8 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             ctx.theme,
         );
     }
+
+    ambient::paint_ambient(ctx);
 
     // Build per-frame occupancy from STATIONARY agent positions only.
     // Walkers are deliberately excluded — their position interpolates
