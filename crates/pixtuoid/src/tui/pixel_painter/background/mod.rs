@@ -23,9 +23,48 @@ use std::time::SystemTime;
 
 use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 
+use super::ambient::SunbeamColumn;
 use super::palette::{blend, lerp_rgb};
 
+use crate::tui::layout::Layout;
 use crate::tui::theme::Theme;
+
+/// Floor-to-ceiling window stride. Mirrors `paint_floor_and_walls` —
+/// kept in sync so `window_spill_columns` returns the same x positions
+/// the floor pass paints.
+const WINDOW_W: u16 = 22;
+const WINDOW_GAP: u16 = 3;
+/// Vertical depth of the warm spill band below each window. Mirrors the
+/// `DEPTH` constant inside `paint_window_light_spill`.
+const SPILL_DEPTH: u16 = 12;
+/// Width of the elevator door sprite (same value as
+/// `pixel_painter::DOOR_SPRITE_WIDTH`). Local copy so `window_spill_columns`
+/// can derive the skip range from `layout.door` without crossing modules.
+const DOOR_SPRITE_WIDTH: u16 = 16;
+
+/// Returns one `SunbeamColumn` per floor-to-ceiling window, centred on
+/// the window and starting at the floor row (just below the wall band).
+/// Elevator-door windows are excluded — mirroring the `overlaps_door`
+/// guard in `paint_floor_and_walls`. Used by `paint_dust_motes` so the
+/// motes drift through the same warm spill the floor pass paints.
+pub(in crate::tui::pixel_painter) fn window_spill_columns(layout: &Layout) -> Vec<SunbeamColumn> {
+    let top_wall_h = layout.top_margin.saturating_sub(4);
+    let skip = layout.door.map(|d| (d.x, d.x + DOOR_SPRITE_WIDTH));
+    let mut out = Vec::new();
+    let mut x = 3u16;
+    while x + WINDOW_W + 2 <= layout.buf_w {
+        let overlaps_door = skip.is_some_and(|(dx0, dx1)| x < dx1 && x + WINDOW_W > dx0);
+        if !overlaps_door {
+            out.push(SunbeamColumn {
+                x: x + WINDOW_W / 2,
+                top_y: top_wall_h,
+                depth: SPILL_DEPTH,
+            });
+        }
+        x += WINDOW_W + WINDOW_GAP;
+    }
+    out
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint_floor_and_walls(
@@ -69,8 +108,8 @@ pub(super) fn paint_floor_and_walls(
     // Floor-to-ceiling windows: 落地窗 — height grows with the wall band so
     // taller terminals get dramatic floor-to-ceiling glass. Width stays
     // fixed (mullion every 22 px) so the skyline detail reads consistently.
-    const WINDOW_W: u16 = 22;
-    const WINDOW_GAP: u16 = 3;
+    // WINDOW_W / WINDOW_GAP are module constants — kept in sync with
+    // `window_spill_columns` so motes drift through the same x columns.
     let window_y: u16 = 1;
     let window_h: u16 = top_wall_h.saturating_sub(2).max(8);
     let weather = weather_state(now);
@@ -171,9 +210,8 @@ fn paint_window_light_spill(
     theme: &Theme,
 ) {
     let warm = theme.lighting.sun_spill;
-    const DEPTH: u16 = 12;
     let fade_start = 0.32 * intensity;
-    for dy in 0..DEPTH {
+    for dy in 0..SPILL_DEPTH {
         let widen = (dy / 2).min(3);
         let shift = (slant_per_row * dy as f32).round() as i32;
         let base_x = (window_x as i32 + shift).max(0) as u16;
@@ -183,7 +221,7 @@ fn paint_window_light_spill(
         if y >= buf.height {
             break;
         }
-        let strength = fade_start * (1.0 - dy as f32 / DEPTH as f32);
+        let strength = fade_start * (1.0 - dy as f32 / SPILL_DEPTH as f32);
         for x in start_x..end_x {
             let cur = buf.get(x, y);
             buf.put(
