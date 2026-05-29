@@ -151,14 +151,27 @@ pub fn derive_with_routing(
             .unwrap_or(Duration::ZERO)
             .as_millis() as u64;
 
+        // Compress the exit walk so it REACHES the door before the reducer's
+        // EXIT_GRACE_WINDOW reaps the slot. Physics exit duration for far/slow
+        // desks can exceed 4500ms; without this the slot is GC'd mid-walk and
+        // the sprite vanishes in the corridor instead of reaching the door.
+        // (Entry has no such cap — nothing GCs an entering agent.)
+        let exit_budget = (pixtuoid_core::state::reducer::EXIT_GRACE_WINDOW.as_millis() as u64)
+            .saturating_sub(300);
+        let eff_elapsed = if profile.duration_ms.saturating_add(profile.pause_ms) > exit_budget {
+            (elapsed_ms.saturating_mul(profile.duration_ms) / exit_budget.max(1)).max(elapsed_ms)
+        } else {
+            elapsed_ms
+        };
+
         // GC: walk fully done including pause → return None so the slot
         // disappears (same as old ENTRY_ANIMATION_MS gate).
-        if walk_arrived(profile, elapsed_ms) {
+        if walk_arrived(profile, eff_elapsed) {
             return None;
         }
 
-        let t_x1000 = walk_progress(profile, elapsed_ms);
-        let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+        let t_x1000 = walk_progress(profile, eff_elapsed);
+        let frame = ((eff_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
         let from = Point {
             x: desk.x + 6,
             y: desk.y + 4,
@@ -248,13 +261,16 @@ pub fn derive_with_routing(
         }
     }
 
-    // ---- WANDER DISPATCH (Idle agents past entry window) -------------------
-    // For Idle agents that have completed entry, drive the wander state
-    // machine with physics-timed phases via `advance_wander`.  SeatedThinking
-    // takes priority over the Seated phase so the thinking-pose window is
-    // preserved unchanged.
+    // ---- WANDER DISPATCH (Idle agents whose entry walk is done) ------------
+    // Reaching this line means the entry branch above already returned for any
+    // in-flight entry walk, so the agent's entry is complete (arrived early for
+    // near desks, or never started). Gate on Idle, NOT on `since_spawn >=
+    // ENTRY_ANIMATION_MS` — that fixed 4000ms gate made a near-desk agent that
+    // physically arrived in ~1s sit in core's fixed-fraction idle_pose until 4s
+    // and then snap to physics wander. Drive `advance_wander` right away.
+    // SeatedThinking still takes priority so the thinking-pose window is intact.
     let is_idle = matches!(slot.state, pixtuoid_core::state::ActivityState::Idle);
-    if is_idle && slot.exiting_at.is_none() && since_spawn >= ENTRY_ANIMATION_MS {
+    if is_idle && slot.exiting_at.is_none() {
         // Check thinking-pose seam: if the agent recently finished active
         // work and is within the thinking window, return SeatedThinking now
         // regardless of wander phase.  This keeps the existing thinking-pose
@@ -415,31 +431,46 @@ pub fn derive_with_routing(
                     let p = walk_profile(len, WalkIntent::SnapBack, slot.agent_id);
                     ms_entry.snap_back = Some((slot.state_started_at, p, prev));
                 }
-                // Clone out what we need so we can mutably clear snap_back if done.
-                let (started_at, profile, _snap_prev) =
-                    ms_entry.snap_back.as_ref().unwrap().clone();
-                let elapsed_ms = now
-                    .duration_since(started_at)
-                    .unwrap_or(Duration::ZERO)
-                    .as_millis() as u64;
-                // Cap effective elapsed at SNAP_BACK_MS so physics never drives
-                // beyond the hard 900ms wall (profile.duration_ms may exceed it
-                // for very long snap distances).
-                let capped_elapsed = elapsed_ms.min(SNAP_BACK_MS);
-                if walk_arrived(&profile, capped_elapsed) {
-                    // Physics + pause completed — clear stale profile so the next
-                    // state transition gets a fresh snapshot.
-                    ms_entry.snap_back = None;
-                    raw
-                } else {
-                    let t_x1000 = walk_progress(&profile, capped_elapsed);
-                    let frame = ((capped_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
-                    Pose::Walking {
-                        from: prev,
-                        to: snap_target,
-                        t_x1000,
-                        frame,
-                        carrying_coffee: false,
+                // Clone out (releases the borrow) so we can clear snap_back below.
+                // No `unwrap`: `needs_arm` set Some above, or the match at line
+                // ~408 witnessed Some — a None here is unreachable, but fall back
+                // to the seated pose gracefully rather than panic (CLAUDE.md: no
+                // unwrap in non-test code).
+                match ms_entry.snap_back.clone() {
+                    None => raw,
+                    Some((started_at, profile, _snap_prev)) => {
+                        let elapsed_ms = now
+                            .duration_since(started_at)
+                            .unwrap_or(Duration::ZERO)
+                            .as_millis() as u64;
+                        // Time-compress so the eased walk COMPLETES by the 900ms
+                        // responsive window. Snap-back distances routinely exceed
+                        // the ~13px the physics finishes within 900ms; without this
+                        // the walk is cut off mid-path by the window guard and the
+                        // sprite teleports the remaining distance to the desk.
+                        let eff_elapsed = if profile.duration_ms > SNAP_BACK_MS {
+                            (elapsed_ms.saturating_mul(profile.duration_ms) / SNAP_BACK_MS)
+                                .max(elapsed_ms)
+                        } else {
+                            elapsed_ms
+                        };
+                        if walk_arrived(&profile, eff_elapsed) {
+                            // Short snaps complete + pause before the window edge —
+                            // clear so the next state transition re-snapshots fresh.
+                            ms_entry.snap_back = None;
+                            raw
+                        } else {
+                            let t_x1000 = walk_progress(&profile, eff_elapsed);
+                            let frame =
+                                ((eff_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+                            Pose::Walking {
+                                from: prev,
+                                to: snap_target,
+                                t_x1000,
+                                frame,
+                                carrying_coffee: false,
+                            }
+                        }
                     }
                 }
             } else {
@@ -699,6 +730,51 @@ mod tests {
                 assert_eq!(from, prev, "snap-back walk should start from recorded prev");
             }
             other => panic!("expected snap-back Walking pose, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snap_back_long_distance_completes_by_window_no_teleport() {
+        // Regression: a snap-back over a distance whose physics duration exceeds
+        // SNAP_BACK_MS (the common case — agents snap back from far waypoints)
+        // must be time-compressed so it REACHES the desk by the 900ms window
+        // edge. Before the fix it capped elapsed at 900ms → progress stuck mid-
+        // path → the sprite teleported the remaining distance when the window
+        // guard flipped it to seated.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        // State flipped 880ms ago — just inside the 900ms window.
+        let slot = active_slot(
+            now - Duration::from_millis(880),
+            now - Duration::from_secs(60),
+        );
+        let desk = l.home_desks[0];
+        // Far prev (octile ~544) → SnapBack physics duration ~1.9s >> 900ms.
+        let prev = Point {
+            x: desk.x + 50,
+            y: desk.y + 30,
+        };
+        let mut history = PoseHistory::new();
+        history.record(slot.agent_id, prev, now - Duration::from_millis(50));
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut router = StubRouter::straight();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        match derive_with_routing(
+            &slot,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        ) {
+            Some(Pose::Walking { t_x1000, .. }) => {
+                assert!(
+                    t_x1000 >= 950,
+                    "long snap-back must be ~complete by the window edge (no teleport), got t_x1000={t_x1000}"
+                );
+            }
+            other => panic!("expected near-complete Walking pose, got {other:?}"),
         }
     }
 
