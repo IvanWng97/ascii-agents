@@ -111,7 +111,7 @@ cargo build --release
 | [**Antigravity CLI**](https://github.com/antiGravity-AI/antigravity-cli) | ✅ Supported | JSONL watcher |
 | [**Codex CLI**](https://github.com/openai/codex) | 🔜 Planned | Same hook pattern as CC |
 | [**Copilot CLI**](https://github.com/github/copilot-cli) | 🔜 Planned | Identical event names |
-| [**OpenCode**](https://github.com/opencode-ai/opencode) | 🔜 Planned | Any LLM (DeepSeek / GPT / Claude / Gemini) |
+| [**OpenCode**](https://github.com/anomalyco/opencode) | 🔜 Planned | Any LLM (DeepSeek / GPT / Claude / Gemini) |
 | [**Cursor CLI**](https://cursor.com/cli) | 🔜 Planned | NDJSON stream |
 
 > Adding a new tool? Implement the [`Source` trait](#contributing) — one file, one channel, done.
