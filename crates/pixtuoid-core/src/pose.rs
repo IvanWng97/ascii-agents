@@ -226,6 +226,49 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
     }
 }
 
+/// Pure state → pose derivation, **excluding** the exit and entry override
+/// blocks at the top of `derive`. Only the `match slot.state { … }` tail is
+/// evaluated (elapsed time since `state_started_at` drives the animation
+/// frame counters).
+///
+/// This is the seam used by `tui::pose::derive_with_routing` so that a
+/// physics-driven entry (already in-flight via `MotionState`) does not
+/// restart a redundant linear entry walk. `derive()` itself stays
+/// UNTOUCHED — its existing callers (TestRenderer, overlay pass, snapshot
+/// tooling) keep identical behaviour.
+///
+/// Returns `None` when `slot.desk_index` is out of range for `layout`.
+pub fn derive_state_only(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option<Pose> {
+    // Bounds-check: we still need to verify desk_index is valid.
+    let _desk = *layout.home_desks.get(slot.desk_index)?;
+
+    let elapsed = now
+        .duration_since(slot.state_started_at)
+        .unwrap_or(Duration::ZERO)
+        .as_millis() as u64;
+
+    match &slot.state {
+        ActivityState::Active { .. } => {
+            let frame = ((elapsed / TYPING_FRAME_MS) as usize) % TYPING_FRAMES;
+            Some(Pose::SeatedTyping { frame })
+        }
+        ActivityState::Waiting { .. } => Some(Pose::StandingAtDesk),
+        ActivityState::Idle => {
+            let was_active = slot.last_event_at > slot.created_at;
+            let since_last_event = now
+                .duration_since(slot.last_event_at)
+                .unwrap_or(Duration::ZERO)
+                .as_secs();
+            if was_active && since_last_event < THINKING_WINDOW_SECS {
+                Some(Pose::SeatedThinking)
+            } else {
+                let desk = *layout.home_desks.get(slot.desk_index)?;
+                Some(idle_pose(slot, desk, layout, elapsed))
+            }
+        }
+    }
+}
+
 /// Pick an aimless wander destination using weighted zones. Each zone
 /// gets a "vibe weight" — window-viewing strip + pantry are highest
 /// because that's where people naturally drift during breaks; corridor
@@ -233,7 +276,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
 /// picking a zone (weighted random), rejection-sample 32 points
 /// within the zone for a walkable pixel. Falls back to a randomised
 /// point along the corridor if every probe fails.
-fn pick_aimless_dest(layout: &SceneLayout, seed: u64) -> Point {
+pub fn pick_aimless_dest(layout: &SceneLayout, seed: u64) -> Point {
     // Build the zone list. Use small rectangles for "window strip"
     // (top of cubicle band, where viewing-the-city makes sense) and
     // larger bounding boxes for the rooms / corridor. Zones can
@@ -806,6 +849,59 @@ mod tests {
                 assert!(!carrying_coffee, "entry walk must not carry coffee");
             }
             other => panic!("expected Walking (entry), got {other:?}"),
+        }
+    }
+
+    /// `derive_state_only` must return the state-driven pose even when the
+    /// slot is inside the entry-animation window (now - created_at < 4 s).
+    /// This proves it does NOT emit the door→desk entry Walking pose that
+    /// `derive` would return — preventing double-walk when the tui physics
+    /// layer is already driving its own entry walk.
+    #[test]
+    fn derive_state_only_skips_entry_override() {
+        let id = AgentId::from_transcript_path("/p/entry-so.jsonl");
+        let now0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        // Slot with created_at == now0; probe at 1500 ms → inside entry window.
+        let s = AgentSlot {
+            agent_id: id,
+            source: std::sync::Arc::from("claude-code"),
+            session_id: std::sync::Arc::from("abc"),
+            cwd: std::sync::Arc::from(PathBuf::from("/repo").as_path()),
+            label: std::sync::Arc::from("cc"),
+            // Active state so we can assert a non-Walking result.
+            state: ActivityState::Active {
+                activity: crate::source::Activity::Typing,
+                tool_use_id: Some("t".into()),
+                detail: Some("Edit".into()),
+            },
+            state_started_at: now0,
+            created_at: now0,
+            last_event_at: now0,
+            exiting_at: None,
+            pending_idle_at: None,
+            desk_index: 0,
+            floor_idx: 0,
+            tool_call_count: 0,
+            active_ms: 0,
+            unknown_cwd: false,
+            parent_id: None,
+        };
+        let probe = now0 + Duration::from_millis(1500);
+        let l = layout();
+
+        // `derive` would return a door→desk Walking pose here.
+        match derive(&s, probe, &l).expect("derive pose") {
+            Pose::Walking { .. } => {} // expected — entry override fires in derive
+            other => panic!("derive should return Walking in entry window, got {other:?}"),
+        }
+
+        // `derive_state_only` must return the state-driven pose (SeatedTyping),
+        // NOT the entry Walking.
+        match derive_state_only(&s, probe, &l).expect("derive_state_only pose") {
+            Pose::SeatedTyping { .. } => {}
+            other => panic!(
+                "derive_state_only should return SeatedTyping for Active slot in entry window, got {other:?}"
+            ),
         }
     }
 }

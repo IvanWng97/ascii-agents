@@ -2,6 +2,7 @@
 
 pub mod id;
 pub mod layout;
+pub mod physics;
 pub mod pose;
 pub mod render;
 pub mod source;
