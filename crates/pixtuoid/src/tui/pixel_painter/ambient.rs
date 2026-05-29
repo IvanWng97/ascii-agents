@@ -10,7 +10,9 @@ use std::time::{Duration, SystemTime};
 use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 
 use crate::tui::layout::Layout;
-use crate::tui::pixel_painter::background::{sun_on_wall, window_spill_columns, WallSide};
+use crate::tui::pixel_painter::background::{
+    atmo_attenuation, sun_on_wall, time_of_day_look, weather_state, window_spill_columns, WallSide,
+};
 use crate::tui::pixel_painter::palette::blend;
 use crate::tui::pixel_painter::PixelCtx;
 use crate::tui::theme::Theme;
@@ -176,6 +178,18 @@ pub(super) fn paint_dust_motes(
     if sun_on_wall(now).is_none() {
         return;
     }
+    // Dust motes scatter direct beam light; under any overcast there's no
+    // beam to scatter, so they vanish entirely. Scaled further by daylight
+    // ramp so they fade in/out with the spill instead of popping on at 06:00.
+    let atmo = atmo_attenuation(weather_state(now));
+    if !atmo.has_direct_beam {
+        return;
+    }
+    let look = time_of_day_look(now, theme);
+    let visibility = atmo.intensity * look.spill_strength;
+    if visibility <= 0.0 {
+        return;
+    }
     let warm = theme.lighting.sun_spill;
     for col in window_spill_columns(layout) {
         for (x, y, alpha) in dust_mote_positions(floor_seed, now, &col) {
@@ -183,7 +197,7 @@ pub(super) fn paint_dust_motes(
                 continue;
             }
             let cur = buf.get(x, y);
-            let strength = alpha * 0.7;
+            let strength = alpha * 0.7 * visibility;
             buf.put(
                 x,
                 y,
@@ -207,6 +221,21 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     if matches!(spot.wall, WallSide::South) {
         return;
     }
+    // The wall sunspot is a projected direct beam: clouds erase it
+    // entirely. Diffuse light under overcast/storm reaches the wall but
+    // never as a defined rectangle.
+    let atmo = atmo_attenuation(weather_state(now));
+    if !atmo.has_direct_beam {
+        return;
+    }
+    // Scale intensity by both atmospheric attenuation AND the time-of-day
+    // daylight curve so the spot ramps in/out with the warm spill rather
+    // than appearing full-strength at 06:01.
+    let look = time_of_day_look(now, theme);
+    let effective_intensity = spot.intensity * atmo.intensity * look.spill_strength;
+    if effective_intensity <= 0.0 {
+        return;
+    }
     let warm = theme.lighting.sun_spill;
     // Blend warm toward white as the sun climbs (warmth → 0 at noon).
     let cool = 1.0 - spot.warmth;
@@ -218,8 +247,8 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
 
     let base_w = 8u16;
     let base_h = 3u16;
-    let w = ((base_w as f32) * spot.intensity).round() as u16;
-    let h = ((base_h as f32) * spot.intensity).round() as u16;
+    let w = ((base_w as f32) * effective_intensity).round() as u16;
+    let h = ((base_h as f32) * effective_intensity).round() as u16;
     let w = w.max(4);
     let h = h.max(2);
 
@@ -243,7 +272,7 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
         WallSide::South => unreachable!("guarded above"),
     };
 
-    let tint_strength = 0.35 * spot.intensity;
+    let tint_strength = 0.35 * effective_intensity;
     let max_x = (rx + w).min(buf.width);
     let max_y = (ry + h).min(buf.height);
     for y in ry..max_y {

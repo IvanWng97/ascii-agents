@@ -15,8 +15,8 @@ pub(super) use lighting::{
     paint_neon_panel, paint_shadow,
 };
 pub(super) use time_of_day::{
-    dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look, weather_state,
-    TimeOfDayLook, WallSide, Weather,
+    atmo_attenuation, dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look,
+    weather_state, TimeOfDayLook, WallSide, Weather,
 };
 
 use std::time::SystemTime;
@@ -158,13 +158,19 @@ pub(super) fn paint_floor_and_walls(
                 weather,
                 altitude,
             );
-            if look.spill_strength > 0.0 {
+            // Atmospheric attenuation: cloudy/rainy/foggy weather dims the
+            // warm sunbeam reaching the floor. has_direct_beam isn't gated
+            // here — diffuse light still pours through under overcast — but
+            // intensity drops, so the spill goes pale + dim instead of warm.
+            let atmo = atmo_attenuation(weather);
+            let effective_spill = look.spill_strength * atmo.intensity;
+            if effective_spill > 0.0 {
                 paint_window_light_spill(
                     buf,
                     x,
                     WINDOW_W,
                     top_wall_h,
-                    look.spill_strength,
+                    effective_spill,
                     look.spill_slant,
                     theme,
                 );
@@ -555,7 +561,10 @@ fn paint_floor_to_ceiling_window(
         let hf = local.hour() as f32 + local.minute() as f32 / 60.0;
         super::palette::bell(hf, 6.5, 1.5).max(super::palette::bell(hf, 18.5, 1.5))
     };
-    let sunset = (raw_sunset * (1.0 - twilight_now * 0.8)).max(0.0);
+    // Golden-hour blaze on the city silhouette only fires under clear or
+    // windy skies; clouds scatter the warm direct light away.
+    let atmo = atmo_attenuation(weather);
+    let sunset = (raw_sunset * (1.0 - twilight_now * 0.8) * atmo.intensity).max(0.0);
     if sunset > 0.05 {
         let min_building_h = (glass_h / 5).max(3);
         for dy in 1..h.saturating_sub(1) {

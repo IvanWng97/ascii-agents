@@ -40,6 +40,51 @@ pub(in crate::tui::pixel_painter) fn weather_state(now: SystemTime) -> Weather {
     }
 }
 
+/// Atmospheric attenuation of outdoor sunlight reaching the interior.
+/// `intensity` is a 0..1 multiplier applied to every sun-driven effect
+/// (window spill warmth, sun spot on wall, dust motes, twilight glass
+/// tint). `has_direct_beam` gates direct-beam effects (sun spot, dust
+/// motes) — both require a clear line of sight from sun to glass; under
+/// any kind of overcast the beam scatters into diffuse light.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(in crate::tui::pixel_painter) struct AtmoAttenuation {
+    pub intensity: f32,
+    pub has_direct_beam: bool,
+}
+
+pub(in crate::tui::pixel_painter) fn atmo_attenuation(w: Weather) -> AtmoAttenuation {
+    match w {
+        Weather::Clear => AtmoAttenuation {
+            intensity: 1.0,
+            has_direct_beam: true,
+        },
+        Weather::Windy => AtmoAttenuation {
+            intensity: 1.0,
+            has_direct_beam: true,
+        },
+        Weather::Snow => AtmoAttenuation {
+            intensity: 0.7,
+            has_direct_beam: false,
+        },
+        Weather::Overcast => AtmoAttenuation {
+            intensity: 0.45,
+            has_direct_beam: false,
+        },
+        Weather::Rain => AtmoAttenuation {
+            intensity: 0.4,
+            has_direct_beam: false,
+        },
+        Weather::Fog => AtmoAttenuation {
+            intensity: 0.3,
+            has_direct_beam: false,
+        },
+        Weather::Storm => AtmoAttenuation {
+            intensity: 0.25,
+            has_direct_beam: false,
+        },
+    }
+}
+
 pub(in crate::tui::pixel_painter) fn sunset_strength(now: SystemTime) -> f32 {
     use chrono::Timelike;
     let unix_now = now
@@ -239,5 +284,37 @@ mod tests {
     #[test]
     fn sun_on_wall_none_at_midnight() {
         assert!(sun_on_wall(at_hour(0, 0)).is_none());
+    }
+
+    #[test]
+    fn atmo_clear_has_direct_beam() {
+        let a = atmo_attenuation(Weather::Clear);
+        assert!(a.has_direct_beam);
+        assert_eq!(a.intensity, 1.0);
+        let w = atmo_attenuation(Weather::Windy);
+        assert!(w.has_direct_beam);
+    }
+
+    #[test]
+    fn atmo_cloudy_blocks_direct_beam() {
+        for w in [
+            Weather::Rain,
+            Weather::Storm,
+            Weather::Snow,
+            Weather::Fog,
+            Weather::Overcast,
+        ] {
+            let a = atmo_attenuation(w);
+            assert!(!a.has_direct_beam, "{w:?} should block direct beam");
+            assert!(a.intensity < 1.0, "{w:?} should dim diffuse light");
+        }
+    }
+
+    #[test]
+    fn atmo_storm_dimmer_than_overcast() {
+        assert!(
+            atmo_attenuation(Weather::Storm).intensity
+                < atmo_attenuation(Weather::Overcast).intensity
+        );
     }
 }
