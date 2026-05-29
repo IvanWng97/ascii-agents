@@ -23,6 +23,12 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     let Some(spot) = sun_on_wall(now) else {
         return;
     };
+    // South wall is the window wall — paint_window_light_spill already
+    // conveys midday sun via warm spill on the floor under the glass.
+    // Painting on the glass itself would ghost-glow over the skyline.
+    if matches!(spot.wall, WallSide::South) {
+        return;
+    }
     let warm = theme.lighting.sun_spill;
     // Blend warm toward white as the sun climbs (warmth → 0 at noon).
     let cool = 1.0 - spot.warmth;
@@ -39,21 +45,14 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     let w = w.max(4);
     let h = h.max(2);
 
-    // The north (top) wall band is the visible window wall and stands in
-    // for the "south wall" in the in-fiction office orientation — sun at
-    // noon spills overhead through these windows. East/West sides project
-    // onto the outer 1-px column at the left/right edge of the wall band.
+    // The top wall band is the visible window wall; East/West sun spots
+    // project onto the outer 1-px column at the left/right edge of that band.
     let wall_band_h = layout.top_margin.saturating_sub(4);
     if wall_band_h == 0 {
         return;
     }
 
     let (rx, ry) = match spot.wall {
-        WallSide::South => {
-            let along_px = ((layout.buf_w.saturating_sub(w)) as f32 * spot.along) as u16;
-            let vert_px = ((wall_band_h.saturating_sub(h)) as f32 * spot.vertical) as u16;
-            (along_px, vert_px)
-        }
         WallSide::East => {
             let along_px = (wall_band_h.saturating_sub(h)) as f32 * spot.along.min(1.0);
             let cx = layout.buf_w.saturating_sub(w);
@@ -63,6 +62,7 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
             let along_px = (wall_band_h.saturating_sub(h)) as f32 * spot.along.min(1.0);
             (0u16, along_px as u16)
         }
+        WallSide::South => unreachable!("guarded above"),
     };
 
     let tint_strength = 0.35 * spot.intensity;

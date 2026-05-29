@@ -139,13 +139,15 @@ pub(in crate::tui::pixel_painter) struct SunSpot {
     pub warmth: f32,
 }
 
-/// Time-of-day sun position projected onto an office wall. Uses UTC
-/// hour-of-day from `SystemTime` (not local) so behavior is reproducible
-/// in tests; visual realism vs the user's clock is intentionally traded
-/// for determinism here. Returns `None` outside daylight (6:00–19:00).
+/// Time-of-day sun position projected onto an office wall. Uses local
+/// hour-of-day so the sun's wall (East / West) matches what the rendered
+/// wall clock shows; same pattern as `paint_clock` / `sunset_strength` /
+/// `time_of_day_look`. Returns `None` outside daylight (6:00–19:00).
 pub(in crate::tui::pixel_painter) fn sun_on_wall(now: SystemTime) -> Option<SunSpot> {
-    let secs = now.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
-    let hour = (secs % 86_400) as f32 / 3600.0;
+    use chrono::Timelike;
+    let unix_now = now.duration_since(std::time::UNIX_EPOCH).ok()?;
+    let local = chrono::DateTime::<chrono::Local>::from(std::time::UNIX_EPOCH + unix_now);
+    let hour = local.hour() as f32 + local.minute() as f32 / 60.0;
     if !(6.0..=19.0).contains(&hour) {
         return None;
     }
@@ -203,10 +205,17 @@ pub(in crate::tui::pixel_painter) fn dim_floor_overlay(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use chrono::TimeZone;
 
-    fn at_hour(h: u64, m: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(h * 3600 + m * 60)
+    /// Build a `SystemTime` that corresponds to local hour `h`, minute `m`
+    /// on a fixed date — keeps the tests TZ-independent because
+    /// `sun_on_wall` decodes the input back into `chrono::Local`.
+    fn at_hour(h: u32, m: u32) -> SystemTime {
+        chrono::Local
+            .with_ymd_and_hms(2026, 1, 1, h, m, 0)
+            .single()
+            .expect("local time should be unambiguous")
+            .into()
     }
 
     #[test]
