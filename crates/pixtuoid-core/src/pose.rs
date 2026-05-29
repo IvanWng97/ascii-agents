@@ -29,10 +29,10 @@ pub const WANDER_CYCLE_BASE_MS: u64 = 7_000;
 /// Maximum extra time added per agent — jitter range is `[0, RANGE)`.
 pub const WANDER_CYCLE_RANGE_MS: u64 = 6_000;
 /// Phase fractions of a cycle (×1000 to stay in integer math).
-const PHASE_SEATED_FRAC: u64 = 250; // 0..250/1000
-const PHASE_WALK_OUT_FRAC: u64 = 417; // 250..417/1000
-const PHASE_AT_WAYPOINT_FRAC: u64 = 833; // 417..833/1000
-                                         // walk-back is 833..1000/1000.
+pub const PHASE_SEATED_FRAC: u64 = 250; // 0..250/1000
+pub const PHASE_WALK_OUT_FRAC: u64 = 417; // 250..417/1000
+pub const PHASE_AT_WAYPOINT_FRAC: u64 = 833; // 417..833/1000
+                                             // walk-back is 833..1000/1000.
 
 /// Frame-cycle period for animated poses.
 pub const TYPING_FRAME_MS: u64 = 140;

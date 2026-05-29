@@ -20,15 +20,16 @@ use pixtuoid_core::state::AgentSlot;
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentId;
 
-use crate::tui::motion::{octile_path_len, MotionState};
+use crate::tui::motion::{advance_wander, octile_path_len, MotionState, WanderPhase};
 
 pub use pixtuoid_core::pose::{
-    cycle_ms_for, derive, derive_state_only, is_aimless_cycle, personality_for, takes_trip,
-    waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS, TYPING_FRAMES,
-    TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
+    cycle_ms_for, derive, derive_state_only, is_aimless_cycle, personality_for, pick_aimless_dest,
+    takes_trip, waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS,
+    PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC, TYPING_FRAMES, TYPING_FRAME_MS,
+    WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
 };
 
-use crate::tui::layout::{Layout, Point};
+use crate::tui::layout::{Layout, Point, WaypointKind};
 use crate::tui::pathfind::Router;
 
 /// Per-agent rendered position cache. Updated each frame by
@@ -243,6 +244,106 @@ pub fn derive_with_routing(
             // walk_arrived — fall through to state-driven pose (Correction C).
             // DO NOT call `derive()` here as that would re-fire the linear
             // entry override and cause a double-walk.
+        }
+    }
+
+    // ---- WANDER DISPATCH (Idle agents past entry window) -------------------
+    // For Idle agents that have completed entry, drive the wander state
+    // machine with physics-timed phases via `advance_wander`.  SeatedThinking
+    // takes priority over the Seated phase so the thinking-pose window is
+    // preserved unchanged.
+    let is_idle = matches!(slot.state, pixtuoid_core::state::ActivityState::Idle);
+    if is_idle && slot.exiting_at.is_none() && since_spawn >= ENTRY_ANIMATION_MS {
+        // Check thinking-pose seam: if the agent recently finished active
+        // work and is within the thinking window, return SeatedThinking now
+        // regardless of wander phase.  This keeps the existing thinking-pose
+        // behaviour entirely intact (no regression).
+        let was_active = slot.last_event_at > slot.created_at;
+        let since_last_event = now
+            .duration_since(slot.last_event_at)
+            .unwrap_or(Duration::ZERO)
+            .as_secs();
+        if was_active && since_last_event < 20 {
+            // Thinking window active — return SeatedThinking directly.
+            return Some(Pose::SeatedThinking);
+        }
+
+        let (wander_phase, t_phys) = advance_wander(slot, now, layout, router, overlay, motion);
+
+        match wander_phase {
+            WanderPhase::WalkingOut => {
+                let ms = motion.get(&slot.agent_id)?;
+                let desk_point = *layout.home_desks.get(slot.desk_index)?;
+                let dest = ms.wander_dest;
+                let elapsed_phase = now
+                    .duration_since(ms.wander_phase_started_at)
+                    .unwrap_or(Duration::ZERO)
+                    .as_millis() as u64;
+                let frame = (elapsed_phase / WALKING_FRAME_MS) as usize % WALKING_FRAMES;
+                return route_walking_pose(
+                    slot,
+                    now,
+                    layout,
+                    router,
+                    overlay,
+                    history,
+                    Pose::Walking {
+                        from: desk_point,
+                        to: dest,
+                        t_x1000: t_phys,
+                        frame,
+                        carrying_coffee: false,
+                    },
+                );
+            }
+            WanderPhase::AtWaypoint => {
+                let ms = motion.get(&slot.agent_id)?;
+                let pose = if let (Some(wp_idx), Some(kind)) =
+                    (ms.wander_dest_wp_idx, ms.wander_dest_kind)
+                {
+                    Pose::AtWaypoint { wp: wp_idx, kind }
+                } else {
+                    Pose::AimlessAt {
+                        dest: ms.wander_dest,
+                    }
+                };
+                // Record history so snap-back works if state changes now.
+                let pt = ms.wander_dest;
+                history.record(slot.agent_id, pt, now);
+                return Some(pose);
+            }
+            WanderPhase::WalkingBack => {
+                let ms = motion.get(&slot.agent_id)?;
+                let desk_point = *layout.home_desks.get(slot.desk_index)?;
+                let snap_target = Point {
+                    x: desk_point.x + 6,
+                    y: desk_point.y + 4,
+                };
+                let elapsed_phase = now
+                    .duration_since(ms.wander_phase_started_at)
+                    .unwrap_or(Duration::ZERO)
+                    .as_millis() as u64;
+                let frame = (elapsed_phase / WALKING_FRAME_MS) as usize % WALKING_FRAMES;
+                let carrying_coffee = ms.wander_dest_kind == Some(WaypointKind::Pantry);
+                return route_walking_pose(
+                    slot,
+                    now,
+                    layout,
+                    router,
+                    overlay,
+                    history,
+                    Pose::Walking {
+                        from: ms.wander_dest,
+                        to: snap_target,
+                        t_x1000: t_phys,
+                        frame,
+                        carrying_coffee,
+                    },
+                );
+            }
+            WanderPhase::Seated => {
+                // Fall through to derive_state_only — it returns SeatedIdle.
+            }
         }
     }
 
