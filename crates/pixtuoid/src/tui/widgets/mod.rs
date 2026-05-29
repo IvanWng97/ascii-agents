@@ -177,7 +177,7 @@ mod tests {
         s
     }
 
-    const QUIT_SUFFIX: &str = " [p]ause [t]heme [q]uit ";
+    const QUIT_SUFFIX: &str = " [?]help [p]ause [t]heme [q]uit ";
 
     #[test]
     fn footer_zero_agents() {

@@ -1,6 +1,5 @@
 ---
 source: crates/pixtuoid/src/tui/widgets/mod.rs
-assertion_line: 231
 expression: line
 ---
- 2a    [p]ause [t]heme [q]uit
+ 2a    [?]help [p]ause [t]heme [q]uit

@@ -336,7 +336,10 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
             }
         }
         if ctx.help_open {
-            paint_help_overlay(f, actual_scene, theme);
+            // Center in actual_full (not actual_scene) so the overlay sits
+            // at the same vertical center as the theme picker / version
+            // popup, which both use actual_full.
+            paint_help_overlay(f, actual_full, theme);
         }
     })?;
     Ok(Some(layout))

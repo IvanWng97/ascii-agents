@@ -106,7 +106,11 @@ pub(in crate::tui) fn paint_footer(
 ) {
     use ratatui::text::Line;
     let spans = build_status_spans(scene, full_rect.width, floor_info, theme);
-    let footer = Paragraph::new(Line::from(spans));
+    // Base style on the whole row (label_idle) for parity with the old
+    // single-Span footer: cells past the rendered spans (quit-only tier on a
+    // wide-ish terminal) keep the muted footer tone rather than default.
+    let footer =
+        Paragraph::new(Line::from(spans)).style(Style::default().fg(to_color(theme.ui.label_idle)));
     f.render_widget(
         footer,
         Rect {
@@ -191,7 +195,7 @@ fn status_segments(
         Some(fi) => format!(" F{}/{} [\u{2191}\u{2193}]", fi.current, fi.total_floors),
         None => String::new(),
     };
-    let quit_base = " [p]ause [t]heme [q]uit ";
+    let quit_base = " [?]help [p]ause [t]heme [q]uit ";
     let quit = format!("{floor_suffix}{quit_base}");
     let tools_str = {
         let mut tools: Vec<(&&str, &usize)> = tool_counts.iter().collect();

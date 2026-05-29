@@ -212,6 +212,17 @@ pub async fn run_tui(
                             }
                         }
                     }
+                    Event::Mouse(m) if renderer.help_open() => {
+                        // The help overlay is modal for the mouse: a left
+                        // click dismisses it and every mouse event is
+                        // swallowed so nothing leaks to the scene behind it
+                        // (e.g. coffee-machine / branding clicks launching a
+                        // browser). Placed before the popup guard so help
+                        // wins even mid popup-dismiss animation.
+                        if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+                            renderer.set_help_open(false);
+                        }
+                    }
                     Event::Mouse(m) if renderer.last_popup_scale() > 0.0 => {
                         // While the popup is animating or fully visible, only
                         // the URL link is clickable; all other clicks are

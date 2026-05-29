@@ -547,7 +547,9 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                     }
                 }
                 if help_open {
-                    crate::tui::renderer::paint_help_overlay(f, actual_scene, theme);
+                    // actual_full (not actual_scene) to match the theme
+                    // picker / version popup centering on this path too.
+                    crate::tui::renderer::paint_help_overlay(f, actual_full, theme);
                 }
             })?;
 
