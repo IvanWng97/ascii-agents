@@ -12,6 +12,7 @@ use super::*;
 /// Blue: #89b4fa, Lavender: #b4befe
 pub static CATPPUCCIN: Theme = Theme {
     name: "catppuccin",
+    kind: ThemeKind::Light,
     surface: SurfaceColors {
         wall: Rgb(30, 30, 46),
         wall_trim: Rgb(69, 71, 90),

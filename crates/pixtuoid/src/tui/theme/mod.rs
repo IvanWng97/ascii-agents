@@ -14,9 +14,19 @@ pub use gruvbox::GRUVBOX;
 pub use normal::NORMAL;
 pub use tokyo_night::TOKYO_NIGHT;
 
+/// Light vs Dark classification — drives effects that only look right on
+/// one or the other (e.g. ceiling halos read as soft glow on dark themes
+/// but as dirt smears on light themes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeKind {
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub name: &'static str,
+    pub kind: ThemeKind,
     pub surface: SurfaceColors,
     pub office: OfficeColors,
     pub lighting: LightingColors,
@@ -158,5 +168,19 @@ mod tests {
     #[test]
     fn unknown_theme_returns_none() {
         assert!(theme_by_name("doesnotexist").is_none());
+    }
+
+    #[test]
+    fn dark_themes_marked_dark() {
+        assert_eq!(CYBERPUNK.kind, ThemeKind::Dark);
+        assert_eq!(DRACULA.kind, ThemeKind::Dark);
+        assert_eq!(TOKYO_NIGHT.kind, ThemeKind::Dark);
+        assert_eq!(GRUVBOX.kind, ThemeKind::Dark);
+    }
+
+    #[test]
+    fn light_themes_marked_light() {
+        assert_eq!(NORMAL.kind, ThemeKind::Light);
+        assert_eq!(CATPPUCCIN.kind, ThemeKind::Light);
     }
 }

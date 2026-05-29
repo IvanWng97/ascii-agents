@@ -4,6 +4,7 @@ use super::*;
 
 pub static DRACULA: Theme = Theme {
     name: "dracula",
+    kind: ThemeKind::Dark,
     surface: SurfaceColors {
         wall: Rgb(40, 42, 54),
         wall_trim: Rgb(68, 71, 90),
