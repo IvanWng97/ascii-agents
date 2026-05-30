@@ -121,7 +121,7 @@ pub fn install(args: InstallArgs) -> Result<()> {
         is_tty,
     );
     let targets = resolve_plan(plan)?;
-    if needs_confirm(&args.target, targets.len(), args.yes, is_tty)
+    if needs_confirm(&args.target, targets.len(), args.yes, is_tty, false)
         && !confirm_targets("install pixtuoid hooks into", &targets)
     {
         println!("aborted");
@@ -141,9 +141,9 @@ pub fn uninstall(args: UninstallArgs) -> Result<()> {
         is_tty,
     );
     let targets = resolve_plan(plan)?;
-    // Symmetric with install(): the destructive op must also confirm before
-    // touching >1 auto-detected target (it rewrites configs + deletes backups).
-    if needs_confirm(&args.target, targets.len(), args.yes, is_tty)
+    // Destructive: confirm before touching >1 target (rewrites configs + deletes
+    // backups), including an explicit `--target all` — not just bare auto-detect.
+    if needs_confirm(&args.target, targets.len(), args.yes, is_tty, true)
         && !confirm_targets("remove pixtuoid hooks from", &targets)
     {
         println!("aborted");
@@ -165,10 +165,23 @@ fn resolve_plan(plan: Plan) -> Result<Vec<&'static Target>> {
     }
 }
 
-/// Confirm only on bare auto-detect (no `--target`) hitting >1 target on a TTY.
-/// An explicit `--target` (incl. `all`) is intent and skips the prompt; `--yes` skips.
-fn needs_confirm(requested: &Option<String>, n: usize, yes: bool, is_tty: bool) -> bool {
-    requested.is_none() && n > 1 && !yes && is_tty
+/// Whether to interactively confirm before acting. Always skipped by `--yes`,
+/// non-TTY, or a single target. Install (non-`destructive`): only a bare
+/// auto-detect (no `--target`) hitting >1 target confirms — an explicit
+/// `--target` (incl. `all`) is intent. Uninstall (`destructive`): ANY multi-
+/// target run confirms, including an explicit `--target all`, because it
+/// rewrites every config and deletes every backup (the only recovery path).
+fn needs_confirm(
+    requested: &Option<String>,
+    n: usize,
+    yes: bool,
+    is_tty: bool,
+    destructive: bool,
+) -> bool {
+    if yes || !is_tty || n <= 1 {
+        return false;
+    }
+    destructive || requested.is_none()
 }
 
 fn confirm_targets(verb: &str, targets: &[&'static Target]) -> bool {

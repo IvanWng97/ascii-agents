@@ -99,8 +99,11 @@ pub fn decode_codex_line(transcript_path: &str, source: &str, v: Value) -> Resul
     Ok(out)
 }
 
-/// A Codex `function_call` whose `arguments` (a JSON string) requests escalated
-/// sandbox permissions or carries a justification is an approval gate → Waiting.
+/// A Codex `function_call` requesting escalated sandbox permissions (`arguments`
+/// is a JSON string carrying `sandbox_permissions: "require_escalated"`) is an
+/// approval gate → Waiting. A bare `justification` is intentionally NOT a signal:
+/// Codex can emit it on auto-approved commands too, and the hook `PermissionRequest`
+/// is the primary Waiting trigger regardless — keying on it would false-Wait.
 fn function_call_needs_approval(payload: Option<&Map<String, Value>>) -> bool {
     let Some(args_str) = payload
         .and_then(|p| p.get("arguments"))
@@ -118,7 +121,6 @@ fn function_call_needs_approval(payload: Option<&Map<String, Value>>) -> bool {
         }
     };
     args.get("sandbox_permissions").and_then(|s| s.as_str()) == Some("require_escalated")
-        || args.get("justification").is_some()
 }
 
 fn codex_tool_start(agent_id: AgentId, payload: Option<&Map<String, Value>>) -> AgentEvent {
@@ -237,6 +239,20 @@ mod tests {
             json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":args}}),
         );
         assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn justification_without_escalation_is_not_waiting() {
+        // A bare `justification` (no `require_escalated`) is an auto-approved
+        // command, not a permission gate — must decode to working, not Waiting.
+        let args = r#"{"cmd":"ls","justification":"because"}"#;
+        let out = ev(
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":args}}),
+        );
+        assert!(
+            matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]),
+            "{out:?}"
+        );
     }
 
     #[test]
