@@ -42,7 +42,8 @@ hpid=$!
 sleep 2  # let the watcher bind/seed before the first append
 
 echo "replaying $(basename "$fixture") (1 line / ${delay}s) into a hermetic headless run..." >&2
-while IFS= read -r line; do
+# `|| [ -n "$line" ]` so a final line without a trailing newline is still processed.
+while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     printf '%s\n' "$line" >>"$file"
     sleep "$delay"
@@ -50,4 +51,9 @@ done <"$fixture"
 sleep 2
 
 echo "=== cx· agent state progression ==="
-grep 'agents=' "$out" || echo "(no agent output — is '$bin' the codex-aware build?)"
+grep 'agents=' "$out" || true
+# Headless always prints `agents=[]` (empty scene), so success = at least one
+# NON-empty agents line ever appeared. `agents=\[[^]]` = a char after `[` other than `]`.
+if ! grep -qE 'agents=\[[^]]' "$out"; then
+    echo "(no cx· agent ever appeared — is '$bin' the codex-aware build, and is the fixture a codex rollout?)"
+fi

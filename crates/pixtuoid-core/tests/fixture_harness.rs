@@ -18,21 +18,24 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use pixtuoid_core::source::antigravity::decode_ag_line;
-use pixtuoid_core::source::claude_code::decode_cc_line;
-use pixtuoid_core::source::codex::decode_codex_line;
 use pixtuoid_core::source::decoder::decode_hook_payload;
 use pixtuoid_core::source::jsonl::LineDecoder;
-use pixtuoid_core::source::AgentEvent;
+use pixtuoid_core::source::{antigravity, claude_code, codex, AgentEvent};
 
 /// Map a fixture's source directory name to its JSONL line decoder.
 /// Register a new CLI here (one line) — that plus a fixture dir is all it takes.
 fn decoder_for(source: &str) -> LineDecoder {
-    match source {
-        "codex" => decode_codex_line,
-        "claude-code" => decode_cc_line,
-        "antigravity" => decode_ag_line,
-        other => panic!("unknown fixture source {other:?} — register its decoder in decoder_for"),
+    // Keyed off the source modules' own SOURCE_NAME consts so a rename is a
+    // compile error here, not a silent fixture/decoder drift. (Antigravity has
+    // no such const; its name() returns this literal.)
+    if source == codex::SOURCE_NAME {
+        codex::decode_codex_line
+    } else if source == claude_code::SOURCE_NAME {
+        claude_code::decode_cc_line
+    } else if source == "antigravity" {
+        antigravity::decode_ag_line
+    } else {
+        panic!("unknown fixture source {source:?} — register its decoder in decoder_for")
     }
 }
 
@@ -61,20 +64,39 @@ fn sorted_dirs(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Decode one fixture dir into the full ordered event stream (JSONL then hooks),
-/// using `logical` as the stable transcript key fed to the decoders.
-fn decode_fixture(source: &str, dir: &Path) -> Vec<AgentEvent> {
-    // The transcript is the lone non-hook .jsonl in the dir.
-    let transcript = std::fs::read_dir(dir)
+/// One fixture's decoded events, split by transport so the test can assert each
+/// side actually contributed (a degenerate all-no-op transcript must not pass
+/// coalescing on hooks alone).
+struct Decoded {
+    jsonl: Vec<AgentEvent>,
+    hooks: Vec<AgentEvent>,
+    had_hook_file: bool,
+}
+
+/// Decode one fixture dir, feeding the decoders the fixture's *relative* path as
+/// the transcript key — `AgentId` is a deterministic FNV hash of that key, so
+/// snapshots stay machine-independent.
+fn decode_fixture(source: &str, dir: &Path) -> Decoded {
+    // The transcript is the lone non-hook .jsonl in the dir. Require exactly one
+    // — two would make selection (and the snapshot) depend on read_dir order.
+    let mut transcripts: Vec<PathBuf> = std::fs::read_dir(dir)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .find(|p| {
+        .filter(|p| {
             p.extension().and_then(|s| s.to_str()) == Some("jsonl")
                 && p.file_name().and_then(|s| s.to_str()) != Some("hook-payloads.jsonl")
         })
-        .unwrap_or_else(|| panic!("no transcript .jsonl in {}", dir.display()));
+        .collect();
+    transcripts.sort();
+    assert_eq!(
+        transcripts.len(),
+        1,
+        "{} must contain exactly one transcript .jsonl, found {}",
+        dir.display(),
+        transcripts.len()
+    );
+    let transcript = &transcripts[0];
 
-    // Stable logical key = path relative to fixtures_root (machine-independent).
     let logical = transcript
         .strip_prefix(fixtures_root())
         .unwrap()
@@ -82,32 +104,37 @@ fn decode_fixture(source: &str, dir: &Path) -> Vec<AgentEvent> {
         .into_owned();
 
     let decode = decoder_for(source);
-    let mut events = Vec::new();
-
-    for line in read_lines(&transcript) {
+    let mut jsonl = Vec::new();
+    for line in read_lines(transcript) {
         let v: serde_json::Value = serde_json::from_str(&line)
             .unwrap_or_else(|e| panic!("bad json in {}: {e}", transcript.display()));
         match decode(&logical, source, v) {
-            Ok(evs) => events.extend(evs),
+            Ok(evs) => jsonl.extend(evs),
             Err(e) => panic!("decode error in {}: {e}", transcript.display()),
         }
     }
 
-    let hooks = dir.join("hook-payloads.jsonl");
-    if hooks.exists() {
-        for line in read_lines(&hooks) {
+    let hooks_path = dir.join("hook-payloads.jsonl");
+    let had_hook_file = hooks_path.exists();
+    let mut hooks = Vec::new();
+    if had_hook_file {
+        for line in read_lines(&hooks_path) {
             // `{{TRANSCRIPT_PATH}}` lets a path-keyed hook (CC) line up with its
             // transcript; Codex carries it too, to prove it's ignored.
             let line = line.replace("{{TRANSCRIPT_PATH}}", &logical);
             let v: serde_json::Value = serde_json::from_str(&line)
-                .unwrap_or_else(|e| panic!("bad hook json in {}: {e}", hooks.display()));
+                .unwrap_or_else(|e| panic!("bad hook json in {}: {e}", hooks_path.display()));
             match decode_hook_payload(v) {
-                Ok(ev) => events.push(ev),
-                Err(e) => panic!("hook decode error in {}: {e}", hooks.display()),
+                Ok(ev) => hooks.push(ev),
+                Err(e) => panic!("hook decode error in {}: {e}", hooks_path.display()),
             }
         }
     }
-    events
+    Decoded {
+        jsonl,
+        hooks,
+        had_hook_file,
+    }
 }
 
 #[test]
@@ -126,7 +153,23 @@ fn all_source_fixtures_decode_and_coalesce() {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            let events = decode_fixture(&source, &scenario_dir);
+            let d = decode_fixture(&source, &scenario_dir);
+
+            // Each transport must actually contribute — else a degenerate
+            // fixture (e.g. all-no-op JSONL) could pass coalescing on hooks
+            // alone, silently skipping the JSONL keying path this test guards.
+            assert!(
+                !d.jsonl.is_empty(),
+                "{source}/{scenario}: transcript decoded to ZERO events"
+            );
+            if d.had_hook_file {
+                assert!(
+                    !d.hooks.is_empty(),
+                    "{source}/{scenario}: hook-payloads.jsonl decoded to ZERO events"
+                );
+            }
+
+            let events: Vec<AgentEvent> = d.jsonl.iter().chain(d.hooks.iter()).cloned().collect();
 
             // Contract 1: the decoded event sequence is stable (golden snapshot).
             insta::assert_yaml_snapshot!(format!("{source}__{scenario}"), events);
