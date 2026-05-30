@@ -73,7 +73,7 @@ pub fn decode_codex_line(transcript_path: &str, source: &str, v: Value) -> Resul
     };
 
     let out = match (outer, inner) {
-        ("event_msg", "task_started") => vec![start(Activity::Thinking)],
+        ("event_msg", "task_started") => vec![start(Activity::Typing)],
         ("response_item", "function_call") => {
             if function_call_needs_approval(payload) {
                 vec![AgentEvent::Waiting {
@@ -84,7 +84,13 @@ pub fn decode_codex_line(transcript_path: &str, source: &str, v: Value) -> Resul
                 vec![codex_tool_start(agent_id, payload)]
             }
         }
-        ("response_item", "function_call_output") | ("event_msg", "exec_command_end") => {
+        // Resume signals: a command/patch finished running after (auto-)approval.
+        // function_call_output (response_item) is the modern form; exec_command_end
+        // and patch_apply_end are the event_msg forms. Each is an ActivityStart so
+        // the reducer clears any Waiting set by the permission gate.
+        ("response_item", "function_call_output")
+        | ("event_msg", "exec_command_end")
+        | ("event_msg", "patch_apply_end") => {
             vec![start(Activity::Typing)]
         }
         ("event_msg", "task_complete") | ("event_msg", "turn_aborted") => vec![end()],
@@ -102,8 +108,14 @@ fn function_call_needs_approval(payload: Option<&Map<String, Value>>) -> bool {
     else {
         return false;
     };
-    let Ok(args) = serde_json::from_str::<Value>(args_str) else {
-        return false;
+    let args = match serde_json::from_str::<Value>(args_str) {
+        Ok(v) => v,
+        Err(e) => {
+            // A complete line that parsed as JSON but whose nested `arguments`
+            // string doesn't is unusual; log (don't panic) so it's diagnosable.
+            tracing::debug!("codex function_call arguments not parseable: {e}");
+            return false;
+        }
     };
     args.get("sandbox_permissions").and_then(|s| s.as_str()) == Some("require_escalated")
         || args.get("justification").is_some()
@@ -196,6 +208,15 @@ mod tests {
         let out = ev(
             json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c","output":"ok"}}),
         );
+        assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn patch_apply_end_resumes_work() {
+        // A file-edit's resume signal (after patch approval) — mirrors the
+        // exec resume so the reducer clears Waiting for patch flows too.
+        let out =
+            ev(json!({"type":"event_msg","payload":{"type":"patch_apply_end","success":true}}));
         assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
     }
 

@@ -21,19 +21,24 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
         .and_then(|s| s.as_str())
         .ok_or_else(|| anyhow!("missing session_id"))?
         .to_string();
-    // `transcript_path` is the preferred stable per-session key, but Codex sends
-    // it as `string | null`, so fall back to `session_id` when it's absent/null.
-    // (Both are namespaced by `source` in AgentId::from_parts, so collisions
-    // across CLIs are impossible.)
-    let id_key = obj
-        .get("transcript_path")
-        .and_then(|s| s.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(session_id.as_str());
     let source = obj
         .get("source")
         .and_then(|s| s.as_str())
         .unwrap_or(crate::source::claude_code::SOURCE_NAME);
+    // `transcript_path` is the preferred stable per-session key for CC (its hook
+    // and JSONL both carry the same transcript path, so they coalesce on it).
+    // Codex is different: its hooks send `transcript_path` as `string | null`,
+    // and its JSONL source keys on the rollout-filename UUID (== `session_id`).
+    // So Codex MUST key on `session_id` regardless of any `transcript_path`, or
+    // hook and JSONL events would hash to different AgentIds (two sprites).
+    let id_key = if source == crate::source::codex::SOURCE_NAME {
+        session_id.as_str()
+    } else {
+        obj.get("transcript_path")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(session_id.as_str())
+    };
     let agent_id = AgentId::from_parts(source, id_key);
 
     match event {
@@ -206,9 +211,20 @@ mod tests {
         }))
         .expect("decodes");
         match ev {
-            AgentEvent::SessionStart { source, cwd, .. } => {
+            AgentEvent::SessionStart {
+                agent_id,
+                source,
+                cwd,
+                ..
+            } => {
                 assert_eq!(source, "codex");
                 assert_eq!(cwd, std::path::PathBuf::from("/Users/me/work/myrepo"));
+                // Coalescing contract: Codex keys on session_id, NOT the
+                // (here non-null) transcript_path — so hook events and the
+                // JSONL source (which keys on the rollout-filename UUID ==
+                // session_id) hash to the SAME AgentId. Keying on the path
+                // would produce two sprites for one session.
+                assert_eq!(agent_id, AgentId::from_parts("codex", "codex-sess"));
             }
             other => panic!("expected SessionStart, got {other:?}"),
         }
