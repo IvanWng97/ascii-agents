@@ -8,3 +8,4 @@ Cargo.lock.bak
 .venv/
 .superpowers/
 .claude/worktrees/
+docs/superpowers/

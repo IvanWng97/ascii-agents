@@ -7,8 +7,6 @@ Instructions for Claude Code (or any AI coding agent) working in this repo.
 Terminal-native, multi-agent pixel-art visualizer for AI coding agents. Each running CC (Claude Code) session shows up as an animated half-block sprite in an ASCII office. Built in Rust as a Cargo workspace of three crates.
 
 User-facing overview: [`README.md`](README.md).
-v1 spec: [`docs/superpowers/specs/2026-05-20-pixtuoid-design.md`](docs/superpowers/specs/2026-05-20-pixtuoid-design.md).
-v1 plan (28 TDD-shaped tasks): [`docs/superpowers/plans/2026-05-20-pixtuoid-v1.md`](docs/superpowers/plans/2026-05-20-pixtuoid-v1.md).
 
 ## Layout
 
