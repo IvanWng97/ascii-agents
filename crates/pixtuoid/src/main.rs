@@ -48,6 +48,7 @@ fn main() -> Result<()> {
         Cmd::Run {
             socket,
             projects_root,
+            codex_sessions_root,
             pack_dir,
             max_desks: cli_max_desks,
             headless,
@@ -61,6 +62,7 @@ fn main() -> Result<()> {
             runtime::run(
                 socket,
                 projects_root,
+                codex_sessions_root,
                 pack_dir,
                 desk_cap,
                 headless,

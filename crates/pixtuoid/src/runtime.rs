@@ -33,6 +33,7 @@ const FALLBACK_DESKS: usize = 16;
 pub fn run(
     socket: Option<PathBuf>,
     projects_root: Option<PathBuf>,
+    codex_sessions_root: Option<PathBuf>,
     pack_dir: Option<PathBuf>,
     desk_cap: Option<usize>,
     headless: bool,
@@ -54,6 +55,7 @@ pub fn run(
         run_async(
             socket,
             projects_root,
+            codex_sessions_root,
             pack_dir,
             desk_cap,
             headless,
@@ -69,6 +71,7 @@ pub fn run(
 async fn run_async(
     socket: Option<PathBuf>,
     projects_root: Option<PathBuf>,
+    codex_sessions_root: Option<PathBuf>,
     pack_dir: Option<PathBuf>,
     desk_cap: Option<usize>,
     headless: bool,
@@ -86,6 +89,11 @@ async fn run_async(
 
     let ag_src = AntigravitySource::default_paths();
 
+    let mut codex_src = CodexSource::default_paths();
+    if let Some(p) = codex_sessions_root {
+        codex_src.sessions_root = p;
+    }
+
     let (tx, rx) = mpsc::channel::<(Transport, AgentEvent)>(256);
     let boot_caps: [usize; MAX_FLOORS] = match desk_cap {
         Some(cap) => [cap; MAX_FLOORS],
@@ -102,7 +110,7 @@ async fn run_async(
     let _source_handles = SourceManager::new()
         .with_source(Box::new(cc_src))
         .with_source(Box::new(ag_src))
-        .with_source(Box::new(CodexSource::default_paths()))
+        .with_source(Box::new(codex_src))
         .spawn(tx);
 
     if headless {

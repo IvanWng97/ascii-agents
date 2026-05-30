@@ -28,6 +28,10 @@ pub enum Cmd {
         socket: Option<PathBuf>,
         #[arg(long)]
         projects_root: Option<PathBuf>,
+        /// Override the Codex sessions root (default ~/.codex/sessions).
+        /// Point at a temp dir to replay fixtures into a headless run.
+        #[arg(long)]
+        codex_sessions_root: Option<PathBuf>,
         #[arg(long)]
         pack_dir: Option<PathBuf>,
         /// Cap desks per floor (auto-computed from terminal size if unset).
@@ -98,6 +102,7 @@ impl Cli {
         let cmd = self.cmd.unwrap_or(Cmd::Run {
             socket: None,
             projects_root: None,
+            codex_sessions_root: None,
             pack_dir: None,
             max_desks: None,
             headless: false,
