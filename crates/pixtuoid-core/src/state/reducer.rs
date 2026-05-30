@@ -49,7 +49,7 @@ fn source_label_prefix(source: &str) -> &str {
     match source {
         crate::source::claude_code::SOURCE_NAME => "cc",
         "antigravity" => "ag",
-        "codex" => "cx",
+        crate::source::codex::SOURCE_NAME => "cx",
         other => other,
     }
 }
