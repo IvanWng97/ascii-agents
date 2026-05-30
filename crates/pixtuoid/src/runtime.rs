@@ -8,6 +8,7 @@ use pixtuoid_core::state::MAX_FLOORS;
 use anyhow::Result;
 use pixtuoid_core::source::antigravity::AntigravitySource;
 use pixtuoid_core::source::claude_code::ClaudeCodeSource;
+use pixtuoid_core::source::codex::CodexSource;
 use pixtuoid_core::source::manager::SourceManager;
 use pixtuoid_core::state::ActivityState;
 use pixtuoid_core::{AgentEvent, Reducer, SceneState, TaggedReceiver, Transport};
@@ -101,6 +102,7 @@ async fn run_async(
     let _source_handles = SourceManager::new()
         .with_source(Box::new(cc_src))
         .with_source(Box::new(ag_src))
+        .with_source(Box::new(CodexSource::default_paths()))
         .spawn(tx);
 
     if headless {
