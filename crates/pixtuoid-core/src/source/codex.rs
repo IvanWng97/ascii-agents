@@ -198,7 +198,8 @@ mod tests {
 
     #[test]
     fn escalated_function_call_is_waiting() {
-        let args = r#"{"cmd":"date","sandbox_permissions":"require_escalated","justification":"allow?"}"#;
+        let args =
+            r#"{"cmd":"date","sandbox_permissions":"require_escalated","justification":"allow?"}"#;
         let out = ev(
             json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":args}}),
         );
@@ -226,7 +227,10 @@ mod tests {
     fn task_complete_and_abort_end_activity() {
         for t in ["task_complete", "turn_aborted"] {
             let out = ev(json!({"type":"event_msg","payload":{"type":t,"turn_id":"t"}}));
-            assert!(matches!(out.as_slice(), [AgentEvent::ActivityEnd { .. }]), "{t}");
+            assert!(
+                matches!(out.as_slice(), [AgentEvent::ActivityEnd { .. }]),
+                "{t}"
+            );
         }
     }
 
@@ -258,7 +262,10 @@ mod tests {
             "/Users/me/.codex/sessions/2026/05/29/rollout-2026-05-29T22-36-52-019e7762-9ded-7e33-be41-946ecf105bf4.jsonl",
         );
         // Must equal the hook session_id for coalescing.
-        assert_eq!(codex_id_from_path(p), "019e7762-9ded-7e33-be41-946ecf105bf4");
+        assert_eq!(
+            codex_id_from_path(p),
+            "019e7762-9ded-7e33-be41-946ecf105bf4"
+        );
     }
 
     #[test]

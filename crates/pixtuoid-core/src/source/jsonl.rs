@@ -503,7 +503,10 @@ mod tests {
     #[test]
     fn default_id_from_path_returns_full_path_string() {
         let p = Path::new("/Users/me/.claude/projects/x/abc.jsonl");
-        assert_eq!(default_id_from_path(p), "/Users/me/.claude/projects/x/abc.jsonl");
+        assert_eq!(
+            default_id_from_path(p),
+            "/Users/me/.claude/projects/x/abc.jsonl"
+        );
     }
 
     #[test]
