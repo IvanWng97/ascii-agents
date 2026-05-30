@@ -94,8 +94,10 @@ pub struct DrawCtx<'a> {
     pub active_pet: Option<&'a PetState>,
     pub last_pet_pos: Option<(Point, &'static str, PetKind)>,
     pub floor_pet_kind: Option<PetKind>,
-    pub chitchat_state:
-        &'a mut std::collections::HashMap<(usize, usize), crate::tui::chitchat::ActiveChitchat>,
+    pub chitchat_state: &'a mut std::collections::HashMap<
+        crate::tui::chitchat::VenueKey,
+        crate::tui::chitchat::ActiveChitchat,
+    >,
     pub chitchat_bubbles: Vec<crate::tui::chitchat::ChitchatBubble>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at:

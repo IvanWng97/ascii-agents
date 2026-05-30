@@ -125,6 +125,10 @@ pub(super) fn build_walkable_mask(
             WaypointKind::StandingDesk => (8, 8),
             WaypointKind::VendingMachine => (4, 6),
             WaypointKind::Printer => (5, 4),
+            // Meeting slots sit/stand on the sofa/table furniture, which is
+            // already stamped above by the meeting_sofas / meeting_tables
+            // loops. The slot adds no new obstacle.
+            WaypointKind::MeetingSofa | WaypointKind::MeetingStand => continue,
         };
         // Pad=1 (not OBSTACLE_PAD_PX=2) — waypoint furniture paints in
         // Pass 1.5 (after characters) so a visitor's body is occluded

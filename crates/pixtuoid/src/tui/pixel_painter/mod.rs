@@ -88,7 +88,7 @@ pub struct PixelCtx<'a> {
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a crate::tui::renderer::PetState>,
     pub floor_pet_kind: Option<PetKind>,
-    pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
+    pub chitchat_state: &'a mut HashMap<crate::tui::chitchat::VenueKey, ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
     pub coffee_stains: &'a HashMap<pixtuoid_core::AgentId, Vec<crate::tui::tui_renderer::StainPos>>,
@@ -710,6 +710,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
+            // Meeting slots ride on the sofa/table furniture, which is
+            // painted via the `meeting_sofas` / `meeting_tables` drawables
+            // elsewhere — no per-slot furniture here.
+            WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {}
         }
     }
 
@@ -842,7 +846,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // rank for crowded waypoints — stable across frames thanks to
     // BTreeMap iteration order.
     let mut wp_rank: HashMap<usize, usize> = HashMap::new();
-    let mut waypoint_visitors: Vec<(usize, pixtuoid_core::AgentId, Point)> = Vec::new();
+    let mut waypoint_visitors: Vec<chitchat::Visitor> = Vec::new();
     for agent in &agents {
         let Some(desk) = ctx.layout.home_desks.get(agent.desk_index).copied() else {
             continue;
@@ -942,12 +946,32 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     let rank = *wp_rank.entry(wp).or_insert(0);
                     wp_rank.insert(wp, rank + 1);
                     let dx = waypoint_rank_offset_x(kind, rank);
-                    use crate::tui::layout::WaypointKind;
-                    let (anim_name, anchor_base, sprite_h) = match kind {
-                        WaypointKind::Couch => ("back_couch", back_couch_anchor(wp_obj.pos), 9u16),
-                        WaypointKind::Pantry => {
-                            ("holding_coffee", waypoint_anchor(wp_obj.pos), 12u16)
+                    use crate::tui::layout::{Facing, WaypointKind};
+                    let (anim_name, anchor_base, sprite_h, flip_x) = match kind {
+                        WaypointKind::Couch => {
+                            ("back_couch", back_couch_anchor(wp_obj.pos), 9u16, false)
                         }
+                        WaypointKind::Pantry => {
+                            ("holding_coffee", waypoint_anchor(wp_obj.pos), 12u16, false)
+                        }
+                        // Meeting sofa: the north-side seat faces the viewer
+                        // across the table (front "seated"); the south-side seat
+                        // faces away (back view) — the pair reads as two people
+                        // facing each other. Both reuse the 16×7-sofa anchor.
+                        WaypointKind::MeetingSofa => match wp_obj.facing {
+                            Facing::North => {
+                                ("back_couch", back_couch_anchor(wp_obj.pos), 9u16, false)
+                            }
+                            _ => ("seated", back_couch_anchor(wp_obj.pos), 9u16, false),
+                        },
+                        // Meeting stand: beside the table, facing inward (flip
+                        // the west-side stander toward the table centre).
+                        WaypointKind::MeetingStand => (
+                            "standing",
+                            waypoint_anchor(wp_obj.pos),
+                            12u16,
+                            matches!(wp_obj.facing, Facing::East),
+                        ),
                         // PhoneBooth + StandingDesk → agent just stands at the
                         // decor. waypoint_anchor positions them directly above
                         // the decor centre (sprite footprint sits just north
@@ -955,14 +979,21 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                         WaypointKind::PhoneBooth
                         | WaypointKind::StandingDesk
                         | WaypointKind::VendingMachine
-                        | WaypointKind::Printer => ("standing", waypoint_anchor(wp_obj.pos), 12u16),
+                        | WaypointKind::Printer => {
+                            ("standing", waypoint_anchor(wp_obj.pos), 12u16, false)
+                        }
                     };
                     let anchor_no_breath = Point {
                         x: anchor_base.x.saturating_add_signed(dx),
                         y: anchor_base.y,
                     };
                     if chitchat::supports_chitchat(kind) {
-                        waypoint_visitors.push((wp, agent.agent_id, anchor_no_breath));
+                        waypoint_visitors.push((
+                            wp,
+                            agent.agent_id,
+                            anchor_no_breath,
+                            wp_obj.room_id,
+                        ));
                     }
                     let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                     drawables.push(Drawable {
@@ -972,7 +1003,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                             anim_name,
                             frame_idx: 0,
                             anchor,
-                            flip_x: false,
+                            flip_x,
                             glow_tint: None,
                             sleep_z_seed: None,
                             waiting_bubble: false,

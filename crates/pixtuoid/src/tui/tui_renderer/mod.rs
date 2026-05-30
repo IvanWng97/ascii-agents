@@ -55,7 +55,10 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     active_pet: Option<PetState>,
     last_pet_pos: Option<(Point, &'static str, PetKind)>,
     enabled_pets: Vec<PetKind>,
-    chitchat_state: std::collections::HashMap<(usize, usize), crate::tui::chitchat::ActiveChitchat>,
+    chitchat_state: std::collections::HashMap<
+        crate::tui::chitchat::VenueKey,
+        crate::tui::chitchat::ActiveChitchat,
+    >,
     /// Persistent set of agents that have visited the pantry and carry a
     /// coffee cup back to their desk. Replaces the stateless
     /// `has_desk_coffee` cycle-scanning. Cleared on agent exit.
@@ -684,7 +687,7 @@ fn render_transition_floor(
     coffee_fetched_at: &std::collections::HashMap<pixtuoid_core::AgentId, SystemTime>,
     coffee_stains: &std::collections::HashMap<pixtuoid_core::AgentId, Vec<StainPos>>,
     chitchat_state: &mut std::collections::HashMap<
-        (usize, usize),
+        crate::tui::chitchat::VenueKey,
         crate::tui::chitchat::ActiveChitchat,
     >,
     pack: &Pack,

@@ -20,8 +20,8 @@ use crate::tui::layout::{Layout, Point, WaypointKind};
 use crate::tui::pathfind::Router;
 use crate::tui::pose::octile_distance;
 use crate::tui::pose::{
-    aimless_wander_seed, cycle_ms_for, is_aimless_cycle, pick_aimless_dest, takes_trip,
-    waypoint_index_for_cycle, PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
+    aimless_wander_seed, cycle_ms_for, dwell_ms, est_wander_cycle_ms, is_aimless_cycle,
+    pick_aimless_dest, seated_dwell_ms, takes_trip, waypoint_index_for_cycle, WANDER_DWELL_EST_MS,
 };
 
 /// Frozen A* polyline for one in-flight walk leg.
@@ -185,9 +185,12 @@ pub fn advance_wander(
     // below snaps it to the correct cycle analytically (O(1), no per-leg
     // routing) instead of the phase machine replaying the whole backlog one
     // transition per frame — the visible "fast-forward all the movement in a
-    // second" bug. Gating on a *full cycle* (≥7 s) keeps it well above the
-    // longest single legitimate inter-call gap (a dwell beat ≈ 0.42·cycle),
-    // so continuous 33 ms-frame rendering never trips it.
+    // second" bug. The trigger (`cycle_ms_for`, 7–13 s) is a frame-cadence vs
+    // frozen-floor detector, NOT a dwell detector: on-screen, `advance_wander`
+    // runs every frame even DURING a 40 s lounge dwell, so `last_advanced_at`
+    // updates each ~33 ms and the gap never approaches 7 s — only an off-screen
+    // floor or a pause (frozen `now`) lets the gap exceed it. (Don't raise this
+    // to "max dwell" — that would let 13–60 s off-screen gaps replay.)
     // `unwrap_or(false)`: `duration_since` only errs if `now < last_advanced_at`
     // (clock stepped backward — NTP/suspend). The per-frame render clock is
     // monotone so this is unreachable in practice; treating a backward step as
@@ -203,7 +206,10 @@ pub fn advance_wander(
             .duration_since(slot.state_started_at)
             .unwrap_or(Duration::ZERO)
             .as_millis() as u64;
-        let cycle = cycle_ms_for(id);
+        // Use the estimated full cycle (matches idle_pose) so the bootstrapped
+        // cycle_n agrees with what the stateless overlay derived for the same
+        // long-idle agent — NOT cycle_ms_for (the stale-resume sentinel).
+        let cycle = est_wander_cycle_ms(id);
 
         // Fast-forward `cycle_n` by integer division so destination selection
         // matches what an agent idle this long would have reached (0 when idle
@@ -229,9 +235,14 @@ pub fn advance_wander(
         .unwrap_or(Duration::ZERO)
         .as_millis() as u64;
 
-    let cycle = cycle_ms_for(id);
-    let seated_dur = cycle * PHASE_SEATED_FRAC / 1000;
-    let dwell_dur = cycle * (PHASE_AT_WAYPOINT_FRAC - PHASE_WALK_OUT_FRAC) / 1000;
+    // Absolute per-spot timeline (the render authority). Seated-at-desk beat is
+    // a long, per-agent dwell; the at-waypoint beat is keyed on the spot kind so
+    // a sofa lounges far longer than a vending grab. Aimless trips (no named
+    // kind) fall back to the average dwell estimate.
+    let seated_dur = seated_dwell_ms(id);
+    let dwell_dur = ms
+        .wander_dest_kind
+        .map_or(WANDER_DWELL_EST_MS, |k| dwell_ms(k, id));
 
     let result = match ms.wander_phase {
         WanderPhase::Seated => {

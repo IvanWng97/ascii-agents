@@ -25,11 +25,11 @@ use crate::tui::motion::{
 };
 
 pub use pixtuoid_core::pose::{
-    aimless_wander_seed, cycle_ms_for, derive, derive_state_only, is_aimless_cycle,
-    personality_for, pick_aimless_dest, takes_trip, waypoint_index_for_cycle, Personality, Pose,
-    ENTRY_ANIMATION_MS, PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
-    THINKING_WINDOW_SECS, TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS,
-    WANDER_CYCLE_BASE_MS, WANDER_CYCLE_RANGE_MS,
+    aimless_wander_seed, cycle_ms_for, derive, derive_state_only, dwell_ms, est_wander_cycle_ms,
+    is_aimless_cycle, personality_for, pick_aimless_dest, seated_dwell_ms, takes_trip,
+    waypoint_index_for_cycle, Personality, Pose, ENTRY_ANIMATION_MS, THINKING_WINDOW_SECS,
+    TYPING_FRAMES, TYPING_FRAME_MS, WALKING_FRAMES, WALKING_FRAME_MS, WANDER_CYCLE_BASE_MS,
+    WANDER_CYCLE_RANGE_MS, WANDER_DWELL_EST_MS, WANDER_WALK_EST_MS,
 };
 
 use crate::tui::layout::{Layout, Point, WaypointKind};

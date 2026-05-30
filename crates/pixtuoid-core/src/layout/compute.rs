@@ -225,6 +225,8 @@ pub(super) fn compute_with_seed(
         &walkway,
         right_x,
         right_w,
+        &meeting_sofas,
+        &meeting_tables,
     );
 
     // Plants scatter through the cubicle corridor edges + pantry.
@@ -749,6 +751,8 @@ pub(super) fn compute_waypoints(
     walkway: &Bounds,
     right_x: u16,
     right_w: u16,
+    meeting_sofas: &[Point],
+    meeting_tables: &[Point],
 ) -> Vec<Waypoint> {
     let couch_y = top_margin + 3;
     let couch_x = cubicle_band.x + cubicle_band.width * 35 / 100;
@@ -758,6 +762,8 @@ pub(super) fn compute_waypoints(
             y: couch_y,
         },
         kind: WaypointKind::Couch,
+        facing: Facing::South,
+        room_id: None,
     }];
     if let Some(pr) = pantry_room {
         // Clamp x so the counter fits within pantry_room. Without this
@@ -779,6 +785,8 @@ pub(super) fn compute_waypoints(
         waypoints.push(Waypoint {
             pos: Point { x: wx, y: wy },
             kind: WaypointKind::Pantry,
+            facing: Facing::South,
+            room_id: None,
         });
     }
     // Interactive pod-aisle decor -> also waypoints. PhoneBooth and
@@ -795,6 +803,8 @@ pub(super) fn compute_waypoints(
             waypoints.push(Waypoint {
                 pos: *pos,
                 kind: wp_kind,
+                facing: Facing::South,
+                room_id: None,
             });
         }
     }
@@ -809,6 +819,8 @@ pub(super) fn compute_waypoints(
                 y: walkway.y + 3,
             },
             kind: WaypointKind::VendingMachine,
+            facing: Facing::South,
+            room_id: None,
         });
     }
     if walkway.height >= 9 && right_w > 40 {
@@ -818,7 +830,53 @@ pub(super) fn compute_waypoints(
                 y: walkway.y + 2,
             },
             kind: WaypointKind::Printer,
+            facing: Facing::South,
+            room_id: None,
         });
     }
+
+    // Meeting-room slots. Sofas are stored north→south per room (2 per
+    // room, see `meeting_sofas` assembly); each seats up to 2 agents
+    // (offset along the 16px sofa) facing the table. Two standing slots
+    // flank each table. Every slot in a room shares its `room_id` so the
+    // group-chitchat venue keys on the room, not the individual seat.
+    for (i, sofa) in meeting_sofas.iter().enumerate() {
+        let room_id = i / 2;
+        let table_y = meeting_tables.get(room_id).map_or(sofa.y, |t| t.y);
+        // North-of-table sofa faces South (front toward the viewer); the
+        // south sofa faces North (back toward the viewer) — the pair reads
+        // as two people facing each other across the table.
+        let facing = if sofa.y < table_y {
+            Facing::South
+        } else {
+            Facing::North
+        };
+        for dx in [-4i16, 4] {
+            waypoints.push(Waypoint {
+                pos: Point {
+                    x: sofa.x.saturating_add_signed(dx),
+                    y: sofa.y,
+                },
+                kind: WaypointKind::MeetingSofa,
+                facing,
+                room_id: Some(room_id),
+            });
+        }
+    }
+    for (room_id, table) in meeting_tables.iter().enumerate() {
+        // West stand faces East (toward the table centre); east stand faces West.
+        for (dx, facing) in [(-8i16, Facing::East), (8, Facing::West)] {
+            waypoints.push(Waypoint {
+                pos: Point {
+                    x: table.x.saturating_add_signed(dx),
+                    y: table.y,
+                },
+                kind: WaypointKind::MeetingStand,
+                facing,
+                room_id: Some(room_id),
+            });
+        }
+    }
+
     waypoints
 }
