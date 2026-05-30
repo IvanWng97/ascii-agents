@@ -26,3 +26,8 @@ ignore:
   - "scripts/"
   - "docs/"
   - "*.md"
+  # Not coverable headlessly — exercising these needs a real TTY / OS:
+  - "crates/pixtuoid/src/main.rs"       # binary entry: terminal raw-mode, crash hook, signal handling
+  - "crates/pixtuoid/src/tui/mod.rs"    # crossterm event loop: reads real keyboard/mouse from the TTY
+  # Keeps the % honest: "of the code we CAN test headlessly, X% is tested",
+  # rather than dragging the number down with paths no test can reach.
