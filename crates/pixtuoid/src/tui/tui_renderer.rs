@@ -1412,14 +1412,12 @@ mod harness_tests {
         let mut r = build(140, 48, vec![]);
         r.render(&scene, &pack(), t0()).unwrap();
         let layout = r.cached_layout().expect("layout");
-        let Some(pantry) = layout
+        let pantry = layout
             .waypoints
             .iter()
             .find(|w| w.kind == WaypointKind::Pantry)
-        else {
-            return; // layout without a pantry on this size — nothing to assert
-        };
-        // Scan the counter neighbourhood; the machine occupies part of it.
+            .expect("a 140×48 office must lay out a pantry"); // no silent skip
+                                                              // Scan the counter neighbourhood; the machine occupies part of it.
         let cx = pantry.pos.x;
         let cy = pantry.pos.y / 2;
         let mut found = false;
@@ -1582,8 +1580,8 @@ mod harness_tests {
             16,
         );
         assert!(
-            d > 0,
-            "different tools (Edit vs Bash) should tint the cubicle differently"
+            d > 200,
+            "Edit vs Bash should tint the cubicle measurably differently (diff={d})"
         );
     }
 }

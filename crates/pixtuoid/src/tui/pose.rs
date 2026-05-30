@@ -592,11 +592,22 @@ fn route_walking_pose(
                 if let Some(last) = p.last_mut() {
                     *last = to;
                 }
-                ms.walk_path = Some(WalkPathSnapshot {
-                    from,
-                    to,
-                    path: p.clone(),
-                });
+                // Only freeze genuinely CORNERED routes (>2 points). A straight
+                // 2-point walk has no interior corners to remap `t` onto, so it
+                // can't flash — and re-routing it each frame is cheap AND
+                // self-healing: if A* transiently fell back to a straight
+                // `[from, to]` (find_path returned None this frame), freezing it
+                // would stick that "walk through walls" for the whole leg;
+                // leaving it unfrozen lets the next frame recover the real route.
+                if p.len() > 2 {
+                    ms.walk_path = Some(WalkPathSnapshot {
+                        from,
+                        to,
+                        path: p.clone(),
+                    });
+                } else {
+                    ms.walk_path = None;
+                }
                 p
             }
         }
@@ -2298,5 +2309,185 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Router that returns shape `a` until `flipped`, then shape `b` — lets a
+    /// test switch the A* result MID-LEG at a chosen (high-t) frame.
+    struct FlipRouter {
+        flipped: bool,
+        a: Vec<Point>,
+        b: Vec<Point>,
+    }
+    impl Router for FlipRouter {
+        fn route(
+            &mut self,
+            _: &WalkableMask,
+            _: &pixtuoid_core::walkable::OccupancyOverlay,
+            _from: Point,
+            _to: Point,
+        ) -> Vec<Point> {
+            if self.flipped {
+                self.b.clone()
+            } else {
+                self.a.clone()
+            }
+        }
+        fn invalidate(&mut self) {}
+    }
+
+    #[test]
+    fn frozen_leg_anchor_continuous_across_router_shape_change() {
+        // OUTPUT-level guard for the path-freeze (bug #1): drive an entry walk,
+        // then mid-leg (high t) switch the router to a very differently-shaped
+        // polyline. With the freeze, the leg keeps following its snapshotted
+        // shape and the sampled sprite position stays continuous. Reverting the
+        // freeze makes the walk adopt the new shape at high t → a large jump.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let door = l.door_threshold.expect("door");
+        let desk = l.home_desks[0];
+        let desk_t = Point {
+            x: desk.x + 6,
+            y: desk.y + 4,
+        };
+        // Shape A is a long DOWN-then-across detour (so the entry walk lasts
+        // many frames); shape B is short and very differently routed. Both share
+        // endpoints (door → desk).
+        let a = vec![
+            door,
+            Point {
+                x: door.x,
+                y: door.y + 40,
+            },
+            Point {
+                x: desk_t.x,
+                y: door.y + 40,
+            },
+            desk_t,
+        ];
+        let b = vec![
+            door,
+            Point {
+                x: desk_t.x,
+                y: door.y,
+            },
+            desk_t,
+        ];
+
+        // Flip the router at ~40% of the (frozen) entry duration — guaranteed
+        // mid-walk, where A and B diverge maximally.
+        let entry_id = entry_slot(now).agent_id;
+        let dur = walk_profile(octile_path_len(&a).max(1), WalkIntent::Entry, entry_id).duration_ms;
+        let flip_frame = ((dur * 2 / 5) / 33).max(2);
+
+        let mut router = FlipRouter {
+            flipped: false,
+            a,
+            b,
+        };
+        let overlay = OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        let mut prev: Option<Point> = None;
+        let mut max_step = 0i32;
+        for i in 0..(flip_frame + 8) {
+            if i == flip_frame {
+                router.flipped = true; // switch shape mid-walk (high t)
+            }
+            let slot = entry_slot(now - Duration::from_millis(200));
+            let t = now + Duration::from_millis(i * 33);
+            if let Some(Pose::Walking {
+                from, to, t_x1000, ..
+            }) = derive_with_routing(
+                &slot,
+                t,
+                &l,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                let pos = walking_position(from, to, t_x1000);
+                if let Some(p) = prev {
+                    let step = (pos.x as i32 - p.x as i32)
+                        .abs()
+                        .max((pos.y as i32 - p.y as i32).abs());
+                    max_step = max_step.max(step);
+                }
+                prev = Some(pos);
+            }
+        }
+        assert!(
+            max_step <= 20,
+            "frozen leg must keep the anchor continuous despite a mid-leg router shape change (max jump {max_step}px)"
+        );
+    }
+
+    #[test]
+    fn multiple_agents_share_overlay_without_teleport() {
+        // Realistic multi-agent continuity guard: 3 long-idle agents on ONE
+        // shared router/overlay/history/motion, with the overlay rebuilt from
+        // their actual AtWaypoint positions each frame (mirroring
+        // render_to_rgb_buffer's churn). Guards the wander/Seated/bootstrap
+        // fixes in a multi-agent setting. NOTE: the real AStarRouter is stable
+        // enough that this scenario does not by itself reproduce the freeze
+        // regression — `frozen_leg_anchor_continuous_across_router_shape_change`
+        // is the freeze-specific guard (it fails when the freeze is reverted).
+        use crate::tui::pathfind::AStarRouter;
+        use crate::tui::pixel_painter::character_anchor;
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let n = l.home_desks.len().min(3);
+        let old = now - Duration::from_secs(120);
+        let slots: Vec<AgentSlot> = (0..n)
+            .map(|k| {
+                let mut s = entry_slot(old);
+                s.agent_id = AgentId::from_transcript_path(&format!("/multi/{k}.jsonl"));
+                s.desk_index = k;
+                s.last_event_at = old;
+                s
+            })
+            .collect();
+
+        let mut router = AStarRouter::new();
+        router.set_preferred_zone(l.corridor);
+        let mut overlay = OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let mut prev: HashMap<AgentId, Point> = HashMap::new();
+        let mut max_step = 0i32;
+
+        for i in 0..700u64 {
+            let t = now + Duration::from_millis(i * 33);
+            // Rebuild the shared overlay from AtWaypoint agents (as the pixel
+            // pass does) — this is the churn that re-routes other walkers.
+            overlay.clear();
+            for s in &slots {
+                if let Some(Pose::AtWaypoint { wp, .. }) = derive(s, t, &l) {
+                    if let Some(w) = l.waypoints.get(wp) {
+                        overlay.add(w.pos.x.saturating_sub(4), w.pos.y.saturating_sub(6), 8, 12);
+                    }
+                }
+            }
+            for s in &slots {
+                if let Some(a) =
+                    character_anchor(s, &l, t, &mut router, &overlay, &mut history, &mut motion)
+                {
+                    if let Some(p) = prev.get(&s.agent_id) {
+                        let step = (a.x as i32 - p.x as i32)
+                            .abs()
+                            .max((a.y as i32 - p.y as i32).abs());
+                        max_step = max_step.max(step);
+                    }
+                    prev.insert(s.agent_id, a);
+                }
+            }
+        }
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "agents sharing a churning overlay must not teleport (max frame jump {max_step}px)"
+        );
     }
 }

@@ -188,6 +188,10 @@ pub fn advance_wander(
     // second" bug. Gating on a *full cycle* (≥7 s) keeps it well above the
     // longest single legitimate inter-call gap (a dwell beat ≈ 0.42·cycle),
     // so continuous 33 ms-frame rendering never trips it.
+    // `unwrap_or(false)`: `duration_since` only errs if `now < last_advanced_at`
+    // (clock stepped backward — NTP/suspend). The per-frame render clock is
+    // monotone so this is unreachable in practice; treating a backward step as
+    // "not stale" avoids snapping every agent to Seated on a tiny clock adjust.
     let is_stale_resume = ms.last_advanced_at != SystemTime::UNIX_EPOCH
         && now
             .duration_since(ms.last_advanced_at)
