@@ -21,15 +21,20 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
         .and_then(|s| s.as_str())
         .ok_or_else(|| anyhow!("missing session_id"))?
         .to_string();
-    let transcript_path = obj
+    // `transcript_path` is the preferred stable per-session key, but Codex sends
+    // it as `string | null`, so fall back to `session_id` when it's absent/null.
+    // (Both are namespaced by `source` in AgentId::from_parts, so collisions
+    // across CLIs are impossible.)
+    let id_key = obj
         .get("transcript_path")
         .and_then(|s| s.as_str())
-        .ok_or_else(|| anyhow!("missing transcript_path"))?;
+        .filter(|s| !s.is_empty())
+        .unwrap_or(session_id.as_str());
     let source = obj
         .get("source")
         .and_then(|s| s.as_str())
         .unwrap_or(crate::source::claude_code::SOURCE_NAME);
-    let agent_id = AgentId::from_parts(source, transcript_path);
+    let agent_id = AgentId::from_parts(source, id_key);
 
     match event {
         "SessionStart" => {
@@ -77,6 +82,34 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
                 reason: msg.into(),
             })
         }
+        // Codex's permission prompt is a "waiting on the human" signal — maps to
+        // the same Waiting state as Claude's Notification.
+        "PermissionRequest" => Ok(AgentEvent::Waiting {
+            agent_id,
+            reason: "permission".into(),
+        }),
+        // Codex turn lifecycle. Verified live (Codex 0.135): the ONLY hook events
+        // that fire are UserPromptSubmit + Stop — SessionStart and PreToolUse do
+        // NOT fire. So UserPromptSubmit is our agent-creation signal: emit
+        // SessionStart from its cwd (idempotent in the reducer — ignored if the
+        // agent already exists). The fresh `last_event_at` makes the cx· agent
+        // show seated-thinking, so it reads as "working" right after a prompt.
+        "UserPromptSubmit" => {
+            let cwd = obj.get("cwd").and_then(|s| s.as_str()).unwrap_or("").into();
+            Ok(AgentEvent::SessionStart {
+                agent_id,
+                source: source.to_string(),
+                session_id,
+                cwd,
+                parent_id: None,
+            })
+        }
+        // Turn end — Codex fires no SessionEnd, so keep the slot; just settle to
+        // idle (harmless no-op if the agent is already idle).
+        "Stop" => Ok(AgentEvent::ActivityEnd {
+            agent_id,
+            tool_use_id: None,
+        }),
         "SessionEnd" => Ok(AgentEvent::SessionEnd { agent_id }),
         other => bail!("unsupported hook_event_name: {other}"),
     }
@@ -114,4 +147,99 @@ pub(crate) fn describe_tool_target(tool: &str, input: Option<&Value>) -> String 
         s.push('…');
     }
     format!(": {s}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn codex_session_start_without_transcript_path_uses_session_id() {
+        // Codex sends transcript_path as string|null; decode must still work,
+        // namespacing the AgentId under the explicit "codex" source.
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "codex-sess-1",
+            "source": "codex",
+            "cwd": "/Users/me/work/myrepo"
+        }))
+        .expect("decodes without transcript_path");
+        match ev {
+            AgentEvent::SessionStart {
+                agent_id,
+                source,
+                cwd,
+                ..
+            } => {
+                assert_eq!(source, "codex");
+                assert_eq!(agent_id, AgentId::from_parts("codex", "codex-sess-1"));
+                assert_eq!(cwd, std::path::PathBuf::from("/Users/me/work/myrepo"));
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_permission_request_maps_to_waiting() {
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "PermissionRequest",
+            "session_id": "s",
+            "source": "codex"
+        }))
+        .expect("decodes");
+        assert!(matches!(ev, AgentEvent::Waiting { .. }));
+    }
+
+    #[test]
+    fn codex_user_prompt_submit_creates_agent_via_session_start() {
+        // Codex 0.135 fires NO SessionStart/PreToolUse — only UserPromptSubmit +
+        // Stop (verified live). So UserPromptSubmit is the agent-creation signal:
+        // it carries source + cwd and decodes to a SessionStart the reducer turns
+        // into a cx· agent.
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "codex-sess",
+            "source": "codex",
+            "cwd": "/Users/me/work/myrepo",
+            "transcript_path": "/Users/me/.codex/sessions/x.jsonl"
+        }))
+        .expect("decodes");
+        match ev {
+            AgentEvent::SessionStart { source, cwd, .. } => {
+                assert_eq!(source, "codex");
+                assert_eq!(cwd, std::path::PathBuf::from("/Users/me/work/myrepo"));
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codex_stop_maps_to_activity_end() {
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "Stop",
+            "session_id": "s",
+            "source": "codex"
+        }))
+        .expect("decodes");
+        assert!(matches!(ev, AgentEvent::ActivityEnd { .. }));
+    }
+
+    #[test]
+    fn absent_source_still_defaults_to_claude() {
+        // A payload with no `source` (legacy / un-stamped) must remain CC.
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "s",
+            "transcript_path": "/p/a.jsonl",
+            "cwd": "/repo"
+        }))
+        .expect("decodes");
+        match ev {
+            AgentEvent::SessionStart { source, .. } => {
+                assert_eq!(source, crate::source::claude_code::SOURCE_NAME)
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
 }

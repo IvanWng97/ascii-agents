@@ -42,6 +42,15 @@ fn main() -> Result<()> {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         map.insert("_shim_ts_ms".into(), Value::from(ts as u64));
+        // Per-CLI source tag: the install layer writes the hook command with
+        // `PIXTUOID_SOURCE=<cli>` (e.g. Codex), so the decoder attributes the
+        // event to the right source instead of defaulting to Claude. Only stamp
+        // when the payload didn't already carry a `source` (never clobber).
+        if let Ok(src) = std::env::var("PIXTUOID_SOURCE") {
+            if !src.is_empty() {
+                map.entry("source").or_insert_with(|| Value::from(src));
+            }
+        }
     }
 
     // Best-effort send with a hard write timeout so a stuck daemon can never

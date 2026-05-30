@@ -102,7 +102,7 @@ fn group_has_no_hooks(group: &toml::Value) -> bool {
         .is_some_and(|h| h.is_empty())
 }
 
-fn managed_group(event: &str, hook_command: &str) -> toml::Value {
+fn managed_group(hook_command: &str) -> toml::Value {
     let mut handler = Table::new();
     handler.insert("type".into(), toml::Value::String("command".into()));
     handler.insert("command".into(), toml::Value::String(hook_command.into()));
@@ -113,18 +113,12 @@ fn managed_group(event: &str, hook_command: &str) -> toml::Value {
     );
     handler.insert(SENTINEL_KEY.into(), toml::Value::Boolean(true));
 
+    // No `matcher`: an omitted matcher means "match all" in Codex. We must NOT
+    // write `matcher = "*"` — Codex (verified on 0.135) rejects a bare `*` as an
+    // invalid regex and silently drops the ENTIRE group, so SessionStart/
+    // PreToolUse never fire. Matcher-less groups (the only ones that fired live)
+    // match every occurrence, which is exactly what a visualizer wants.
     let mut group = Table::new();
-    if matches!(
-        event,
-        "PreToolUse" | "PostToolUse" | "SubagentStart" | "SubagentStop" | "PermissionRequest"
-    ) {
-        group.insert("matcher".into(), toml::Value::String("*".into()));
-    } else if event == "SessionStart" {
-        group.insert(
-            "matcher".into(),
-            toml::Value::String("startup|resume|clear|compact".into()),
-        );
-    }
     group.insert(
         "hooks".into(),
         toml::Value::Array(vec![toml::Value::Table(handler)]),
@@ -153,7 +147,7 @@ fn toml_merge_install(doc: toml::Value, hook_command: &str) -> toml::Value {
                     prune_managed_handlers(group);
                 }
                 arr.retain(|group| !group_has_no_hooks(group));
-                arr.push(managed_group(ev, hook_command));
+                arr.push(managed_group(hook_command));
             }
         }
     }
@@ -229,6 +223,24 @@ mod tests {
             v.get("features").is_none(),
             "must not write [features] hooks = true"
         );
+    }
+
+    #[test]
+    fn install_writes_no_matcher() {
+        // Codex 0.135 fires matcher-bearing events inconsistently and `matcher
+        // = "*"` is a dubious regex; an omitted matcher means "match all". Verify
+        // no group carries a matcher.
+        let out = merge_install("", "/x/pixtuoid-hook").unwrap();
+        let v = parse(&out.content);
+        let hooks = v["hooks"].as_table().unwrap();
+        for (ev, arr) in hooks {
+            for group in arr.as_array().unwrap() {
+                assert!(
+                    group.get("matcher").is_none(),
+                    "event {ev} group must not carry a matcher"
+                );
+            }
+        }
     }
 
     #[test]

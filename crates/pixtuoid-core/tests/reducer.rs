@@ -42,7 +42,10 @@ fn session_start_creates_idle_slot_at_first_free_desk() {
 
     let slot = scene.agents.get(&id).expect("agent inserted");
     assert_eq!(slot.desk_index, 0);
-    assert_eq!(&*slot.label, "repo", "label derived from cwd basename");
+    assert_eq!(
+        &*slot.label, "cc·repo",
+        "label = source prefix + cwd basename"
+    );
     assert_eq!(slot.state, ActivityState::Idle);
 }
 
@@ -475,7 +478,7 @@ fn session_start_with_cwd_derives_label_from_basename() {
         SystemTime::now(),
         Transport::Hook,
     );
-    assert_eq!(&*scene.agents.get(&id).unwrap().label, "pixtuoid");
+    assert_eq!(&*scene.agents.get(&id).unwrap().label, "cc·pixtuoid");
 }
 
 #[test]
@@ -495,7 +498,29 @@ fn session_start_without_cwd_falls_back_to_cc_label() {
         SystemTime::now(),
         Transport::Hook,
     );
-    assert_eq!(&*scene.agents.get(&id).unwrap().label, "cl#1");
+    assert_eq!(&*scene.agents.get(&id).unwrap().label, "cc#1");
+}
+
+#[test]
+fn session_start_codex_source_gets_cx_label() {
+    // Codex arrives via the shared hook socket (no JSONL Rename), so the cx·
+    // prefix must come from the reducer at SessionStart.
+    let mut scene = SceneState::uniform(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_parts("codex", "sess-1");
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: id,
+            source: "codex".into(),
+            session_id: "sess-1".into(),
+            cwd: PathBuf::from("/Users/me/work/myrepo"),
+            parent_id: None,
+        },
+        SystemTime::now(),
+        Transport::Hook,
+    );
+    assert_eq!(&*scene.agents.get(&id).unwrap().label, "cx·myrepo");
 }
 
 #[test]

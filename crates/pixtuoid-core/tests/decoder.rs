@@ -391,7 +391,10 @@ fn decode_hook_payload_missing_session_id_returns_err() {
 }
 
 #[test]
-fn decode_hook_payload_missing_transcript_path_returns_err() {
+fn decode_hook_payload_missing_transcript_path_falls_back_to_session_id() {
+    // Codex sends transcript_path as string|null, so a missing/null value must
+    // NOT error — it falls back to session_id for the AgentId (namespaced by
+    // source, so no cross-CLI collision).
     let payload = serde_json::json!({
         "hook_event_name": "PreToolUse",
         "session_id": "ses-abc",
@@ -399,9 +402,17 @@ fn decode_hook_payload_missing_transcript_path_returns_err() {
         "tool_name": "Bash",
         "tool_input": { "command": "ls" }
     });
-    assert!(
-        decode_hook_payload(payload).is_err(),
-        "missing transcript_path must return Err"
+    let ev = decode_hook_payload(payload).expect("decodes via session_id fallback");
+    let agent_id = match ev {
+        pixtuoid_core::source::AgentEvent::ActivityStart { agent_id, .. } => agent_id,
+        other => panic!("expected ActivityStart, got {other:?}"),
+    };
+    assert_eq!(
+        agent_id,
+        pixtuoid_core::AgentId::from_parts(
+            pixtuoid_core::source::claude_code::SOURCE_NAME,
+            "ses-abc"
+        )
     );
 }
 

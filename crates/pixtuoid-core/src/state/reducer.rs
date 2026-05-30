@@ -40,6 +40,20 @@ pub const STALE_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 pub const STALE_WAITING_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 pub const STALE_UNKNOWN_CWD_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 
+/// Display prefix for a source's labels (`cc·`, `ag·`, `cx·`). Single source of
+/// truth applied at `SessionStart`. The JSONL `LabelDeriver` Renames (e.g.
+/// `cc_derive_label`/`derive_ag_label`) produce the same prefixed string and so
+/// reinforce this idempotently; Codex arrives only via the shared hook socket
+/// (no JSONL Rename), so this is the sole place its `cx·` label is established.
+fn source_label_prefix(source: &str) -> &str {
+    match source {
+        crate::source::claude_code::SOURCE_NAME => "cc",
+        "antigravity" => "ag",
+        "codex" => "cx",
+        other => other,
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Reducer {
     /// Track recent hook-derived events so JSONL duplicates can be dropped.
@@ -219,16 +233,15 @@ impl Reducer {
                 };
                 let floor_idx = scene.floor_of(desk_index);
                 self.next_label_n += 1;
-                let has_cwd = cwd
+                let base = cwd
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .filter(|s| !s.is_empty())
-                    .is_some();
-                let label: Arc<str> = if has_cwd {
-                    Arc::<str>::from(cwd.file_name().and_then(|n| n.to_str()).unwrap_or(&source))
-                } else {
-                    let prefix: String = source.chars().take(2).collect();
-                    Arc::<str>::from(format!("{prefix}#{}", self.next_label_n).as_str())
+                    .filter(|s| !s.is_empty());
+                let has_cwd = base.is_some();
+                let prefix = source_label_prefix(&source);
+                let label: Arc<str> = match base {
+                    Some(b) => Arc::<str>::from(format!("{prefix}·{b}").as_str()),
+                    None => Arc::<str>::from(format!("{prefix}#{}", self.next_label_n).as_str()),
                 };
                 // Disambiguation for multiple sessions sharing a cwd happens
                 // at render time, not here — we don't want to suffix unique
