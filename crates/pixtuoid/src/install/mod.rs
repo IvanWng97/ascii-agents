@@ -112,8 +112,87 @@ fn detection() -> Vec<(&'static Target, bool)> {
         .collect()
 }
 
+/// Whether `t`'s config currently contains pixtuoid-managed hooks — a dry-run
+/// uninstall that would change the parsed doc. Used to list only real removal
+/// candidates in the interactive uninstall picker. False on any read/parse error
+/// or an absent config (`read_config` → "" → no change).
+fn has_hooks(t: &'static Target) -> bool {
+    let path = (t.default_config_path)();
+    io::read_config(&path)
+        .ok()
+        .and_then(|c| (t.merge_uninstall)(&c).ok())
+        .map(|o| o.changed)
+        .unwrap_or(false)
+}
+
+/// Interactive checklist of `candidates`, all pre-checked. Returns the chosen
+/// targets, or `None` if the user cancelled (Esc). TTY-only — callers gate on it.
+fn select_targets(
+    prompt: &str,
+    candidates: &[&'static Target],
+) -> Result<Option<Vec<&'static Target>>> {
+    let options: Vec<&str> = candidates.iter().map(|t| t.display_name).collect();
+    let all: Vec<usize> = (0..options.len()).collect();
+    let chosen = inquire::MultiSelect::new(prompt, options)
+        .with_default(&all)
+        .prompt_skippable()
+        .context("target selection prompt failed")?;
+    Ok(chosen.map(|sel| {
+        candidates
+            .iter()
+            .copied()
+            .filter(|t| sel.contains(&t.display_name))
+            .collect()
+    }))
+}
+
+/// True when the run is an interactive bare invocation — no explicit `--target`
+/// or `--config`, not `--yes`, on a TTY — i.e. the case the checklist serves.
+fn interactive_pick(
+    target: &Option<String>,
+    config: &Option<PathBuf>,
+    yes: bool,
+    is_tty: bool,
+) -> bool {
+    target.is_none() && config.is_none() && !yes && is_tty
+}
+
 pub fn install(args: InstallArgs) -> Result<()> {
     let is_tty = std::io::stdin().is_terminal();
+
+    // Interactive picker: show detected CLIs as a checklist (all pre-checked) so
+    // the user can install into a subset instead of always all. A single
+    // detection installs directly (no list to pick from); explicit `--target` /
+    // `--config` / `--yes` / non-TTY take the flag-driven path below.
+    if interactive_pick(&args.target, &args.config, args.yes, is_tty) {
+        let detected: Vec<&'static Target> = detection()
+            .into_iter()
+            .filter(|(_, p)| *p)
+            .map(|(t, _)| t)
+            .collect();
+        let chosen = match detected.len() {
+            0 => {
+                println!("no supported CLIs detected; pass --target claude|codex|all");
+                return Ok(());
+            }
+            1 => detected,
+            _ => match select_targets("Install pixtuoid hooks into", &detected)? {
+                Some(sel) if !sel.is_empty() => sel,
+                Some(_) => {
+                    println!("nothing selected");
+                    return Ok(());
+                }
+                None => {
+                    println!("aborted");
+                    return Ok(());
+                }
+            },
+        };
+        return run_each(&chosen, "install", |t| {
+            run_install(t, None, args.hook_path.clone())
+        });
+    }
+
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
@@ -134,6 +213,37 @@ pub fn install(args: InstallArgs) -> Result<()> {
 
 pub fn uninstall(args: UninstallArgs) -> Result<()> {
     let is_tty = std::io::stdin().is_terminal();
+
+    // Interactive picker: list only CLIs that ACTUALLY have pixtuoid hooks, as a
+    // checklist (all pre-checked) so the user removes a subset. Single → direct;
+    // explicit `--target` / `--config` / `--yes` / non-TTY use the path below.
+    if interactive_pick(&args.target, &args.config, args.yes, is_tty) {
+        let installed: Vec<&'static Target> = target::TARGETS
+            .iter()
+            .copied()
+            .filter(|t| has_hooks(t))
+            .collect();
+        let chosen = match installed.len() {
+            0 => {
+                println!("no pixtuoid hooks found to remove");
+                return Ok(());
+            }
+            1 => installed,
+            _ => match select_targets("Remove pixtuoid hooks from", &installed)? {
+                Some(sel) if !sel.is_empty() => sel,
+                Some(_) => {
+                    println!("nothing selected");
+                    return Ok(());
+                }
+                None => {
+                    println!("aborted");
+                    return Ok(());
+                }
+            },
+        };
+        return run_each(&chosen, "uninstall", |t| run_uninstall(t, None));
+    }
+
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
@@ -361,5 +471,28 @@ mod tests {
         assert!(!parse_confirm("n"));
         assert!(!parse_confirm("no"));
         assert!(!parse_confirm("garbage")); // anything not yes/empty → no
+    }
+
+    #[test]
+    fn interactive_pick_only_on_bare_tty() {
+        let none: Option<String> = None;
+        let no_cfg: Option<PathBuf> = None;
+        // Bare (no --target/--config), not --yes, on a TTY → show the checklist.
+        assert!(interactive_pick(&none, &no_cfg, false, true));
+        // Any of: non-TTY, --yes, explicit --target, or --config → flag path.
+        assert!(!interactive_pick(&none, &no_cfg, false, false));
+        assert!(!interactive_pick(&none, &no_cfg, true, true));
+        assert!(!interactive_pick(
+            &Some("claude".into()),
+            &no_cfg,
+            false,
+            true
+        ));
+        assert!(!interactive_pick(
+            &none,
+            &Some(PathBuf::from("/x")),
+            false,
+            true
+        ));
     }
 }
