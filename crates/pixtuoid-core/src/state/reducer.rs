@@ -469,3 +469,26 @@ fn event_tool_use_id(ev: &AgentEvent) -> Option<&str> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::source_label_prefix;
+    use crate::source::REGISTERED_SOURCES;
+
+    /// Every registered source needs an explicit 2-char prefix arm. The
+    /// `other => other` catch-all silently degrades a missing arm to the long
+    /// source name (e.g. "opencode·proj" instead of "oc·proj"), which then
+    /// collides visually with another source sharing a cwd. Driven by the same
+    /// REGISTERED_SOURCES list as the fixture conformance test.
+    #[test]
+    fn every_registered_source_has_two_char_label_prefix() {
+        for src in REGISTERED_SOURCES {
+            let prefix = source_label_prefix(src);
+            assert_eq!(
+                prefix.chars().count(),
+                2,
+                "source {src:?} has no 2-char label prefix (got {prefix:?}) — add an arm to source_label_prefix"
+            );
+        }
+    }
+}

@@ -15,6 +15,12 @@ expression: events
 - ActivityEnd:
     agent_id: 13551487942093082797
     tool_use_id: toolu_demo0000000000000001
+- SessionStart:
+    agent_id: 13551487942093082797
+    source: claude-code
+    session_id: 01000000-0000-7000-8000-0000000000cc
+    cwd: /home/user/demo-project
+    parent_id: ~
 - ActivityStart:
     agent_id: 13551487942093082797
     activity: Typing

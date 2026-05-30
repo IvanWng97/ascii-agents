@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use pixtuoid_core::source::decoder::decode_hook_payload;
 use pixtuoid_core::source::jsonl::LineDecoder;
-use pixtuoid_core::source::{antigravity, claude_code, codex, AgentEvent};
+use pixtuoid_core::source::{antigravity, claude_code, codex, AgentEvent, REGISTERED_SOURCES};
 
 /// Map a fixture's source directory name to its JSONL line decoder.
 /// Register a new CLI here (one line) — that plus a fixture dir is all it takes.
@@ -134,6 +134,29 @@ fn decode_fixture(source: &str, dir: &Path) -> Decoded {
         jsonl,
         hooks,
         had_hook_file,
+    }
+}
+
+/// Every registered source MUST ship a coalescing fixture. Without this,
+/// `all_source_fixtures_decode_and_coalesce` only covers sources that happen to
+/// have a dir — a contributor could register a new CLI (decoder + label prefix)
+/// and ship a broken decoder while the harness stays green. Registration is not
+/// coverage; this makes the fixture mandatory.
+#[test]
+fn every_registered_source_has_a_coalescing_fixture() {
+    let root = fixtures_root();
+    for src in REGISTERED_SOURCES {
+        let dir = root.join(src);
+        assert!(
+            dir.is_dir(),
+            "registered source {src:?} has no fixture dir {} — add a coalescing fixture (transcript.jsonl [+ hook-payloads.jsonl])",
+            dir.display()
+        );
+        assert!(
+            !sorted_dirs(&dir).is_empty(),
+            "registered source {src:?} fixture dir {} has no scenario subdir",
+            dir.display()
+        );
     }
 }
 

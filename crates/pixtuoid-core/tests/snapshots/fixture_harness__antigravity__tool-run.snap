@@ -1,0 +1,14 @@
+---
+source: crates/pixtuoid-core/tests/fixture_harness.rs
+expression: events
+---
+- ActivityStart:
+    agent_id: 5893914776247809446
+    activity: Typing
+    tool_use_id: ag-1-0
+    detail:
+      Generic:
+        display: list_dir
+- ActivityEnd:
+    agent_id: 5893914776247809446
+    tool_use_id: ag-1-0

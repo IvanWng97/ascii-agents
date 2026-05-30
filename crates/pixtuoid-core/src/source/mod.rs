@@ -6,6 +6,21 @@ use tokio::sync::mpsc;
 
 use crate::id::AgentId;
 
+/// CLI sources this build supports. The canonical list that the conformance
+/// tests iterate. Every entry MUST have, enforced by tests so omissions fail CI
+/// rather than ship as the silent two-sprite-ghost bug:
+///   - a hook+JSONL coalescing fixture under
+///     `tests/fixtures/sources/<name>/` — `tests/fixture_harness.rs`'s
+///     `every_registered_source_has_a_coalescing_fixture`, and
+///   - an explicit 2-char label prefix arm in `state::reducer::source_label_prefix`
+///     — the inline `every_registered_source_has_two_char_label_prefix` test.
+///
+/// Antigravity has no `SOURCE_NAME` const (its `name()` returns this literal),
+/// so it is spelled out; the others are keyed off their module const so a
+/// rename is a compile error.
+pub const REGISTERED_SOURCES: &[&str] =
+    &[claude_code::SOURCE_NAME, codex::SOURCE_NAME, "antigravity"];
+
 /// Which transport produced an event — used by the reducer for hook-wins
 /// dedup. Lives on the source side because every `Source` implementor must
 /// tag its own events; the reducer is downstream.

@@ -1,0 +1,3 @@
+{"step_index":0,"source":"USER","type":"USER_INPUT","text":"list the source files"}
+{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","tool_calls":[{"name":"list_dir","args":{"DirectoryPath":"\"/home/user/demo-project/src\""}}]}
+{"step_index":2,"source":"TOOL","type":"TOOL_RESULT","output":"a.rs b.rs"}
