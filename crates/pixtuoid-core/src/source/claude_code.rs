@@ -139,9 +139,26 @@ pub fn decode_cc_line(transcript_path: &str, source: &str, v: Value) -> Result<V
                 });
             }
         }
+        // CC writes no `session_end` line on a clean `/exit`; it logs the
+        // slash command as a string-valued user message. Treat `/exit`+`/quit`
+        // as a durable SessionEnd so the JSONL transport reaps the session even
+        // when the best-effort SessionEnd hook is dropped (the hook races CC's
+        // own teardown and has no retry). See `is_exit_command`.
+        ("user", Some(Value::String(s))) if is_exit_command(s) => {
+            out.push(AgentEvent::SessionEnd { agent_id });
+        }
         _ => {}
     }
     Ok(out)
+}
+
+/// True if a CC user-message content string is a session-terminating slash
+/// command (`/exit` or `/quit`). CC logs slash commands as a `<command-name>`
+/// wrapper. Only the two that actually end the session count — `/clear` and
+/// `/compact` keep it alive, and prose merely mentioning `/exit` is not wrapped.
+fn is_exit_command(content: &str) -> bool {
+    content.contains("<command-name>/exit</command-name>")
+        || content.contains("<command-name>/quit</command-name>")
 }
 
 /// CC session-end checker: parses lines as JSON and checks for
@@ -168,6 +185,21 @@ pub fn cc_session_ended(tail: &[u8]) -> bool {
         }
         if subtype == "session_end" || hook == "SessionEnd" {
             last_is_end = true;
+        }
+        // A `/exit` or `/quit` user event ends the session too (CC writes no
+        // `session_end` line for it) — without this, a recently-exited session
+        // re-ghosts on restart within the mtime window. Same matcher as the
+        // live decode path so the two transports agree.
+        if v.get("type").and_then(|s| s.as_str()) == Some("user") {
+            if let Some(c) = v
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+            {
+                if is_exit_command(c) {
+                    last_is_end = true;
+                }
+            }
         }
     }
     last_is_end

@@ -221,6 +221,69 @@ fn cc_jsonl_plain_user_message_yields_no_events() {
     assert!(events.is_empty());
 }
 
+// CC writes no `session_end` line on `/exit` — only a `<command-name>` user
+// event. Decoding it to SessionEnd gives the durable JSONL transport an exit
+// signal so a cleanly-exited session is reaped even when the best-effort
+// SessionEnd hook is dropped.
+#[test]
+fn cc_jsonl_exit_command_emits_session_end() {
+    let transcript = "/Users/me/.claude/projects/x/ses-abc.jsonl";
+    let v = serde_json::json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>"
+        }
+    });
+    let events = decode_cc_line(transcript, "claude-code", v).unwrap();
+    assert_eq!(events.len(), 1, "got {events:?}");
+    assert!(matches!(events[0], AgentEvent::SessionEnd { .. }));
+}
+
+#[test]
+fn cc_jsonl_quit_command_emits_session_end() {
+    let transcript = "/Users/me/.claude/projects/x/ses-abc.jsonl";
+    let v = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": "<command-name>/quit</command-name>" }
+    });
+    let events = decode_cc_line(transcript, "claude-code", v).unwrap();
+    assert_eq!(events.len(), 1, "got {events:?}");
+    assert!(matches!(events[0], AgentEvent::SessionEnd { .. }));
+}
+
+// `/clear` and `/compact` keep the session (and process) alive — they must
+// NOT be treated as session-terminating.
+#[test]
+fn cc_jsonl_non_terminating_slash_command_yields_no_events() {
+    let transcript = "/Users/me/.claude/projects/x/ses-abc.jsonl";
+    for cmd in ["/clear", "/compact"] {
+        let v = serde_json::json!({
+            "type": "user",
+            "message": { "role": "user", "content": format!("<command-name>{cmd}</command-name>") }
+        });
+        let events = decode_cc_line(transcript, "claude-code", v).unwrap();
+        assert!(
+            events.is_empty(),
+            "{cmd} should not end the session: {events:?}"
+        );
+    }
+}
+
+#[test]
+fn cc_jsonl_plain_string_user_message_yields_no_events() {
+    let transcript = "/Users/me/.claude/projects/x/ses-abc.jsonl";
+    let v = serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": "please fix the /exit bug" }
+    });
+    let events = decode_cc_line(transcript, "claude-code", v).unwrap();
+    assert!(
+        events.is_empty(),
+        "prose mentioning /exit is not a command: {events:?}"
+    );
+}
+
 #[test]
 fn ag_planner_response_emits_activity_start_with_indexed_tool_use_id() {
     let transcript = "/Users/me/.gemini/antigravity-cli/brain/sess/transcript.jsonl";
@@ -347,6 +410,41 @@ fn cc_session_ended_ignores_string_content_containing_session_end() {
     assert!(
         !cc_session_ended(tail),
         "should not false-positive on session_end inside tool output"
+    );
+}
+
+#[test]
+fn cc_session_ended_detects_exit_command() {
+    use pixtuoid_core::source::claude_code::cc_session_ended;
+    let tail = br#"{"type":"system","subtype":"session_start","sessionId":"s1"}
+{"type":"assistant","message":{"role":"assistant","content":[]}}
+{"type":"user","message":{"role":"user","content":"<command-name>/exit</command-name>\n            <command-message>exit</command-message>"}}
+"#;
+    assert!(cc_session_ended(tail));
+}
+
+#[test]
+fn cc_session_ended_ignores_non_terminating_slash_command() {
+    use pixtuoid_core::source::claude_code::cc_session_ended;
+    let tail = br#"{"type":"system","subtype":"session_start","sessionId":"s1"}
+{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}
+"#;
+    assert!(
+        !cc_session_ended(tail),
+        "/clear keeps the session alive — not an end marker"
+    );
+}
+
+// A resume after exit (new session_start tail-appended) resets the end state.
+#[test]
+fn cc_session_ended_exit_then_session_start_is_not_ended() {
+    use pixtuoid_core::source::claude_code::cc_session_ended;
+    let tail = br#"{"type":"user","message":{"role":"user","content":"<command-name>/exit</command-name>"}}
+{"type":"system","subtype":"session_start","sessionId":"s1"}
+"#;
+    assert!(
+        !cc_session_ended(tail),
+        "session resumed after exit — last marker wins"
     );
 }
 
