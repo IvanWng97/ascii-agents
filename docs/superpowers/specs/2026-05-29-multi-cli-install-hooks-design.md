@@ -18,7 +18,7 @@ This spec supersedes the design in PR #59 (`trjh`, branch `codex-hook-support`),
 2. Add a new single-file-config CLI in ~one module + one registry entry; per-CLI format knowledge lives in that module only.
 3. Claude behavior is byte-for-byte preserved (pure refactor in phase 1).
 4. Codex install/uninstall is **surgical** (sentinel-based, like Claude) and idempotent regardless of the resolved binary path.
-5. Auto-detect installed CLIs with an interactive confirm; never silently mutate a high-value config (`~/.codex/config.toml`) in a non-interactive context.
+5. Auto-detect installed CLIs with an interactive confirm; never silently mutate a high-value config (`~/.codex/config.toml`) in a non-interactive context. (The non-TTY single-Claude path is an intentional **backward-compatibility exception**: Claude is the legacy default and pre-multi-CLI scripts rely on non-interactive `install-hooks` working. Codex — the high-value config — is never written silently.)
 6. Structurally prevent the four review findings from PR #59 (backup omission, backup-name corruption, lossy hook path, source misrouting).
 7. Codex sessions render as sprites end-to-end, attributed to the `codex` source via an explicit tag (not path-sniffing).
 
@@ -142,6 +142,14 @@ crates/pixtuoid/src/install/
 
 **Delete** `install/merge.rs` (JSON logic → `claude.rs`).
 
+> **`const` vs `static`:** the `Target` consts + `const TARGETS: &[&Target] = &[&CLAUDE, &CODEX]` pattern compiles as written — `&CONST` in a `const` context is legal via rvalue static promotion (since Rust 1.21, well under MSRV 1.78), verified by compiling the exact pattern on editions 2021 and 2024. No `static` conversion needed.
+
+### `claude.rs` notes (load-bearing — easy to drop on the move)
+
+- **Port `LEGACY_SENTINEL_KEYS = &["_ascii_agents"]`** and the legacy-key branch of `is_managed_entry` **verbatim** from `merge.rs`, along with its two inline regression tests (`install_strips_legacy_ascii_agents_entries`, `uninstall_strips_legacy_ascii_agents_entries`). Dropping this silently regresses v0.3.x→v0.4.x upgraders, leaving orphan `_ascii_agents` hooks pointing at the long-gone `ascii-agents-hook` binary (the PR #40 regression).
+- `merge.rs` uses two `.expect("just stored Value::Object/Array")` calls. The "no `unwrap`" rule means **no NEW `unwrap`/`expect`**; these pre-existing calls move verbatim (out of scope), or may optionally be converted to `?`/`match` propagation during the move.
+- `io::hook_on_path()` stays Claude-only (hardcoded `"pixtuoid-hook"` name). It is **not** generalized: Codex writes an absolute path (`needs_path_warning: false`), so no PATH check applies to it. The PATH warning fires only when `t.needs_path_warning` is true (Claude).
+
 ### `io.rs` — format-neutral
 
 ```rust
@@ -187,13 +195,21 @@ fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) 
     /* report ok + backup path + restart_noun; PATH warning gated on t.needs_path_warning */
     Ok(())
 }
-fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> { /* symmetric; remove_backup only on change */ }
+fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> {
+    // read_config -> merge_uninstall; if merged == content, print "no pixtuoid hooks
+    // found ... nothing to remove" and return Ok WITHOUT removing the backup (covers
+    // both file-absent — read_config returns "" — and no-match). Else write_config_atomic
+    // + remove_backup + report. The old separate "no settings.json ... nothing to do"
+    // message is intentionally collapsed into this no-change branch.
+}
 
 // PURE — no filesystem, no stdin — fully unit-testable.
 pub enum Plan { Targets(Vec<&'static Target>), NothingDetected, Conflict(String) }
 pub fn plan_targets(requested: Option<TargetName>, explicit_config: bool,
                     present: &[(&'static Target, bool)], yes: bool, is_tty: bool) -> Plan;
 ```
+
+**`TargetName` (clap enum) → `Target` resolution.** `Claude`/`Codex` resolve via `by_name` to a single `Target`. `All` is a meta-value (not a `Target`; `by_name("all")` is `None`) meaning "all present targets" — filter `present` to `bool == true`, and **warn** (not error) on a requested-but-absent target. The enum→`Target` resolution happens *inside* `plan_targets`, which keeps it pure (it receives the already-resolved `present` slice).
 
 ### `plan_targets` policy table
 
@@ -207,6 +223,8 @@ pub fn plan_targets(requested: Option<TargetName>, explicit_config: bool,
 | *(none)* | any | none present → "no supported CLIs detected; pass `--target …`", exit 0 |
 
 Detection is injected into `plan_targets` as `present: &[(&Target, bool)]`, so the entire policy is unit-testable without touching the real `$HOME` or stdin.
+
+**Confirm-prompt contract** (TTY, no `--yes`): one `stdin().read_line()`, trim whitespace, ASCII-lowercase. Empty/Enter or `y`/`yes` → proceed. `n`/`no` → abort cleanly with a one-line message and exit 0. Any other input → treat as no (abort), no re-prompt. `--yes`/`-y` skips the read entirely. The answer parsing is a pure helper with its own unit test (separate from the `stdin` read).
 
 ### CLI surface (`cli.rs`)
 
@@ -236,7 +254,7 @@ The shim and socket stay single-instance. The install layer makes the source **e
 
 - `codex::hook_command(resolved)` returns `PIXTUOID_SOURCE=codex <abs-path>/pixtuoid-hook` (absolute path; `Err` on non-UTF-8). Claude's returns bare `pixtuoid-hook` (no prefix; CC payloads already carry their source).
 - The shim (`crates/pixtuoid-hook/src/main.rs`) reads `PIXTUOID_SOURCE` from its env and stamps `payload["source"]` before forwarding — a one-field addition, alongside the existing `_shim_ts_ms`. **The exit-0 / 200ms-timeout contract is untouched.**
-- `decode_hook_payload` already reads an explicit `source`; `infer_hook_source` becomes a last-resort fallback only. This removes the `transcript_path`-sniffing fragility (Codex's `transcript_path` can be `null`).
+- `decode_hook_payload` (`decoder.rs:28-31`) **already** reads explicit `payload["source"]` first and falls back to the hardcoded `claude_code::SOURCE_NAME` constant. **No `infer_hook_source` function exists on main** (it is a PR #59 worktree artifact). So phase-3 decoder changes are *additive only*: stamp `payload["source"]` in the shim from `PIXTUOID_SOURCE`, and add decoder arms for the new Codex event names. The existing explicit-`source`-then-fallback logic is unchanged — this is what removes the `transcript_path`-sniffing fragility (#59's worktree heuristic; Codex's `transcript_path` can be `null`).
 
 **Shell-execution dependency.** The `PIXTUOID_SOURCE=codex …` env-prefix form only works if Codex runs the `command` string under a shell (`sh -c`). The verification rates this "almost certainly" true (the official docs example uses `$(...)` command substitution, which is shell-only), but it is *inferred, not contractual*. The phase-2 live checkpoint must confirm `payload["source"] == "codex"` actually arrives. **Robust fallback if Codex exec's directly:** make the shim accept `--source codex` as an argv flag and have `hook_command` emit `<abs-path>/pixtuoid-hook --source codex` instead — argv survives both shell and direct-exec. Default to the env-prefix per the approved decision; switch to the flag only if the checkpoint shows the env var isn't propagating.
 
@@ -248,36 +266,39 @@ The shim and socket stay single-instance. The install layer makes the source **e
   - **No `[features] hooks = true`** (redundant no-op).
   - `timeout = 5` (raised from #59's aggressive `1`; the shim's own 200ms write timeout already bounds blocking).
   - `statusMessage = "pixtuoid visualizer"` (replaces #59's misleading "Updating pixtuoid", which surfaces in Codex's UI).
-  - `_pixtuoid = true` sentinel → `merge_uninstall` removes **only** sentinel-marked entries (surgical), and `merge_install` replaces sentinel-marked entries (idempotent regardless of resolved path). Basename match kept as a legacy fallback for entries written by an un-upgraded #59.
-- `PermissionRequest` decodes to the `Waiting` state in phase 3.
+  - `_pixtuoid = true` sentinel lives on the **handler** (inside each `[[hooks.Event.hooks]]` entry), since Codex's structure is two-level: `[hooks.Event]` → array of *groups* → each group has a `matcher` + a `hooks` array of handlers. **Uninstall semantics:** `merge_uninstall` removes handlers carrying `_pixtuoid == true` (primary) or `file_name == "pixtuoid-hook"` (legacy #59 fallback) from each group; **if a group's `hooks` array becomes empty, remove the group; if an event's group array becomes empty, remove the event key.** A group mixing a managed handler and a user-authored handler keeps the user handler. `merge_install` replaces sentinel-marked handlers (idempotent regardless of resolved path).
+- `PermissionRequest` decodes to the `Waiting` state in phase 3. Its **payload shape** (which of `session_id` / `transcript_path` / `tool_name` are present) is a **live unknown** — confirm at the phase-2 socket-tail checkpoint before writing the decoder. Note `decode_hook_payload` currently *hard-requires* `transcript_path` (`decoder.rs:24-27`, `.ok_or_else(bail)`); since Codex's `transcript_path` can be null, phase 3 must relax that to tolerate a missing/null `transcript_path` (fall back to `session_id` for the `AgentId`), or `PermissionRequest`/`Stop` will `bail` before the event match.
 
 ## How the four PR #59 review findings are structurally prevented
 
 - **(a) No backup on Codex install.** `backup_once` lives in the single `run_install` orchestrator, called before every `write_config_atomic`. A target physically cannot reach the write without backing up.
 - **(b) `with_extension` corrupts the Codex backup name.** All sibling paths (backup/lock/tmp) use `format!("{}.{}", display, suffix)` append. Unit tests pin multi-dot cases (`config.local.toml` → `config.local.toml.pixtuoid.bak`/`.lock`/`.tmp`).
 - **(c) `to_string_lossy` → silent dead hook.** `hook_command` returns `Err` on non-UTF-8; `run_install` propagates and aborts loudly. Claude ignores the path (bare literal); Codex needs the path — modeled per-target.
-- **(d) `infer_hook_source` misroutes Claude events.** Fixed by the explicit `PIXTUOID_SOURCE` tag (above); inference demoted to fallback. Lands in phase 3 (decoder), not via any socket-topology change.
+- **(d) #59's worktree `infer_hook_source` misroutes Claude events** (classifies `Stop`/`UserPromptSubmit`/`Subagent*` as codex when `source` is absent). We do **not** port that heuristic. Main's `decode_hook_payload` already reads explicit `payload["source"]` first; the explicit `PIXTUOID_SOURCE` tag (above) makes Codex events carry their own source, so no inference is needed. Lands in phase 3 (decoder), not via any socket-topology change.
 
 ## Phasing & test gates
 
 ### Phase 1 — `Target`-struct refactor (pure, Claude-behavior-preserving)
 Create `target.rs`, `claude.rs` (move JSON merge from `merge.rs`); rewrite `io.rs` (`read_config`/`write_config_atomic`/suffix-param backup + append fix on lock/tmp); rewrite `mod.rs` (`run_install`/`run_uninstall` + `plan_targets` + dispatch); update `cli.rs` (`TargetName`, `--config` + alias) and `main.rs`; delete `merge.rs`.
 
+Also: update **CLAUDE.md** in the same commit — rename the `write_settings_atomic` invariant reference to `write_config_atomic`, and note install is now multi-target (Claude + Codex) via the `Target` registry (per CLAUDE.md's own "update docs in the same commit" rule).
+
 **Gates (all green before phase 2):**
-- Ported `merge.rs` JSON tests pass under `claude.rs`.
+- Ported `merge.rs` JSON tests pass under `claude.rs`, **including the two `_ascii_agents` legacy-strip regression tests** (`install_strips_legacy_ascii_agents_entries`, `uninstall_strips_legacy_ascii_agents_entries`).
 - `read_config` returns `""` for missing/empty; `merge_install("")` yields a valid populated config (empty-doc regression guard).
-- `plan_targets` pure unit tests for **every** policy-table row (TTY/non-TTY × {claude,codex,all,none} × present-sets × {yes}); includes non-TTY+Codex-present+no-target → `Conflict`/exit-nonzero, and `--target all` + `--config` → `Conflict`.
-- backup/lock/tmp naming asserted against literal multi-dot paths.
-- Existing `io.rs` symlink/atomic tests adapted + pass.
+- `plan_targets` pure unit tests for **every** policy-table row (TTY/non-TTY × {claude,codex,all,none} × present-sets × {yes}); includes non-TTY+Codex-present+no-target → `Conflict`/exit-nonzero, and `--target all` + `--config` → `Conflict`. Confirm-prompt answer parsing has its own pure unit test.
+- backup/lock/tmp naming asserted against literal multi-dot paths (e.g. `config.local.toml` → `…​.pixtuoid.bak`/`.lock`/`.tmp`).
+- Existing `io.rs` symlink/atomic tests **rewritten** (not merely adapted) to call `write_config_atomic(&path, "…")` with a `&str` instead of `write_settings_atomic(&path, &Value)`; all pass.
+- The existing `tests/install.rs` (which invokes the binary with `--settings`) must pass **UNCHANGED** — it is the back-compat oracle for `alias = "settings"`. Add a **second** test using `--config` to pin the new primary name; do not convert the existing test.
 - Round-trip: `run_install` then `run_uninstall` on a temp Claude config restores byte-identical content; `CARGO_BIN_EXE` end-to-end CLI test green.
-- `scripts/preflight.sh` green (clippy `-D warnings`, no `unwrap`, no new dep, no `unsafe`).
+- `scripts/preflight.sh` green (clippy `-D warnings`, no **new** `unwrap`/`expect`, no new dep, no `unsafe`).
 
 ### Phase 2 — Codex target + detect/confirm
-Create `codex.rs` (port #59 TOML merge, add `_pixtuoid` sentinel, `hook_command` with `PIXTUOID_SOURCE` prefix + Err-on-non-UTF-8, drop `[features]`, `timeout=5`, fixed `statusMessage`); add `CODEX` to `TARGETS`; wire detect/confirm/`--yes`/non-TTY into the binary via `IsTerminal`.
+Create `codex.rs` (port #59's TOML merge logic, but **DELETE the `[features] hooks = true` block** — a verbatim port would reintroduce that forbidden redundant no-op; add the `_pixtuoid` handler sentinel + group-emptying uninstall, `hook_command` with `PIXTUOID_SOURCE` prefix + Err-on-non-UTF-8, `timeout = 5`, `statusMessage = "pixtuoid visualizer"`); add `CODEX` to `TARGETS`; wire detect/confirm/`--yes`/non-TTY into the binary via `IsTerminal`.
 
 **Gates:**
 - Codex `run_install`/`run_uninstall` round-trip on temp TOML: idempotent, **idempotent with a different resolved path** (sentinel, not basename), backup created (`config.toml.pixtuoid.bak`), surgical uninstall.
-- User-authored Codex hook with a different command survives uninstall; a sentinel-marked `pixtuoid-hook` entry is removed (pins the surgical boundary).
+- Surgical boundary, pinned with a **mixed group** (one managed handler + one user-authored handler in the *same* `[hooks.Event]` group): uninstall removes only the managed handler, keeps the user handler, and does not delete the group. A group that becomes empty is removed; an event key that becomes empty is removed.
 - `codex::hook_command` returns `Err` for a non-UTF-8 path.
 - `plan_targets` integration: Codex-only → Codex; both + TTY + `--yes` → both; both + non-TTY + no-target → error.
 
@@ -291,9 +312,9 @@ Create `codex.rs` (port #59 TOML merge, add `_pixtuoid` sentinel, `hook_command`
 This human gate must pass before any decoder work.
 
 ### Phase 3 — Codex Source + decoder (separate PR)
-`decoder.rs` reads explicit `source` (already does) → `infer_hook_source` becomes fallback only; shim stamps `payload["source"]` from `PIXTUOID_SOURCE`; new `CodexSource` JSONL decoder + `cx·` label prefix; register in `SourceManager`; `PermissionRequest` → `Waiting`. **No second socket, no shim-socket parameterization.** Update the four refactor-sensitive test files if `AgentEvent` changes (per CLAUDE.md "When refactoring").
+`decode_hook_payload` already reads explicit `payload["source"]` first and falls back to `claude_code::SOURCE_NAME` — **no `infer_hook_source` to demote** (it doesn't exist on main). Changes are *additive*: (1) shim stamps `payload["source"]` from `PIXTUOID_SOURCE`; (2) **relax the hard `transcript_path` requirement** (`decoder.rs:24-27`) to tolerate missing/null for Codex (fall back to `session_id` for the `AgentId`); (3) add decoder arms for the new Codex event names + a `CodexSource` JSONL decoder; (4) `cx·` label prefix (consistent with `cc·`/`ag·`); register in `SourceManager`; `PermissionRequest` → `Waiting`. **No second socket, no shim-socket parameterization.** Update the four refactor-sensitive test files if `AgentEvent` changes (per CLAUDE.md "When refactoring").
 
-**Gates:** existing `e2e.rs`/`hook_socket.rs`/`jsonl_watcher.rs`/`reducer.rs` green; new `codex_decoder` test; explicit-`source` test proving `Stop`/`UserPromptSubmit`/`Subagent*` route to the correct CLI.
+**Gates:** existing `e2e.rs`/`hook_socket.rs`/`jsonl_watcher.rs`/`reducer.rs` green; new Codex decode tests in `crates/pixtuoid-core/tests/decoder.rs` (the file #59 already adds in the worktree); a test proving a Codex payload with null/missing `transcript_path` still decodes; explicit-`source` test proving `Stop`/`UserPromptSubmit`/`Subagent*` route to the correct CLI.
 
 ## Risks / live unknowns
 
@@ -301,6 +322,7 @@ This human gate must pass before any decoder work.
 - **Codex version skew** — pre-Apr-2026 installs may lack `PreToolUse`/`PostToolUse` (only `SessionStart`/`Stop`). Document the minimum version once confirmed live.
 - **Shell PATH resolution of bare names** is inferred, not contractual; we sidestep it by writing an absolute path for Codex.
 - **Codex rewriting config.toml** would drop our `_pixtuoid` sentinel (it deserializes into typed structs without the key). Codex does not generally rewrite user config; if observed, uninstall falls back to basename match. Acceptable.
+- **Comment/format loss on `~/.codex/config.toml`.** Round-tripping through untyped `toml::Value` (read → parse → reserialize) canonicalizes the file and strips comments and field ordering on the first install. The `.pixtuoid.bak` backup is the recovery path. Emit a user-visible install line: `note: comments and formatting in config.toml are not preserved`.
 
 ## Crediting PR #59
 
