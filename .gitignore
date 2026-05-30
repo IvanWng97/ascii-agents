@@ -7,4 +7,5 @@ Cargo.lock.bak
 /*.png
 .venv/
 .superpowers/
+docs/superpowers/
 .claude/worktrees/
