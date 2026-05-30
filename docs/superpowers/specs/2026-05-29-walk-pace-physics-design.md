@@ -334,3 +334,36 @@ test passes unchanged; snapshot example renders without panic (visual baseline c
 5. **Exit arrival pause:** exit ends in GC (`None`), no pose flip. Recommend no pause on exit.
 6. **Visual baseline:** the snapshot baseline changes deterministically; confirm its
    location/process so Phase 6 regenerates the right artifact and the PR documents the diff.
+
+## Implementation Status (shipped in PR #61)
+
+Built across 8 TDD phases. Where things landed (read this first if iterating later):
+
+- **Core physics** — `pixtuoid-core/src/physics.rs` (`WalkProfile`, `walk_profile`/`walk_progress`/
+  `walk_arrived`, `speed_mult`/`pause_ms_for` with a splitmix64 finalizer). Pure; invariant #1 holds.
+- **Motion authority** — `tui/pose.rs::derive_with_routing` snapshots the A\* length into a frozen
+  `WalkProfile` and drives `t_x1000`; per-agent `MotionState` lives on `FloorCtx`.
+- **Elastic wander** — `tui/motion.rs::advance_wander` (per-phase clock, idempotent via
+  `last_advanced_at`, deterministic `cycle_n`; destination selection unchanged via shared
+  `aimless_wander_seed`). OQ #1 resolved: walk-out is symmetric at `desk+(6,4)` (no stand-up jump).
+- **Window-bounded walks (post-review fixes):** snap-back and exit walks are **time-compressed** so
+  they complete within their GC windows — snap-back by `SNAP_BACK_MS` (was teleporting), exit before
+  the reducer's `EXIT_GRACE_WINDOW` (was vanishing mid-corridor). Both have regression tests.
+- **Door cosmetic** — `recompute_door_anim_max_ms` only counts *in-flight* walks (`MotionState.entry`
+  is never cleared, so an arrived profile would otherwise hold the door open for the agent's life).
+
+### Deferred follow-ups (low severity, intentionally not done)
+
+- **Transition-floor motion eviction:** `render_transition_floor` doesn't evict `fctx.motion`; the
+  leak is bounded and self-heals when the floor is next viewed on the normal path. One-line fix.
+- **OQ #3 — overlay AtWaypoint divergence:** the occupancy overlay reserves cells from stateless
+  `core::derive`, which now drifts from physics-timed `advance_wander` by *seconds* (confirmed in
+  review, not one frame). Advisory for A\* routing only (no state/correctness impact); a fix means
+  routing the overlay pass through `advance_wander` on the render hot path — deferred as not worth
+  the risk for an aesthetic issue.
+
+### Tuning knob
+
+`V_CRUISE_COMMUTE`/`V_CRUISE_WANDER`/`WALK_ACCEL` in `physics.rs` are the only feel dials — calibrated
+to the measured office geometry (see Constant calibration). Tests assert *relative* behavior, so
+re-tuning these never breaks the suite; judge from a live `pixtuoid run`.
