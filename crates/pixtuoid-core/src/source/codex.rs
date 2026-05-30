@@ -27,7 +27,10 @@ pub const SOURCE_NAME: &str = "codex";
 /// coalesce. Falls back to the full stem if no trailing UUID is present.
 pub fn codex_id_from_path(path: &Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let tail = &stem[stem.len().saturating_sub(36)..];
+    // `.get()` (not `&stem[..]`) so a non-ASCII filename whose byte split
+    // lands mid-codepoint returns None instead of panicking — this runs on
+    // every file under the watched tree.
+    let tail = stem.get(stem.len().saturating_sub(36)..).unwrap_or("");
     if is_uuid(tail) {
         tail.to_string()
     } else {
@@ -272,5 +275,13 @@ mod tests {
     fn id_falls_back_to_stem_without_uuid() {
         let p = Path::new("/tmp/notarollout.jsonl");
         assert_eq!(codex_id_from_path(p), "notarollout");
+    }
+
+    #[test]
+    fn id_handles_non_ascii_filename_without_panic() {
+        // The deriver runs on every file under ~/.codex/sessions; a non-ASCII
+        // stem whose len-36 byte split lands mid-codepoint must not panic.
+        let p = Path::new("/tmp/rollout-日本語のとてもながいファイルめい.jsonl");
+        let _ = codex_id_from_path(p);
     }
 }
