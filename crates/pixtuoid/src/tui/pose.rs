@@ -20,7 +20,9 @@ use pixtuoid_core::state::AgentSlot;
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::AgentId;
 
-use crate::tui::motion::{advance_wander, octile_path_len, MotionState, WanderPhase};
+use crate::tui::motion::{
+    advance_wander, octile_path_len, MotionState, WalkPathSnapshot, WanderPhase,
+};
 
 pub use pixtuoid_core::pose::{
     aimless_wander_seed, cycle_ms_for, derive, derive_state_only, is_aimless_cycle,
@@ -112,7 +114,7 @@ pub fn derive_with_routing(
             let raw = derive_state_only(slot, now, layout)?;
             return match raw {
                 Pose::Walking { .. } => {
-                    route_walking_pose(slot, now, layout, router, overlay, history, raw)
+                    route_walking_pose(slot, now, layout, router, overlay, history, motion, raw)
                 }
                 other => Some(other),
             };
@@ -124,10 +126,18 @@ pub fn derive_with_routing(
 
         // Snapshot the exit profile on first sighting.
         if mstate.exit.is_none() {
-            let from = Point {
+            // Start the exit from wherever the agent actually is: its current
+            // wander position if it was out on a trip (fresh history), else the
+            // desk anchor (the common case — exiting from a seated state).
+            // Without this, an agent that's mid-coffee-run when its session
+            // ends teleports back to the desk before walking to the door.
+            let desk_anchor = Point {
                 x: desk.x + 6,
                 y: desk.y + 4,
             };
+            let from = history
+                .recent(slot.agent_id, 300, now)
+                .unwrap_or(desk_anchor);
             let h = slot.agent_id.raw();
             let jx = ((h % 9) as i32 - 4) as i16;
             let jy = (((h >> 16) % 9) as i32 - 4) as i16;
@@ -138,13 +148,14 @@ pub fn derive_with_routing(
             let path = router.route(&layout.walkable, overlay, from, to_jittered);
             let path_len = octile_path_len(&path).max(1);
             let profile = walk_profile(path_len, WalkIntent::Exit, slot.agent_id);
-            mstate.exit = Some((exit_time, profile));
+            mstate.exit = Some((exit_time, profile, from));
         }
 
         // Destructure without moving the non-Copy profile (Correction L).
         let e = mstate.exit.as_ref()?;
         let started_at = e.0;
         let profile = &e.1;
+        let from = e.2;
 
         let elapsed_ms = now
             .duration_since(started_at)
@@ -172,10 +183,6 @@ pub fn derive_with_routing(
 
         let t_x1000 = walk_progress(profile, eff_elapsed);
         let frame = ((eff_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
-        let from = Point {
-            x: desk.x + 6,
-            y: desk.y + 4,
-        };
 
         return route_walking_pose(
             slot,
@@ -184,6 +191,7 @@ pub fn derive_with_routing(
             router,
             overlay,
             history,
+            motion,
             Pose::Walking {
                 from,
                 to: door_target,
@@ -246,6 +254,7 @@ pub fn derive_with_routing(
                     router,
                     overlay,
                     history,
+                    motion,
                     Pose::Walking {
                         from: door,
                         to: to_desk,
@@ -313,6 +322,7 @@ pub fn derive_with_routing(
                     router,
                     overlay,
                     history,
+                    motion,
                     Pose::Walking {
                         from,
                         to: dest,
@@ -341,6 +351,11 @@ pub fn derive_with_routing(
             WanderPhase::WalkingBack => {
                 let ms = motion.get(&slot.agent_id)?;
                 let desk_point = *layout.home_desks.get(slot.desk_index)?;
+                // Copy the fields off `ms` so the immutable `motion` borrow ends
+                // before `route_walking_pose` takes `&mut motion`.
+                let wander_dest = ms.wander_dest;
+                let wander_phase_started_at = ms.wander_phase_started_at;
+                let carrying_coffee = ms.wander_dest_kind == Some(WaypointKind::Pantry);
                 // Endpoint is desk+(6,4) to match seated_anchor so there's no
                 // jump on arrival; this intentionally differs from
                 // core::idle_pose's raw `to: desk` (only the routed TUI path is
@@ -350,11 +365,10 @@ pub fn derive_with_routing(
                     y: desk_point.y + 4,
                 };
                 let elapsed_phase = now
-                    .duration_since(ms.wander_phase_started_at)
+                    .duration_since(wander_phase_started_at)
                     .unwrap_or(Duration::ZERO)
                     .as_millis() as u64;
                 let frame = (elapsed_phase / WALKING_FRAME_MS) as usize % WALKING_FRAMES;
-                let carrying_coffee = ms.wander_dest_kind == Some(WaypointKind::Pantry);
                 return route_walking_pose(
                     slot,
                     now,
@@ -362,8 +376,9 @@ pub fn derive_with_routing(
                     router,
                     overlay,
                     history,
+                    motion,
                     Pose::Walking {
-                        from: ms.wander_dest,
+                        from: wander_dest,
                         to: snap_target,
                         t_x1000: t_phys,
                         frame,
@@ -372,7 +387,16 @@ pub fn derive_with_routing(
                 );
             }
             WanderPhase::Seated => {
-                // Fall through to derive_state_only — it returns SeatedIdle.
+                // The tui motion machine is the wander authority: during its
+                // Seated phase the agent is at its desk. Render SeatedIdle
+                // DIRECTLY rather than falling through to derive_state_only —
+                // that re-runs core's *stateless* wander (`idle_pose`), whose
+                // independent fixed-fraction timeline can disagree with this
+                // machine and return AtWaypoint/AimlessAt at an unrelated
+                // location, teleporting the sprite between desk and waypoint
+                // as the two clocks drift. (SeatedThinking is already handled
+                // above, before advance_wander.)
+                return Some(Pose::SeatedIdle);
             }
         }
     }
@@ -490,7 +514,7 @@ pub fn derive_with_routing(
         raw
     };
 
-    route_walking_pose(slot, now, layout, router, overlay, history, pose)
+    route_walking_pose(slot, now, layout, router, overlay, history, motion, pose)
 }
 
 /// Apply A*-based polyline routing to a `Pose::Walking`, recording
@@ -500,6 +524,7 @@ pub fn derive_with_routing(
 /// This is the single shared helper for entry, exit, snap-back, and
 /// state-driven walks (Correction B). Records history with `now` (not
 /// `slot.last_event_at`) so snap-back lookups are fresh.
+#[allow(clippy::too_many_arguments)]
 fn route_walking_pose(
     slot: &AgentSlot,
     now: SystemTime,
@@ -507,6 +532,7 @@ fn route_walking_pose(
     router: &mut dyn Router,
     overlay: &OccupancyOverlay,
     history: &mut PoseHistory,
+    motion: &mut HashMap<AgentId, MotionState>,
     pose: Pose,
 ) -> Option<Pose> {
     let Pose::Walking {
@@ -517,6 +543,11 @@ fn route_walking_pose(
         carrying_coffee,
     } = pose
     else {
+        // Not walking any more — drop the frozen leg path so the next walk
+        // re-snapshots a fresh polyline.
+        if let Some(ms) = motion.get_mut(&slot.agent_id) {
+            ms.walk_path = None;
+        }
         // Record AtWaypoint / AimlessAt positions too — they're a valid
         // "previous position" for a subsequent snap-back walk.
         let pt = match &pose {
@@ -530,24 +561,46 @@ fn route_walking_pose(
         return Some(pose);
     };
 
-    // Per-agent path personality: perturb the routing destination by a
-    // few pixels hashed from the agent_id. Different agents heading
-    // between the same two waypoints get different cache keys and (in
-    // most cases) visibly different polylines — breaks the "ant trail"
-    // effect when multiple agents converge on the same place. The last
-    // polyline point is then restored to the true `to` so the walker
-    // ends at the canonical destination, not the jittered approximation.
-    let h = slot.agent_id.raw();
-    let jx = ((h % 9) as i32 - 4) as i16;
-    let jy = (((h >> 16) % 9) as i32 - 4) as i16;
-    let to_jittered = Point {
-        x: to.x.saturating_add_signed(jx),
-        y: to.y.saturating_add_signed(jy),
+    // Freeze the leg's polyline: snapshot the A* route the first frame this
+    // (from, to) leg appears, then reuse it unchanged until the endpoints
+    // change. Without this, per-frame occupancy-overlay churn invalidates the
+    // A* cache and re-routes the walker onto a differently-shaped path, making
+    // the frozen-profile progress `t` land on a new pixel — the visible
+    // "flash"/teleport. Re-routing every frame is also what spikes a frame's
+    // A* cost (the periodic stutter). See [`WalkPathSnapshot`].
+    //
+    // Per-agent path personality: perturb the routing destination by a few
+    // pixels hashed from the agent_id so converging agents take visibly
+    // different polylines (breaks the "ant trail"). The last polyline point is
+    // restored to the true `to` so the walker ends at the canonical
+    // destination, not the jittered approximation.
+    let path = {
+        let ms = motion
+            .entry(slot.agent_id)
+            .or_insert_with(|| MotionState::new(slot.agent_id));
+        match &ms.walk_path {
+            Some(wp) if wp.from == from && wp.to == to => wp.path.clone(),
+            _ => {
+                let h = slot.agent_id.raw();
+                let jx = ((h % 9) as i32 - 4) as i16;
+                let jy = (((h >> 16) % 9) as i32 - 4) as i16;
+                let to_jittered = Point {
+                    x: to.x.saturating_add_signed(jx),
+                    y: to.y.saturating_add_signed(jy),
+                };
+                let mut p = router.route(&layout.walkable, overlay, from, to_jittered);
+                if let Some(last) = p.last_mut() {
+                    *last = to;
+                }
+                ms.walk_path = Some(WalkPathSnapshot {
+                    from,
+                    to,
+                    path: p.clone(),
+                });
+                p
+            }
+        }
     };
-    let mut path = router.route(&layout.walkable, overlay, from, to_jittered);
-    if let Some(last) = path.last_mut() {
-        *last = to;
-    }
     if path.len() <= 2 {
         // Straight-line walk — record the interpolated position for next
         // frame's snap-back lookup. Use `now` not `last_event_at`.
@@ -666,6 +719,120 @@ mod tests {
 
     fn layout() -> Layout {
         Layout::compute(120, 96, 4).expect("fits")
+    }
+
+    /// Router that returns a stable polyline (`first`) for its first few calls
+    /// then a DIFFERENT one (`rest`) — simulating an overlay-driven A* reroute
+    /// mid-walk. Counts calls so a test can prove a frozen leg never re-routes.
+    struct ChangingRouter {
+        calls: usize,
+        first: Vec<Point>,
+        rest: Vec<Point>,
+    }
+    impl Router for ChangingRouter {
+        fn route(
+            &mut self,
+            _: &WalkableMask,
+            _: &pixtuoid_core::walkable::OccupancyOverlay,
+            _from: Point,
+            _to: Point,
+        ) -> Vec<Point> {
+            self.calls += 1;
+            // Frame 1 makes two calls (entry-profile snapshot + route_walking_pose);
+            // both must agree so the frozen path is deterministic. A reroute on a
+            // later frame would be call #3+ and gets the different `rest` shape.
+            if self.calls <= 2 {
+                self.first.clone()
+            } else {
+                self.rest.clone()
+            }
+        }
+        fn invalidate(&mut self) {}
+    }
+
+    #[test]
+    fn walk_leg_freezes_path_against_midleg_reroute() {
+        // An entry walker snapshots its A* polyline on the first frame. On a
+        // later frame the router would return a DIFFERENT shape (overlay
+        // churn). The walker must keep following the FROZEN first polyline and
+        // make NO router call that frame — else the sprite jumps ("flash") and
+        // the per-frame A* cost spikes (the periodic stutter).
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let door = l.door_threshold.expect("door");
+        let desk = l.home_desks[0];
+        let desk_target = Point {
+            x: desk.x + 6,
+            y: desk.y + 4,
+        };
+        // Distinct mid corners so the two shapes are distinguishable.
+        let mid_a = Point {
+            x: door.x,
+            y: (door.y + desk_target.y) / 2,
+        };
+        let mid_b = Point {
+            x: desk_target.x,
+            y: door.y,
+        };
+        assert_ne!(mid_a, mid_b, "test setup: corners must differ");
+
+        let mut router = ChangingRouter {
+            calls: 0,
+            first: vec![door, mid_a, desk_target],
+            rest: vec![door, mid_b, desk_target],
+        };
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        // Frame 1: 200ms into the entry walk — snapshots profile + path.
+        let slot1 = entry_slot(now - Duration::from_millis(200));
+        let _ = derive_with_routing(
+            &slot1,
+            now,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let calls_after_frame1 = router.calls;
+
+        // Frame 2: 100ms later — router WOULD return the `rest` shape if asked.
+        let slot2 = entry_slot(now - Duration::from_millis(200));
+        let later = now + Duration::from_millis(100);
+        let _ = derive_with_routing(
+            &slot2,
+            later,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+
+        // The freeze means frame 2 re-routes nothing.
+        assert_eq!(
+            router.calls,
+            calls_after_frame1,
+            "frozen leg must not re-route on a later frame (got {} extra calls)",
+            router.calls - calls_after_frame1
+        );
+
+        let frozen = motion
+            .get(&slot2.agent_id)
+            .and_then(|ms| ms.walk_path.as_ref())
+            .expect("walk_path must be snapshotted while walking");
+        assert!(
+            frozen.path.contains(&mid_a),
+            "frozen path must keep the first leg's corner {mid_a:?}, got {:?}",
+            frozen.path
+        );
+        assert!(
+            !frozen.path.contains(&mid_b),
+            "frozen path must NOT adopt the rerouted corner {mid_b:?} mid-leg, got {:?}",
+            frozen.path
+        );
     }
 
     fn active_slot(state_started_at: SystemTime, created_at: SystemTime) -> AgentSlot {
@@ -1506,7 +1673,7 @@ mod tests {
             &mut hist,
             &mut motion,
         );
-        let (started_at_1, _) = motion[&slot.agent_id]
+        let (started_at_1, _, _) = motion[&slot.agent_id]
             .exit
             .as_ref()
             .expect("exit profile set on first call")
@@ -1515,7 +1682,7 @@ mod tests {
         // Second call 100 ms later: must not re-snapshot.
         let t1 = now + Duration::from_millis(100);
         let _ = derive_with_routing(&slot, t1, &l, &mut router, &overlay, &mut hist, &mut motion);
-        let (started_at_2, _) = motion[&slot.agent_id]
+        let (started_at_2, _, _) = motion[&slot.agent_id]
             .exit
             .as_ref()
             .expect("exit profile still present")
@@ -1667,5 +1834,469 @@ mod tests {
                 .is_none_or(|ms| ms.exit.is_none()),
             "no exit profile should be snapshotted when there is no door"
         );
+    }
+
+    // ====================================================================
+    // Coordinate-continuity tests: drive a scenario frame-by-frame at the
+    // real 33 ms cadence with a REAL A* router, sample `character_anchor`
+    // (the on-screen sprite pixel) each frame, and assert no single-frame
+    // jump exceeds a cruise step. A teleport ("flash") is a 30–100 px jump;
+    // smooth walking is ≤ ~15 px/frame (cruise speed × 33 ms) plus ≤ ~5 px
+    // sprite-anchor offset at pose-type boundaries. The overlay is CHURNED
+    // every frame (an obstacle toggles on/off) to reproduce the exact
+    // condition that used to trigger mid-walk reroutes.
+    // ====================================================================
+
+    /// One frame's max per-axis (Chebyshev) anchor jump allowed. Cruise is
+    /// ≤ ~15 px/frame; boundaries add ≤ ~5 px. 25 leaves margin while a real
+    /// teleport on this layout (desk↔waypoint ≈ 30–70 px) blows past it.
+    const MAX_FRAME_STEP_PX: i32 = 20;
+
+    /// Step `slot` (state held constant) for `frames` frames at 33 ms, sampling
+    /// `character_anchor` each frame against a real `AStarRouter`. Returns
+    /// `(max_chebyshev_step, walking_frame_count)`. When `churn` is set, an
+    /// office-interior obstacle toggles every other frame to force A* cache
+    /// invalidation mid-walk.
+    fn max_anchor_step(
+        slot: &AgentSlot,
+        l: &Layout,
+        start: SystemTime,
+        frames: u64,
+        churn: bool,
+    ) -> (i32, usize) {
+        use crate::tui::pathfind::AStarRouter;
+        use crate::tui::pixel_painter::character_anchor;
+
+        let mut router = AStarRouter::new();
+        router.set_preferred_zone(l.corridor);
+        let mut overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        let ob = l
+            .corridor
+            .map(|c| Point {
+                x: c.x + c.width / 2,
+                y: c.y + 2,
+            })
+            .unwrap_or(Point { x: 40, y: 50 });
+
+        let mut prev: Option<Point> = None;
+        let mut max_step = 0i32;
+        let mut walking = 0usize;
+        for i in 0..frames {
+            let now = start + Duration::from_millis(i * 33);
+            if churn {
+                overlay.clear();
+                if i % 2 == 0 {
+                    overlay.add(ob.x.saturating_sub(5), ob.y.saturating_sub(5), 12, 12);
+                }
+            }
+            if let Some(a) = character_anchor(
+                slot,
+                l,
+                now,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                if let Some(p) = prev {
+                    let step = (a.x as i32 - p.x as i32)
+                        .abs()
+                        .max((a.y as i32 - p.y as i32).abs());
+                    max_step = max_step.max(step);
+                }
+                prev = Some(a);
+                walking += 1;
+            }
+        }
+        (max_step, walking)
+    }
+
+    #[test]
+    fn entry_walk_coordinates_are_continuous() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        // Fresh entry: just created, Idle, walks door→desk.
+        let slot = entry_slot(now);
+        let (max_step, walking) = max_anchor_step(&slot, &l, now, 150, true);
+        assert!(walking > 20, "entry walk should render many frames");
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "entry walk teleported: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+        );
+    }
+
+    #[test]
+    fn exit_walk_coordinates_are_continuous() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let slot = exiting_slot(now, now - Duration::from_secs(60));
+        // Exit GCs (returns None) once arrived; sample until then.
+        let (max_step, walking) = max_anchor_step(&slot, &l, now, 200, true);
+        assert!(walking > 20, "exit walk should render many frames");
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "exit walk teleported: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+        );
+    }
+
+    #[test]
+    fn wander_coffee_run_coordinates_continuous_under_churn() {
+        // The user-reported case: an idle agent's wander trip (desk→waypoint→
+        // desk) must never teleport, even as the occupancy overlay churns every
+        // frame. Pre-freeze this flashed — a mid-walk reroute remapped the
+        // frozen progress onto a new polyline. ~50 s covers several full cycles
+        // (Seated→WalkingOut→AtWaypoint→WalkingBack), exercising every leg and
+        // boundary.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let trip_id = (0u64..1000)
+            .map(|i| AgentId::from_transcript_path(&format!("/cont/{i}.jsonl")))
+            .find(|id| takes_trip(*id, 0))
+            .expect("find a trip agent");
+        // Long-idle, past entry, not in the thinking window (last_event_at ≤
+        // created_at ⇒ was_active = false).
+        let old = now - Duration::from_secs(120);
+        let mut slot = entry_slot(old);
+        slot.agent_id = trip_id;
+        slot.last_event_at = old;
+
+        let (max_step, walking) = max_anchor_step(&slot, &l, now, 1500, true);
+        assert!(walking > 1000, "idle agent should render every frame");
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "wander trip teleported: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+        );
+    }
+
+    #[test]
+    fn wander_interrupted_by_active_does_not_teleport() {
+        // A coffee run interrupted by real work: while the agent is mid-walk to
+        // a waypoint its state flips Idle→Active. It must snap-back to the desk
+        // as a continuous walk, never an instant teleport.
+        use crate::tui::pathfind::AStarRouter;
+        use crate::tui::pixel_painter::character_anchor;
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let trip_id = (0u64..1000)
+            .map(|i| AgentId::from_transcript_path(&format!("/intr/{i}.jsonl")))
+            .find(|id| takes_trip(*id, 0))
+            .expect("find a trip agent");
+        let old = now - Duration::from_secs(120);
+        let mut idle = entry_slot(old);
+        idle.agent_id = trip_id;
+        idle.last_event_at = old;
+
+        let mut router = AStarRouter::new();
+        router.set_preferred_zone(l.corridor);
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+        let seated = {
+            // Reference: the desk seated anchor — used to detect "far from desk".
+            use crate::tui::pixel_painter::character_anchor as ca;
+            let mut r2 = AStarRouter::new();
+            let o2 = pixtuoid_core::walkable::OccupancyOverlay::new();
+            let mut h2 = PoseHistory::new();
+            let mut m2: HashMap<AgentId, MotionState> = HashMap::new();
+            ca(&idle, &l, now, &mut r2, &o2, &mut h2, &mut m2).expect("anchor")
+        };
+
+        // Step the idle wander until the agent is clearly mid-walk (anchor far
+        // from its desk), capturing the last position.
+        let mut last_pos = seated;
+        let mut flip_frame = None;
+        for i in 0..1500u64 {
+            let t = now + Duration::from_millis(i * 33);
+            if let Some(a) = character_anchor(
+                &idle,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                let d = (a.x as i32 - seated.x as i32)
+                    .abs()
+                    .max((a.y as i32 - seated.y as i32).abs());
+                last_pos = a;
+                if d > 30 {
+                    flip_frame = Some(i);
+                    break;
+                }
+            }
+        }
+        let flip_frame = flip_frame.expect("agent should walk away from its desk within 50 s");
+
+        // Flip to Active at this frame; continue stepping ~1.5 s of snap-back.
+        let active = AgentSlot {
+            state: ActivityState::Active {
+                activity: Activity::Typing,
+                tool_use_id: Some(Arc::from("t")),
+                detail: Some(Arc::from("Edit")),
+            },
+            state_started_at: now + Duration::from_millis(flip_frame * 33),
+            ..idle.clone()
+        };
+        let mut prev = last_pos;
+        let mut max_step = 0i32;
+        for i in (flip_frame + 1)..(flip_frame + 46) {
+            let t = now + Duration::from_millis(i * 33);
+            if let Some(a) = character_anchor(
+                &active,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                let step = (a.x as i32 - prev.x as i32)
+                    .abs()
+                    .max((a.y as i32 - prev.y as i32).abs());
+                max_step = max_step.max(step);
+                prev = a;
+            }
+        }
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "interrupted wander teleported back to desk: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+        );
+    }
+
+    #[test]
+    fn floor_offscreen_then_resume_does_not_replay() {
+        // Cross-floor: a floor goes off-screen (only the current floor renders,
+        // so its motion freezes), then the user switches back ~30 s later. On
+        // resume the agent must resync (Seated at desk) and continue smoothly —
+        // NOT replay every backlogged wander cycle one transition per frame
+        // (the "fast-forward all the movement in a second" bug). Modeled by
+        // rendering a warm-up window, SKIPPING a long gap (no calls = frozen
+        // motion), then resuming and asserting per-frame continuity.
+        use crate::tui::pathfind::AStarRouter;
+        use crate::tui::pixel_painter::character_anchor;
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let trip_id = (0u64..1000)
+            .map(|i| AgentId::from_transcript_path(&format!("/floor/{i}.jsonl")))
+            .find(|id| takes_trip(*id, 0))
+            .expect("find a trip agent");
+        let old = now - Duration::from_secs(120);
+        let mut slot = entry_slot(old);
+        slot.agent_id = trip_id;
+        slot.last_event_at = old;
+
+        let mut router = AStarRouter::new();
+        router.set_preferred_zone(l.corridor);
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        // Warm-up: floor visible, agent wanders for ~2 s.
+        for i in 0..60u64 {
+            let t = now + Duration::from_millis(i * 33);
+            let _ = character_anchor(
+                &slot,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            );
+        }
+
+        // Floor off-screen for ~30 s (frames 60..1000 NOT rendered → frozen),
+        // then resume. Assert the resumed stretch is continuous.
+        let mut prev: Option<Point> = None;
+        let mut max_step = 0i32;
+        for i in 1000..1120u64 {
+            let t = now + Duration::from_millis(i * 33);
+            if let Some(a) = character_anchor(
+                &slot,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                if let Some(p) = prev {
+                    let step = (a.x as i32 - p.x as i32)
+                        .abs()
+                        .max((a.y as i32 - p.y as i32).abs());
+                    max_step = max_step.max(step);
+                }
+                prev = Some(a);
+            }
+        }
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "floor resume replayed/teleported: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+        );
+    }
+
+    #[test]
+    fn exit_while_wandering_does_not_teleport_to_desk() {
+        // A session ending while the agent is out on a wander trip (e.g. at the
+        // pantry) must not snap the sprite back to its desk before the exit
+        // walk. The exit should begin from the agent's CURRENT position.
+        use crate::tui::pathfind::AStarRouter;
+        use crate::tui::pixel_painter::character_anchor;
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let l = layout();
+        let trip_id = (0u64..1000)
+            .map(|i| AgentId::from_transcript_path(&format!("/exitw/{i}.jsonl")))
+            .find(|id| takes_trip(*id, 0))
+            .expect("find a trip agent");
+        let old = now - Duration::from_secs(120);
+        let mut idle = entry_slot(old);
+        idle.agent_id = trip_id;
+        idle.last_event_at = old;
+
+        let mut router = AStarRouter::new();
+        router.set_preferred_zone(l.corridor);
+        let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+        let mut history = PoseHistory::new();
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        let seat = {
+            let mut r2 = AStarRouter::new();
+            let o2 = pixtuoid_core::walkable::OccupancyOverlay::new();
+            let mut h2 = PoseHistory::new();
+            let mut m2: HashMap<AgentId, MotionState> = HashMap::new();
+            character_anchor(&idle, &l, now, &mut r2, &o2, &mut h2, &mut m2).expect("anchor")
+        };
+
+        // Step until the agent is clearly away from its desk.
+        let mut last = seat;
+        let mut away_frame = None;
+        for i in 0..1500u64 {
+            let t = now + Duration::from_millis(i * 33);
+            if let Some(a) = character_anchor(
+                &idle,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                last = a;
+                let d = (a.x as i32 - seat.x as i32)
+                    .abs()
+                    .max((a.y as i32 - seat.y as i32).abs());
+                if d > 30 {
+                    away_frame = Some(i);
+                    break;
+                }
+            }
+        }
+        let away_frame = away_frame.expect("agent should walk away from desk within 50 s");
+
+        // Session ends now: set exiting_at at this frame.
+        let exit_at = now + Duration::from_millis(away_frame * 33);
+        let exiting = AgentSlot {
+            exiting_at: Some(exit_at),
+            ..idle.clone()
+        };
+        // First exit frame, ~1 frame later.
+        let t_next = exit_at + Duration::from_millis(33);
+        let first_exit = character_anchor(
+            &exiting,
+            &l,
+            t_next,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        )
+        .expect("exit pose");
+        let jump = (first_exit.x as i32 - last.x as i32)
+            .abs()
+            .max((first_exit.y as i32 - last.y as i32).abs());
+        assert!(
+            jump <= MAX_FRAME_STEP_PX,
+            "exit-while-wandering teleported {jump}px from the waypoint ({last:?}) to the exit start ({first_exit:?})"
+        );
+
+        // And the rest of the exit walk (waypoint → door) must also be smooth.
+        let mut prev = first_exit;
+        let mut max_step = 0i32;
+        for i in 2..200u64 {
+            let t = exit_at + Duration::from_millis(i * 33);
+            match character_anchor(
+                &exiting,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            ) {
+                Some(a) => {
+                    let step = (a.x as i32 - prev.x as i32)
+                        .abs()
+                        .max((a.y as i32 - prev.y as i32).abs());
+                    max_step = max_step.max(step);
+                    prev = a;
+                }
+                None => break, // arrived at door & GC'd
+            }
+        }
+        assert!(
+            max_step <= MAX_FRAME_STEP_PX,
+            "exit-from-wander walk to door teleported: max frame jump {max_step}px"
+        );
+    }
+
+    #[test]
+    fn wander_continuous_across_layouts_and_agents() {
+        // "All routing scenarios": verify no teleport across a spread of office
+        // GEOMETRIES (different decoration seeds + terminal sizes ⇒ different
+        // desk grids, corridor shapes, and waypoint kinds/positions) and across
+        // MULTIPLE desks per layout (so different home positions and wander
+        // destinations, incl. couch/pantry/etc., are exercised). Overlay churns
+        // every frame. A teleport on any geometry/agent fails the sweep.
+        use pixtuoid_core::layout::MAX_VISIBLE_DESKS;
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let geometries: [(u16, u16, u64); 5] = [
+            (120, 96, 0),
+            (120, 96, 7),
+            (160, 100, 3),
+            (96, 80, 11),
+            (200, 120, 5),
+        ];
+
+        for (w, h, seed) in geometries {
+            let Some(l) = Layout::compute_with_seed(w, h, MAX_VISIBLE_DESKS, seed) else {
+                continue;
+            };
+            if l.home_desks.is_empty() || l.waypoints.is_empty() {
+                continue;
+            }
+            let n = l.home_desks.len().min(4);
+            for k in 0..n {
+                let id = AgentId::from_transcript_path(&format!("/geo/{w}x{h}-{seed}/{k}.jsonl"));
+                let old = now - Duration::from_secs(120);
+                let mut slot = entry_slot(old);
+                slot.agent_id = id;
+                slot.desk_index = k;
+                slot.last_event_at = old;
+                // ~20 s ⇒ 2–3 full wander cycles per agent.
+                let (max_step, _) = max_anchor_step(&slot, &l, now, 600, true);
+                assert!(
+                    max_step <= MAX_FRAME_STEP_PX,
+                    "geometry {w}x{h} seed={seed} desk={k}: max frame jump {max_step}px (> {MAX_FRAME_STEP_PX})"
+                );
+            }
+        }
     }
 }

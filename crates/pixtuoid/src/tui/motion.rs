@@ -24,6 +24,23 @@ use crate::tui::pose::{
     waypoint_index_for_cycle, PHASE_AT_WAYPOINT_FRAC, PHASE_SEATED_FRAC, PHASE_WALK_OUT_FRAC,
 };
 
+/// Frozen A* polyline for one in-flight walk leg.
+///
+/// Snapshotted the first frame a walk leg's `(from, to)` endpoints appear and
+/// reused unchanged for the rest of the leg. Per-frame occupancy-overlay churn
+/// (e.g. another agent toggling a waypoint obstacle) invalidates the A* path
+/// cache and would otherwise re-route a walker onto a differently-shaped
+/// polyline mid-stride — mapping the frozen-profile progress `t` onto a new
+/// shape makes the sprite visibly jump (the "flash"/teleport). Freezing the
+/// shape makes the walk smooth; the trade is that a walker no longer dodges
+/// agents that step into its path mid-leg (rare, cosmetic, legs are seconds).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkPathSnapshot {
+    pub from: Point,
+    pub to: Point,
+    pub path: Vec<Point>,
+}
+
 /// Phase the wander cycle is currently in for a given agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WanderPhase {
@@ -49,8 +66,11 @@ pub struct MotionState {
     // --- entry / exit / snap-back one-shot walks ---
     /// `(walk_started_at, profile)` snapshotted once at door-crossing.
     pub entry: Option<(SystemTime, WalkProfile)>,
-    /// `(walk_started_at, profile)` snapshotted once when `exiting_at` fires.
-    pub exit: Option<(SystemTime, WalkProfile)>,
+    /// `(walk_started_at, profile, from)` snapshotted once when `exiting_at`
+    /// fires. `from` is the agent's position at that moment — its current
+    /// wander position if it was out, else the desk anchor — so the exit walk
+    /// starts where the sprite actually is instead of teleporting to the desk.
+    pub exit: Option<(SystemTime, WalkProfile, Point)>,
     /// `(walk_started_at, profile, snap_target)` for the state-transition
     /// snap-back walk (replaces the old `since_state < SNAP_BACK_MS` guard).
     pub snap_back: Option<(SystemTime, WalkProfile, Point)>,
@@ -83,6 +103,11 @@ pub struct MotionState {
     /// mutable state (computes pose from existing phase state only).
     /// Sentinel `UNIX_EPOCH` means the agent has never been advanced.
     pub last_advanced_at: SystemTime,
+
+    /// Frozen A* polyline for the current walk leg (entry/exit/wander/snap-back).
+    /// `None` while not walking. Re-snapshotted when the leg's `(from, to)`
+    /// endpoints change. See [`WalkPathSnapshot`].
+    pub walk_path: Option<WalkPathSnapshot>,
 }
 
 impl MotionState {
@@ -107,6 +132,7 @@ impl MotionState {
             wander_dest_kind: None,
             wander_dest_wp_idx: None,
             last_advanced_at: SystemTime::UNIX_EPOCH,
+            walk_path: None,
         }
     }
 }
@@ -152,36 +178,41 @@ pub fn advance_wander(
         .map(|t| t <= slot.state_started_at)
         .unwrap_or(true);
 
-    if is_fresh {
-        ms.wander_phase = WanderPhase::Seated;
-        ms.wander_profile = None;
-        ms.wander_cycle_n = 0;
+    // Stale resume: this agent was advanced before (non-epoch last_advanced_at)
+    // but more than a full wander cycle has elapsed since — its floor was
+    // off-screen (only the current floor renders each frame) or `now` was
+    // frozen (pause). Treat it like a fresh agent so the bootstrap fast-forward
+    // below snaps it to the correct cycle analytically (O(1), no per-leg
+    // routing) instead of the phase machine replaying the whole backlog one
+    // transition per frame — the visible "fast-forward all the movement in a
+    // second" bug. Gating on a *full cycle* (≥7 s) keeps it well above the
+    // longest single legitimate inter-call gap (a dwell beat ≈ 0.42·cycle),
+    // so continuous 33 ms-frame rendering never trips it.
+    let is_stale_resume = ms.last_advanced_at != SystemTime::UNIX_EPOCH
+        && now
+            .duration_since(ms.last_advanced_at)
+            .map(|d| d.as_millis() as u64 > cycle_ms_for(id))
+            .unwrap_or(false);
 
+    if is_fresh || is_stale_resume {
         let elapsed_idle = now
             .duration_since(slot.state_started_at)
             .unwrap_or(Duration::ZERO)
             .as_millis() as u64;
         let cycle = cycle_ms_for(id);
 
-        if elapsed_idle > cycle {
-            // Jump approximation: fast-forward cycle_n by integer division and
-            // anchor the phase clock to the start of the current partial cycle.
-            // The agent always (re)starts in Seated at that boundary, even if
-            // its true position would be mid-walk — acceptable because the
-            // agent was unobserved before this first render frame, so any
-            // starting phase is equally valid and Seated leaves no dangling
-            // walk profile.
-            let cycles_elapsed = elapsed_idle / cycle;
-            ms.wander_cycle_n = cycles_elapsed;
-            let partial_ms = elapsed_idle % cycle;
-            let phase_start = now
-                .checked_sub(Duration::from_millis(partial_ms))
-                .unwrap_or(slot.state_started_at);
-            ms.wander_phase_started_at = phase_start;
-        } else {
-            // Less than one full cycle: anchor Seated to `state_started_at`.
-            ms.wander_phase_started_at = slot.state_started_at;
-        }
+        // Fast-forward `cycle_n` by integer division so destination selection
+        // matches what an agent idle this long would have reached (0 when idle
+        // < one cycle), but ALWAYS (re)start the phase clock cleanly in Seated
+        // at `now`. Anchoring mid-cycle (`now - partial_ms`) made the phase
+        // machine rush through the partial cycle's already-expired legs one
+        // transition per frame on the first few frames — a desk↔waypoint
+        // teleport. The agent was unobserved before this frame, so starting
+        // fresh-Seated is equally valid and leaves no dangling walk profile.
+        ms.wander_phase = WanderPhase::Seated;
+        ms.wander_profile = None;
+        ms.wander_cycle_n = elapsed_idle / cycle;
+        ms.wander_phase_started_at = now;
     }
 
     // ---- IDEMPOTENCY CHECK (Correction F) ----------------------------------
@@ -424,6 +455,7 @@ mod tests {
         assert!(ms.wander_profile.is_none());
         assert!(ms.wander_dest_kind.is_none());
         assert!(ms.wander_dest_wp_idx.is_none());
+        assert!(ms.walk_path.is_none());
     }
 
     // --- octile_path_len --------------------------------------------------
@@ -1157,6 +1189,64 @@ mod tests {
         assert_eq!(
             approx_cycles, 10,
             "bootstrap: elapsed = 10*cycle_ms => cycle_n must equal exactly 10 (integer elapsed/cycle)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // T12: Stale resume — a floor that was off-screen (motion frozen) must
+    //      resync analytically on return instead of replaying the backlog one
+    //      phase per frame. Mirrors the bootstrap fast-forward.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stale_resume_resyncs_without_replay() {
+        use crate::tui::pose::{cycle_ms_for, takes_trip, PHASE_SEATED_FRAC};
+
+        let trip_id = (0u64..500)
+            .map(|i| AgentId::from_transcript_path(&format!("/p/stale_{i}.jsonl")))
+            .find(|id| takes_trip(*id, 0))
+            .expect("find trip agent");
+
+        let now = t0();
+        let cycle = cycle_ms_for(trip_id);
+        let seated_dur = cycle * PHASE_SEATED_FRAC / 1000;
+
+        let slot = AgentSlot {
+            agent_id: trip_id,
+            ..idle_slot("/dummy", now)
+        };
+
+        let l = layout();
+        let overlay = OccupancyOverlay::new();
+        let mut router = Straight;
+        let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+        // Init, then advance into a walk leg so the pre-gap phase is mid-cycle.
+        advance_wander(&slot, now, &l, &mut router, &overlay, &mut motion);
+        let t1 = now + Duration::from_millis(seated_dur + 50);
+        advance_wander(&slot, t1, &l, &mut router, &overlay, &mut motion);
+        assert!(
+            matches!(
+                motion.get(&trip_id).unwrap().wander_phase,
+                WanderPhase::WalkingOut
+            ),
+            "precondition: agent should be WalkingOut before the gap"
+        );
+
+        // Floor goes off-screen for ~20 cycles; advance_wander is NOT called.
+        // On return, a SINGLE call must resync (not step one phase forward).
+        let resume = t1 + Duration::from_millis(20 * cycle);
+        advance_wander(&slot, resume, &l, &mut router, &overlay, &mut motion);
+
+        let ms = motion.get(&trip_id).unwrap();
+        assert!(
+            matches!(ms.wander_phase, WanderPhase::Seated),
+            "stale resume must resync to Seated (no per-frame replay), got {:?}",
+            ms.wander_phase
+        );
+        assert!(
+            ms.wander_cycle_n >= 18,
+            "stale resume must fast-forward cycle_n across the gap, got {}",
+            ms.wander_cycle_n
         );
     }
 }

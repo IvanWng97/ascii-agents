@@ -105,20 +105,23 @@ impl FloorCtx {
     /// without this gate the door would stay "open" for as long as the agent
     /// lives rather than just while they're actually walking through it.
     pub fn recompute_door_anim_max_ms(&mut self, now: SystemTime) {
-        let in_flight = |opt: &Option<(SystemTime, WalkProfile)>| -> u64 {
-            opt.as_ref()
-                .filter(|(started_at, p)| {
-                    let elapsed = now
-                        .duration_since(*started_at)
-                        .unwrap_or(Duration::ZERO)
-                        .as_millis() as u64;
-                    !walk_arrived(p, elapsed)
-                })
-                .map(|(_, p)| p.duration_ms + p.pause_ms)
-                .unwrap_or(0)
+        // entry is (started_at, profile); exit is (started_at, profile, from).
+        // Take the two shared fields so one closure handles both shapes.
+        let in_flight = |started_at: SystemTime, p: &WalkProfile| -> u64 {
+            let elapsed = now
+                .duration_since(started_at)
+                .unwrap_or(Duration::ZERO)
+                .as_millis() as u64;
+            if walk_arrived(p, elapsed) {
+                0
+            } else {
+                p.duration_ms + p.pause_ms
+            }
         };
         self.door_anim_max_ms = self.motion.values().fold(0u64, |acc, ms| {
-            acc.max(in_flight(&ms.entry)).max(in_flight(&ms.exit))
+            let entry = ms.entry.as_ref().map_or(0, |(s, p)| in_flight(*s, p));
+            let exit = ms.exit.as_ref().map_or(0, |(s, p, _)| in_flight(*s, p));
+            acc.max(entry).max(exit)
         });
     }
 }
