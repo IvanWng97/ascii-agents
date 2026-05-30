@@ -1455,15 +1455,23 @@ fn session_start_dropped_when_all_desks_occupied() {
     );
 }
 
+// A CC permission Notification fires while a tool (t1) is mid-flight:
+//   PreToolUse(t1)[Active] -> Notification[Waiting] -> PostToolUse(t1).
+// PostToolUse(t1) means t1 ran (permission granted) and finished, so the
+// Waiting is RESOLVED. Captured live (probe): the gated tool's ActivityEnd
+// carries the same tool_use_id that was Active when Waiting began. Resolving on
+// it clears the question-mark when the tool finishes instead of holding it
+// until the agent's *next* tool (~6 s later). Debounced through pending_idle
+// like a normal Active->Idle so a fast next tool doesn't flicker.
 #[test]
-fn activity_end_while_waiting_does_not_arm_pending_idle() {
+fn gated_tool_end_while_waiting_resolves_to_idle_after_grace() {
+    use pixtuoid_core::state::reducer::ACTIVE_GRACE_WINDOW;
     let mut scene = SceneState::uniform(4);
     let mut r = Reducer::new();
     let id = AgentId::from_transcript_path("/p/wait.jsonl");
     let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
 
     start(&mut r, &mut scene, id);
-
     r.apply(
         &mut scene,
         AgentEvent::ActivityStart {
@@ -1475,7 +1483,147 @@ fn activity_end_while_waiting_does_not_arm_pending_idle() {
         t0,
         Transport::Hook,
     );
+    r.apply(
+        &mut scene,
+        AgentEvent::Waiting {
+            agent_id: id,
+            reason: "permission".into(),
+        },
+        t0 + Duration::from_millis(500),
+        Transport::Hook,
+    );
 
+    // The gated tool's own PostToolUse arrives — arms the idle debounce, still
+    // visually Waiting for the grace window (no instant flip).
+    let end = t0 + Duration::from_millis(1000);
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t1".into()),
+        },
+        end,
+        Transport::Hook,
+    );
+    let slot = scene.agents.get(&id).unwrap();
+    assert!(
+        matches!(slot.state, ActivityState::Waiting { .. }),
+        "still Waiting during grace, got {:?}",
+        slot.state
+    );
+    assert!(
+        slot.pending_idle_at.is_some(),
+        "gated tool end must arm the resolve debounce"
+    );
+
+    // After the grace window, the resolved Waiting settles to Idle.
+    r.tick(
+        &mut scene,
+        end + ACTIVE_GRACE_WINDOW + Duration::from_millis(100),
+    );
+    assert!(
+        matches!(scene.agents.get(&id).unwrap().state, ActivityState::Idle),
+        "resolved permission must settle to Idle, got {:?}",
+        scene.agents.get(&id).unwrap().state
+    );
+}
+
+// Protection (preserved): a PARALLEL tool (t2) ending while a DIFFERENT tool's
+// permission (t1) is still pending must NOT clear the Waiting — the id doesn't
+// match the gated tool, so the prompt stays up.
+#[test]
+fn parallel_tool_end_while_waiting_keeps_waiting() {
+    use pixtuoid_core::state::reducer::ACTIVE_GRACE_WINDOW;
+    let mut scene = SceneState::uniform(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/wait.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    start(&mut r, &mut scene, id);
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("t1".into()),
+            detail: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::Waiting {
+            agent_id: id,
+            reason: "permission".into(),
+        },
+        t0 + Duration::from_millis(500),
+        Transport::Hook,
+    );
+
+    // A different tool ends — must be ignored (its permission isn't this one).
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityEnd {
+            agent_id: id,
+            tool_use_id: Some("t2".into()),
+        },
+        t0 + Duration::from_millis(1000),
+        Transport::Jsonl,
+    );
+    let slot = scene.agents.get(&id).unwrap();
+    assert!(
+        matches!(slot.state, ActivityState::Waiting { .. }),
+        "parallel tool end must keep Waiting, got {:?}",
+        slot.state
+    );
+    assert!(
+        slot.pending_idle_at.is_none(),
+        "parallel tool end must not arm the resolve debounce"
+    );
+
+    // ...and it does NOT resolve even after the grace window passes.
+    r.tick(
+        &mut scene,
+        t0 + Duration::from_millis(1000) + ACTIVE_GRACE_WINDOW + Duration::from_millis(100),
+    );
+    assert!(
+        matches!(
+            scene.agents.get(&id).unwrap().state,
+            ActivityState::Waiting { .. }
+        ),
+        "still Waiting — permission t1 never resolved"
+    );
+}
+
+// Regression (adversarial review): a parent Waiting on a permission while a
+// Task is in flight must NOT be false-cleared to Idle when that Task drains.
+// The Task-drain debounce arms `pending_idle_at`; without a state guard it
+// would trip the resolved-Waiting expiry even though the permission is still
+// pending (e.g. a parallel Task + a permission-gated Bash in the same turn).
+#[test]
+fn task_drain_while_parent_waiting_keeps_waiting() {
+    use pixtuoid_core::source::ToolDetail;
+    use pixtuoid_core::state::reducer::ACTIVE_GRACE_WINDOW;
+    let mut scene = SceneState::uniform(4);
+    let mut r = Reducer::new();
+    let id = AgentId::from_transcript_path("/p/wait.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    start(&mut r, &mut scene, id);
+
+    // Parent delegates a Task → Active{Delegating, task-T}.
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: Some("task-T".into()),
+            detail: Some(ToolDetail::Task),
+        },
+        t0,
+        Transport::Hook,
+    );
+    // A permission prompt fires while delegating → Waiting.
     r.apply(
         &mut scene,
         AgentEvent::Waiting {
@@ -1486,29 +1634,35 @@ fn activity_end_while_waiting_does_not_arm_pending_idle() {
         Transport::Hook,
     );
     assert!(matches!(
-        scene.agents.get(&id).unwrap().state,
+        scene.agents[&id].state,
         ActivityState::Waiting { .. }
     ));
 
+    // The Task's own PostToolUse drains active_tasks — must NOT arm an idle
+    // resolve on the Waiting parent (permission still pending).
     r.apply(
         &mut scene,
         AgentEvent::ActivityEnd {
             agent_id: id,
-            tool_use_id: Some("t1".into()),
+            tool_use_id: Some("task-T".into()),
         },
         t0 + Duration::from_millis(1000),
-        Transport::Jsonl,
+        Transport::Hook,
+    );
+    assert!(
+        scene.agents[&id].pending_idle_at.is_none(),
+        "Task drain must not arm idle-resolve on a Waiting parent"
     );
 
-    let slot = scene.agents.get(&id).unwrap();
-    assert!(
-        matches!(slot.state, ActivityState::Waiting { .. }),
-        "state should remain Waiting, got {:?}",
-        slot.state
+    // ...and it stays Waiting past the grace window.
+    r.tick(
+        &mut scene,
+        t0 + Duration::from_millis(1000) + ACTIVE_GRACE_WINDOW + Duration::from_millis(100),
     );
     assert!(
-        slot.pending_idle_at.is_none(),
-        "pending_idle_at must not be armed when state is Waiting"
+        matches!(scene.agents[&id].state, ActivityState::Waiting { .. }),
+        "parent's permission must stay Waiting through a Task drain, got {:?}",
+        scene.agents[&id].state
     );
 }
 
