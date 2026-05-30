@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -38,17 +38,26 @@ pub enum Cmd {
         #[arg(long, default_value_t = false)]
         headless: bool,
     },
-    /// Install Claude Code hooks into ~/.claude/settings.json.
+    /// Install pixtuoid hooks into agent CLI config(s).
     InstallHooks {
         #[arg(long)]
         hook_path: Option<PathBuf>,
-        #[arg(long)]
-        settings: Option<PathBuf>,
+        /// Config file override (single target only; conflicts with --target all).
+        #[arg(long, alias = "settings")]
+        config: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        target: Option<TargetName>,
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
-    /// Remove pixtuoid hook entries from settings.json.
+    /// Remove pixtuoid hook entries from agent CLI config(s).
     UninstallHooks {
-        #[arg(long)]
-        settings: Option<PathBuf>,
+        #[arg(long, alias = "settings")]
+        config: Option<PathBuf>,
+        #[arg(long, value_enum)]
+        target: Option<TargetName>,
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// Validate a custom sprite pack directory.
     ValidatePack {
@@ -63,6 +72,23 @@ pub enum Cmd {
         #[arg(long, default_value_t = false)]
         force: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum TargetName {
+    Claude,
+    Codex,
+    All,
+}
+
+impl TargetName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TargetName::Claude => "claude",
+            TargetName::Codex => "codex",
+            TargetName::All => "all",
+        }
+    }
 }
 
 impl Cli {
@@ -107,7 +133,11 @@ mod tests {
     #[test]
     fn cmd_or_default_preserves_explicit_subcommand() {
         let cli = Cli {
-            cmd: Some(Cmd::UninstallHooks { settings: None }),
+            cmd: Some(Cmd::UninstallHooks {
+                config: None,
+                target: None,
+                yes: false,
+            }),
             log_level: "debug".into(),
             theme: Some("cyberpunk".into()),
         };

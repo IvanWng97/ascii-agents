@@ -39,7 +39,7 @@ crates/
 │   ├── cli.rs              clap subcommands (run / install-hooks / uninstall-hooks / validate-pack / init-pack)
 │   ├── config.rs           AppConfig persistence (~/.config/pixtuoid/config.toml), XDG-aware
 │   ├── runtime.rs          tokio task wiring (source ── (Transport, AgentEvent) ──► reducer ──► renderer)
-│   ├── install/            settings.json merge, atomic write, advisory lock, stow-symlink safe
+│   ├── install/            multi-target (Claude + Codex) hook install via the `Target` registry; format-neutral atomic write, advisory lock, stow-symlink safe
 │   └── tui/                ratatui App + TuiRenderer (Renderer trait impl)
 │       ├── anim.rs         centralized easing curves + eased_progress(start, duration_ms, easing, now) free function — used by floor slide, A* walk path ease, and version popup entrance/dismissal animations
 │       ├── renderer.rs     draw_scene orchestrator (DrawCtx struct), half-block flush, terminal lifecycle
@@ -176,7 +176,7 @@ These are load-bearing; don't break them without updating the spec.
 ## Things NOT to do
 
 - Don't add `ratatui` / `crossterm` / terminal anything to `pixtuoid-core`.
-- Don't write to `~/.claude/settings.json` directly. Always go through `install/io.rs::write_settings_atomic` (advisory lock + atomic rename + symlink resolution).
+- Don't write to `~/.claude/settings.json` directly. Always go through `install/io.rs::write_config_atomic` (advisory lock + atomic rename + symlink resolution).
 - Don't add `println!` / `eprintln!` to any production path other than the headless summary and explicit user-facing CLI output. Use `tracing::{info, warn, error}` instead.
 - Don't relax the hook shim's "always exit 0" contract. Blocking CC = breaking the user's primary workflow.
 - Don't add `--no-verify` / hook-skipping flags to any git operations performed in this repo.
@@ -195,7 +195,7 @@ These are load-bearing; don't break them without updating the spec.
 - "Why don't old idle sessions show on startup?" → `source::jsonl::initial_seed_walk`. Checks `check_session_ended` (tail-scans last 8KB for `session_end`/`SessionEnd` markers) and skips files not modified in 5+ min. mtime > `DEFAULT_INITIAL_WINDOW` (1 hour) → cursor seeded at EOF, no `SessionStart`.
 - "How does the default character pack get into the binary?" → `tui::embedded_pack` does the `include_str!` at compile time; `sprite::format::load_pack_from_strings` parses it.
 - "How do custom sprite packs work?" → `pixtuoid init-pack ./dir` extracts the skeleton template from `sprites/skeleton/` (embedded via `include_str!`). `pixtuoid validate-pack ./dir` loads the pack and checks against `REQUIRED_CHARACTER_ANIMATIONS` / `OPTIONAL_*` registries in `sprite::format`. `--pack-dir` CLI flag or `pack-dir` config key loads a custom pack at runtime. Custom packs only need character sprites — furniture/environment animations are merged from the embedded default via `Pack::merge_from()` (only `OPTIONAL_FURNITURE_ANIMATIONS`, never character poses). The robot pack at `sprites/robot/` is a TV-head character set (10×12 sprites).
-- "How do hooks get installed?" → `install::merge::merge_install` for the JSON merge logic, `install::io::write_settings_atomic` for the safe filesystem write.
+- "How do hooks get installed?" → `install::claude::merge_install` for the JSON merge logic, `install::io::write_config_atomic` for the safe filesystem write. Multi-target install via the `install::target::Target` registry; `install::plan_targets` decides which CLIs to act on (auto-detect + confirm + non-TTY policy).
 - "How does the neon wall display work?" → `pixel_painter/background/lighting.rs::paint_neon_panel` paints the dark panel with pulsing cyan border in the pixel buffer; `widgets/hud.rs::paint_wall_display` overlays ratatui text (branding, state dots, scrolling ticker); `widgets/mod.rs::TickerQueue` manages the persistent scrolling message buffer.
 - "How do pets work?" → `tui/pet.rs::PetKind` enum (Cat, Dog) with per-kind static data (sprite names, hitboxes, behavior). One pet per floor selected via `select_pet_for_floor(floor_seed, enabled_pets)`. Config: `enabled-pets = ["cat", "dog"]` (absent = all, empty = none). `pixel_painter/drawable.rs::pet_position` — 40s cycle, picks a destination from all spots (desks, pantry, sofas, couch, corridor), walks there (35%), sits/sleeps (65%). Cat sleeps with z's near idle agents; both pets sleep when all agents are idle. Sprites per kind: `*_walk` (8×6), `*_sit` (6×6), `*_sleep` (6×4). Click to pet → hearts animation via `PetState` on `TuiRenderer`. `hit_test_pet` / `paint_pet_tooltip` parameterized on `PetKind`.
 - "How does desk personalization work?" → `drawable.rs::paint_desk_personalization` — procedural pixel items appear on desks based on `session_age_secs`: coffee cup (event-driven, after pantry visit), plant (30min), photo frame (1hr).

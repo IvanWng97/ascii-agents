@@ -1,20 +1,52 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 
-pub const SENTINEL_KEY: &str = "_pixtuoid";
+const SENTINEL_KEY: &str = "_pixtuoid";
 
 /// Legacy sentinel keys from previous tool names. Entries tagged with any of
 /// these are stripped on install/uninstall so a v0.3.x → v0.4.x upgrade does
-/// not leave orphan hooks pointing at missing binaries (or worse, a live
-/// legacy hook racing the new shim).
-pub const LEGACY_SENTINEL_KEYS: &[&str] = &["_ascii_agents"];
+/// not leave orphan hooks pointing at missing binaries.
+const LEGACY_SENTINEL_KEYS: &[&str] = &["_ascii_agents"];
 
-pub const EVENTS: &[&str] = &[
+const EVENTS: &[&str] = &[
     "SessionStart",
     "PreToolUse",
     "PostToolUse",
     "Notification",
     "SessionEnd",
 ];
+
+pub fn default_config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(format!("{home}/.claude/settings.json"))
+}
+
+/// Claude writes the bare name for portability (CC spawns hooks via PATH).
+/// Ignores the resolved path entirely (existence is checked by the orchestrator).
+pub fn hook_command(_resolved: &Path) -> Result<String> {
+    Ok("pixtuoid-hook".to_string())
+}
+
+fn parse_or_empty(content: &str) -> Result<Value> {
+    if content.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(content).context("settings.json is not valid JSON — refusing to overwrite")
+}
+
+pub fn merge_install(content: &str, hook_cmd: &str) -> Result<String> {
+    let doc = parse_or_empty(content)?;
+    let merged = json_merge_install(doc, hook_cmd);
+    Ok(serde_json::to_string_pretty(&merged)?)
+}
+
+pub fn merge_uninstall(content: &str) -> Result<String> {
+    let doc = parse_or_empty(content)?;
+    let cleaned = json_merge_uninstall(doc);
+    Ok(serde_json::to_string_pretty(&cleaned)?)
+}
 
 fn is_managed_entry(entry: &Value) -> bool {
     if entry.get(SENTINEL_KEY).and_then(|v| v.as_bool()) == Some(true) {
@@ -25,9 +57,7 @@ fn is_managed_entry(entry: &Value) -> bool {
         .any(|k| entry.get(*k).and_then(|v| v.as_bool()) == Some(true))
 }
 
-/// Merge pixtuoid hook entries into a CC settings.json document.
-/// Idempotent: re-running replaces existing pixtuoid entries.
-pub fn merge_install(doc: Value, hook_command: &str) -> Value {
+fn json_merge_install(doc: Value, hook_command: &str) -> Value {
     let mut root: Map<String, Value> = doc.as_object().cloned().unwrap_or_default();
     let hooks = root
         .entry("hooks".to_string())
@@ -39,7 +69,6 @@ pub fn merge_install(doc: Value, hook_command: &str) -> Value {
             hooks.as_object_mut().expect("just stored Value::Object")
         }
     };
-
     for ev in EVENTS {
         let list = hooks_obj
             .entry((*ev).to_string())
@@ -55,17 +84,13 @@ pub fn merge_install(doc: Value, hook_command: &str) -> Value {
         arr.push(json!({
             SENTINEL_KEY: true,
             "matcher": ".*",
-            "hooks": [
-                { "type": "command", "command": hook_command }
-            ]
+            "hooks": [ { "type": "command", "command": hook_command } ]
         }));
     }
-
     Value::Object(root)
 }
 
-/// Remove pixtuoid hook entries. Idempotent.
-pub fn merge_uninstall(mut doc: Value) -> Value {
+fn json_merge_uninstall(mut doc: Value) -> Value {
     let Some(root) = doc.as_object_mut() else {
         return doc;
     };
@@ -99,7 +124,7 @@ mod tests {
 
     #[test]
     fn install_creates_entries_for_all_events() {
-        let doc = merge_install(json!({}), "/usr/local/bin/pixtuoid-hook");
+        let doc = json_merge_install(json!({}), "/usr/local/bin/pixtuoid-hook");
         let hooks = doc.get("hooks").and_then(|v| v.as_object()).unwrap();
         for ev in EVENTS {
             let arr = hooks.get(*ev).and_then(|v| v.as_array()).unwrap();
@@ -114,8 +139,8 @@ mod tests {
 
     #[test]
     fn install_is_idempotent() {
-        let d1 = merge_install(json!({}), "/x");
-        let d2 = merge_install(d1.clone(), "/x");
+        let d1 = json_merge_install(json!({}), "/x");
+        let d2 = json_merge_install(d1.clone(), "/x");
         assert_eq!(d1, d2);
     }
 
@@ -129,7 +154,7 @@ mod tests {
             },
             "theme": "dark"
         });
-        let merged = merge_install(initial, "/x");
+        let merged = json_merge_install(initial, "/x");
         let arr = merged["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(merged["theme"], json!("dark"));
@@ -137,7 +162,7 @@ mod tests {
 
     #[test]
     fn uninstall_removes_sentinel_entries_only() {
-        let installed = merge_install(
+        let installed = json_merge_install(
             json!({
                 "hooks": { "PreToolUse": [
                     { "matcher": "Write", "hooks": [{"type":"command","command":"/other"}] }
@@ -145,7 +170,7 @@ mod tests {
             }),
             "/x",
         );
-        let cleaned = merge_uninstall(installed);
+        let cleaned = json_merge_uninstall(installed);
         let arr = cleaned["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0][SENTINEL_KEY], json!(null));
@@ -153,8 +178,8 @@ mod tests {
 
     #[test]
     fn uninstall_drops_empty_hooks_map() {
-        let installed = merge_install(json!({}), "/x");
-        let cleaned = merge_uninstall(installed);
+        let installed = json_merge_install(json!({}), "/x");
+        let cleaned = json_merge_uninstall(installed);
         assert!(cleaned.get("hooks").is_none(), "got {cleaned}");
     }
 
@@ -172,7 +197,7 @@ mod tests {
                 ]
             }
         });
-        let merged = merge_install(initial, "/new");
+        let merged = json_merge_install(initial, "/new");
         let arr = merged["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(
             arr.len(),
@@ -197,7 +222,7 @@ mod tests {
                 ]
             }
         });
-        let cleaned = merge_uninstall(initial);
+        let cleaned = json_merge_uninstall(initial);
         assert!(
             cleaned.get("hooks").is_none(),
             "legacy entry should be removed and empty hooks map dropped: {cleaned}"
@@ -214,7 +239,7 @@ mod tests {
                 ]
             }
         });
-        let cleaned = merge_uninstall(initial);
+        let cleaned = json_merge_uninstall(initial);
         let arr = cleaned["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["hooks"][0]["command"], json!("/keep"));
@@ -228,7 +253,7 @@ mod tests {
                 "PostToolUse": 42
             }
         });
-        let cleaned = merge_uninstall(doc);
+        let cleaned = json_merge_uninstall(doc);
         let hooks = cleaned["hooks"].as_object().unwrap();
         assert_eq!(
             hooks["PreToolUse"],
@@ -236,5 +261,24 @@ mod tests {
             "non-array values should pass through unchanged"
         );
         assert_eq!(hooks["PostToolUse"], json!(42));
+    }
+
+    #[test]
+    fn merge_install_on_empty_string_produces_valid_populated_config() {
+        let out = merge_install("", "pixtuoid-hook").unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["hooks"]["PreToolUse"][0][SENTINEL_KEY].as_bool().unwrap());
+    }
+
+    #[test]
+    fn merge_uninstall_on_empty_string_is_noop() {
+        let out = merge_uninstall("").unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v.get("hooks").is_none());
+    }
+
+    #[test]
+    fn merge_install_rejects_invalid_json() {
+        assert!(merge_install("{not json", "pixtuoid-hook").is_err());
     }
 }

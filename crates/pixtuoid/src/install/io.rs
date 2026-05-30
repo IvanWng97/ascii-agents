@@ -4,12 +4,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use fs2::FileExt;
-use serde_json::Value;
-
-pub fn default_settings_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    PathBuf::from(format!("{home}/.claude/settings.json"))
-}
 
 pub fn default_hook_binary() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("PIXTUOID_HOOK") {
@@ -27,33 +21,33 @@ pub fn default_hook_binary() -> Result<PathBuf> {
     Err(anyhow!("could not locate pixtuoid-hook; pass --hook-path"))
 }
 
-pub fn read_settings(path: &Path) -> Result<Value> {
+/// Build a sibling path by APPENDING `.suffix` to the full filename — never
+/// `with_extension`, which truncates at the last dot (corrupting `config.toml`
+/// into `config.json.pixtuoid.bak` / `config.lock`).
+fn sibling(target: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}.{}", target.display(), suffix))
+}
+
+/// Read raw config content, following symlinks. Returns "" for a missing or
+/// empty file — the target's parser supplies the empty-document default.
+pub fn read_config(path: &Path) -> Result<String> {
     let target = resolve_symlink(path);
     if !target.exists() {
-        return Ok(serde_json::json!({}));
+        return Ok(String::new());
     }
     let mut s = String::new();
     File::open(&target)?.read_to_string(&mut s)?;
-    if s.trim().is_empty() {
-        return Ok(serde_json::json!({}));
-    }
-    serde_json::from_str(&s).with_context(|| {
-        format!(
-            "{} is not valid JSON — refusing to overwrite",
-            target.display()
-        )
-    })
+    Ok(s)
 }
 
-/// Atomic write that follows symlinks: writes the temp file beside the *target*
-/// of `path` (resolving any symlink), then renames onto the target. This avoids
-/// destroying a stow-managed `~/.claude/settings.json` symlink.
-pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
+/// Atomic write that follows symlinks: write a temp file beside the resolved
+/// target, fsync, then rename onto it. Advisory-locked. Format-agnostic (&str).
+pub fn write_config_atomic(path: &Path, contents: &str) -> Result<()> {
     let target = resolve_symlink(path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let lock_path = target.with_extension("lock");
+    let lock_path = sibling(&target, "lock");
     let lock = OpenOptions::new()
         .create(true)
         .read(true)
@@ -63,15 +57,14 @@ pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
     lock.try_lock_exclusive()
         .map_err(|e| anyhow!("could not lock {}: {e}", lock_path.display()))?;
 
-    let tmp = target.with_extension("json.tmp");
+    let tmp = sibling(&target, "tmp");
     {
         let mut f = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
             .open(&tmp)?;
-        let serialized = serde_json::to_string_pretty(doc)?;
-        f.write_all(serialized.as_bytes())?;
+        f.write_all(contents.as_bytes())?;
         f.sync_all()?;
     }
     std::fs::rename(&tmp, &target)?;
@@ -79,12 +72,12 @@ pub fn write_settings_atomic(path: &Path, doc: &Value) -> Result<()> {
     Ok(())
 }
 
-pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
+pub fn backup_once(path: &Path, suffix: &str) -> Result<Option<PathBuf>> {
     let target = resolve_symlink(path);
     if !target.exists() {
         return Ok(None);
     }
-    let bak = target.with_extension("json.pixtuoid.bak");
+    let bak = sibling(&target, suffix);
     if bak.exists() {
         return Ok(Some(bak));
     }
@@ -92,14 +85,9 @@ pub fn backup_once(path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(bak))
 }
 
-/// Delete the pixtuoid-created backup, if present. Returns the removed path so
-/// the caller can report it. Conservative by design: it only removes our own
-/// `.pixtuoid.bak` footprint and never restores from it (the live file may hold
-/// edits the user made after install — uninstall already reverses our hooks
-/// surgically via the sentinel).
-pub fn remove_backup(path: &Path) -> Result<Option<PathBuf>> {
+pub fn remove_backup(path: &Path, suffix: &str) -> Result<Option<PathBuf>> {
     let target = resolve_symlink(path);
-    let bak = target.with_extension("json.pixtuoid.bak");
+    let bak = sibling(&target, suffix);
     if !bak.exists() {
         return Ok(None);
     }
@@ -204,96 +192,60 @@ mod tests {
     }
 
     #[test]
-    fn read_settings_missing_file_returns_empty_object() {
+    fn read_config_missing_returns_empty_string() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("nope.json");
-        let v = read_settings(&path).unwrap();
-        assert_eq!(v, serde_json::json!({}));
+        assert_eq!(read_config(&dir.path().join("nope.json")).unwrap(), "");
     }
 
     #[test]
-    fn read_settings_empty_file_returns_empty_object() {
+    fn read_config_empty_file_returns_empty_string() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("empty.json");
-        std::fs::write(&path, "").unwrap();
-        let v = read_settings(&path).unwrap();
-        assert_eq!(v, serde_json::json!({}));
+        let p = dir.path().join("empty.json");
+        std::fs::write(&p, "").unwrap();
+        assert_eq!(read_config(&p).unwrap(), "");
     }
 
     #[test]
-    fn read_settings_through_symlink() {
+    fn read_config_returns_raw_content() {
         let dir = TempDir::new().unwrap();
-        let target = dir.path().join("real.json");
-        std::fs::write(&target, r#"{"key":"val"}"#).unwrap();
-        let link = dir.path().join("link.json");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        let v = read_settings(&link).unwrap();
-        assert_eq!(v["key"], serde_json::json!("val"));
+        let p = dir.path().join("c.toml");
+        std::fs::write(&p, "a = 1\n").unwrap();
+        assert_eq!(read_config(&p).unwrap(), "a = 1\n");
     }
 
     #[test]
-    fn write_settings_atomic_through_symlink_preserves_link() {
+    fn write_config_atomic_through_symlink_preserves_link() {
         let dir = TempDir::new().unwrap();
         let target = dir.path().join("real.json");
         std::fs::write(&target, "{}").unwrap();
         let link = dir.path().join("link.json");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        write_settings_atomic(&link, &serde_json::json!({"a": 1})).unwrap();
+        write_config_atomic(&link, "{\"a\":1}").unwrap();
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
-        let v: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&target).unwrap()).unwrap();
-        assert_eq!(v["a"], serde_json::json!(1));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "{\"a\":1}");
     }
 
     #[test]
-    fn backup_once_no_file_returns_none() {
+    fn backup_and_lock_and_tmp_names_use_string_append() {
+        // multi-dot filename must keep its full name + suffix (not with_extension truncation)
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("missing.json");
-        assert_eq!(backup_once(&path).unwrap(), None);
+        let p = dir.path().join("config.local.toml");
+        std::fs::write(&p, "x = 1\n").unwrap();
+        let bak = backup_once(&p, "pixtuoid.bak").unwrap().unwrap();
+        assert_eq!(bak.file_name().unwrap(), "config.local.toml.pixtuoid.bak");
     }
 
     #[test]
-    fn backup_once_creates_bak_and_is_idempotent() {
+    fn backup_once_idempotent_and_remove() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"v":1}"#).unwrap();
-        let bak = backup_once(&path).unwrap().unwrap();
-        assert!(bak.exists());
-        let bak2 = backup_once(&path).unwrap().unwrap();
-        assert_eq!(bak, bak2);
-    }
-
-    #[test]
-    fn remove_backup_deletes_existing_bak() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"v":1}"#).unwrap();
-        let bak = backup_once(&path).unwrap().unwrap();
-        assert!(bak.exists());
-        let removed = remove_backup(&path).unwrap();
-        assert_eq!(removed, Some(bak.clone()));
-        assert!(!bak.exists());
-    }
-
-    #[test]
-    fn remove_backup_no_bak_returns_none() {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("settings.json");
-        std::fs::write(&path, r#"{"v":1}"#).unwrap();
-        assert_eq!(remove_backup(&path).unwrap(), None);
-    }
-
-    #[test]
-    fn remove_backup_resolves_symlink() {
-        let dir = TempDir::new().unwrap();
-        let target = dir.path().join("real.json");
-        std::fs::write(&target, r#"{"v":1}"#).unwrap();
-        let link = dir.path().join("link.json");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-        let bak = backup_once(&link).unwrap().unwrap();
-        assert!(bak.exists());
-        let removed = remove_backup(&link).unwrap();
-        assert_eq!(removed, Some(bak));
-        assert!(!std::path::Path::new(&target.with_extension("json.pixtuoid.bak")).exists());
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, "{}").unwrap();
+        let b1 = backup_once(&p, "pixtuoid.bak").unwrap().unwrap();
+        assert_eq!(b1.file_name().unwrap(), "settings.json.pixtuoid.bak");
+        let b2 = backup_once(&p, "pixtuoid.bak").unwrap().unwrap();
+        assert_eq!(b1, b2);
+        assert_eq!(remove_backup(&p, "pixtuoid.bak").unwrap(), Some(b1.clone()));
+        assert!(!b1.exists());
+        assert_eq!(remove_backup(&p, "pixtuoid.bak").unwrap(), None);
     }
 }

@@ -1,0 +1,80 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::Result;
+
+/// A single install destination (one CLI's config file). Fixed set, resolved
+/// at compile time as `const` data — no dyn dispatch (install runs once,
+/// synchronously). `&CONST` in `const TARGETS` is legal via rvalue static
+/// promotion (Rust 1.21+, MSRV 1.78), so `const` is correct here.
+pub struct Target {
+    /// Stable lowercase id: "claude" | "codex".
+    pub name: &'static str,
+    /// Human-readable name for CLI output.
+    pub display_name: &'static str,
+    /// Restart noun for the "→ start a new <noun> session" hint.
+    pub restart_noun: &'static str,
+    /// Default config path (reads $HOME, hence a fn not a const).
+    pub default_config_path: fn() -> PathBuf,
+    /// Build the command string written into config from the resolved binary.
+    /// Claude returns bare "pixtuoid-hook"; Codex returns the full path (Err on
+    /// non-UTF-8). Takes the resolved binary so each target decides how to use it.
+    pub hook_command: fn(resolved: &Path) -> Result<String>,
+    /// Parse `content`, inject managed hook entries, reserialize. MUST treat
+    /// empty/whitespace-only content as the empty document — never error on empty.
+    pub merge_install: fn(content: &str, hook_cmd: &str) -> Result<String>,
+    /// Parse `content`, remove only managed entries, reserialize. Same empty rule.
+    pub merge_uninstall: fn(content: &str) -> Result<String>,
+    /// True if the bare hook name must resolve on PATH (Claude writes the bare name).
+    pub needs_path_warning: bool,
+}
+
+/// Backup suffix — the same constant for every target (not a per-target field).
+pub const BACKUP_SUFFIX: &str = "pixtuoid.bak";
+
+pub const CLAUDE: Target = Target {
+    name: "claude",
+    display_name: "Claude Code",
+    restart_noun: "Claude Code",
+    default_config_path: crate::install::claude::default_config_path,
+    hook_command: crate::install::claude::hook_command,
+    merge_install: crate::install::claude::merge_install,
+    merge_uninstall: crate::install::claude::merge_uninstall,
+    needs_path_warning: true,
+};
+
+pub const TARGETS: &[&Target] = &[&CLAUDE];
+
+pub fn by_name(name: &str) -> Option<&'static Target> {
+    TARGETS.iter().copied().find(|t| t.name == name)
+}
+
+/// Detection = the config FILE exists (not merely its parent dir): an empty
+/// ~/.codex must NOT count as present.
+pub fn config_present(path: &Path) -> bool {
+    crate::install::io::resolve_symlink(path).exists()
+}
+
+pub fn is_present(t: &Target) -> bool {
+    config_present((t.default_config_path)().as_path())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn by_name_resolves_claude_and_rejects_unknown() {
+        assert_eq!(by_name("claude").unwrap().name, "claude");
+        assert!(by_name("nope").is_none());
+        assert!(by_name("all").is_none()); // "all" is a meta-value, not a Target
+    }
+
+    #[test]
+    fn config_present_checks_file_existence() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("x.json");
+        assert!(!config_present(&p));
+        std::fs::write(&p, "{}").unwrap();
+        assert!(config_present(&p));
+    }
+}
