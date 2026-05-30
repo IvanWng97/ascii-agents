@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 
+use crate::install::target::MergeOutcome;
+
 const SENTINEL_KEY: &str = "_pixtuoid";
 
 /// Legacy sentinel keys from previous tool names. Entries tagged with any of
@@ -33,19 +35,29 @@ fn parse_or_empty(content: &str) -> Result<Value> {
     if content.trim().is_empty() {
         return Ok(json!({}));
     }
-    serde_json::from_str(content).context("settings.json is not valid JSON — refusing to overwrite")
+    // No file path here — the orchestrator wraps the error with the real path
+    // (which may be a `--config` override, not the default settings.json).
+    serde_json::from_str(content).context("not valid JSON — refusing to overwrite")
 }
 
-pub fn merge_install(content: &str, hook_cmd: &str) -> Result<String> {
+pub fn merge_install(content: &str, hook_cmd: &str) -> Result<MergeOutcome> {
     let doc = parse_or_empty(content)?;
-    let merged = json_merge_install(doc, hook_cmd);
-    Ok(serde_json::to_string_pretty(&merged)?)
+    let merged = json_merge_install(doc.clone(), hook_cmd);
+    let changed = merged != doc;
+    Ok(MergeOutcome {
+        content: serde_json::to_string_pretty(&merged)?,
+        changed,
+    })
 }
 
-pub fn merge_uninstall(content: &str) -> Result<String> {
+pub fn merge_uninstall(content: &str) -> Result<MergeOutcome> {
     let doc = parse_or_empty(content)?;
-    let cleaned = json_merge_uninstall(doc);
-    Ok(serde_json::to_string_pretty(&cleaned)?)
+    let cleaned = json_merge_uninstall(doc.clone());
+    let changed = cleaned != doc;
+    Ok(MergeOutcome {
+        content: serde_json::to_string_pretty(&cleaned)?,
+        changed,
+    })
 }
 
 fn is_managed_entry(entry: &Value) -> bool {
@@ -266,19 +278,39 @@ mod tests {
     #[test]
     fn merge_install_on_empty_string_produces_valid_populated_config() {
         let out = merge_install("", "pixtuoid-hook").unwrap();
-        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(out.changed);
+        let v: Value = serde_json::from_str(&out.content).unwrap();
         assert!(v["hooks"]["PreToolUse"][0][SENTINEL_KEY].as_bool().unwrap());
     }
 
     #[test]
     fn merge_uninstall_on_empty_string_is_noop() {
         let out = merge_uninstall("").unwrap();
-        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(!out.changed, "empty doc has nothing to remove");
+        let v: Value = serde_json::from_str(&out.content).unwrap();
         assert!(v.get("hooks").is_none());
     }
 
     #[test]
     fn merge_install_rejects_invalid_json() {
         assert!(merge_install("{not json", "pixtuoid-hook").is_err());
+    }
+
+    // Semantic-change detection: re-installing on an already-current config (even
+    // re-serialized differently) reports changed=false → no rewrite, no backup churn.
+    #[test]
+    fn merge_install_idempotent_reports_unchanged() {
+        let first = merge_install("", "pixtuoid-hook").unwrap();
+        let second = merge_install(&first.content, "pixtuoid-hook").unwrap();
+        assert!(!second.changed, "second install is a semantic no-op");
+    }
+
+    // Uninstall on a hand-formatted config with NO pixtuoid hooks must be a no-op
+    // (changed=false) so the orchestrator never rewrites it or deletes the backup.
+    #[test]
+    fn merge_uninstall_no_pixtuoid_hooks_reports_unchanged() {
+        let user = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"PreToolUse\": [ { \"matcher\": \"Write\", \"hooks\": [ {\"type\":\"command\",\"command\":\"/mine\"} ] } ]\n  }\n}";
+        let out = merge_uninstall(user).unwrap();
+        assert!(!out.changed, "no managed entries → semantic no-op");
     }
 }

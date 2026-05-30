@@ -2,6 +2,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+/// Result of a merge: the reserialized config plus whether anything *semantically*
+/// changed. `changed` is computed by comparing the PARSED document before and after
+/// the merge — NOT by byte-comparing serialized output, which always differs from a
+/// hand-formatted file (key reorder, indentation, stripped comments). A byte
+/// comparison would make a semantic no-op look like a change, triggering a
+/// destructive rewrite + backup deletion on `uninstall` (violating the load-bearing
+/// "backup is the user's only recovery path" invariant).
+pub struct MergeOutcome {
+    pub content: String,
+    pub changed: bool,
+}
+
 /// A single install destination (one CLI's config file). Fixed set, resolved
 /// at compile time as `const` data — no dyn dispatch (install runs once,
 /// synchronously). `&CONST` in `const TARGETS` is legal via rvalue static
@@ -21,9 +33,10 @@ pub struct Target {
     pub hook_command: fn(resolved: &Path) -> Result<String>,
     /// Parse `content`, inject managed hook entries, reserialize. MUST treat
     /// empty/whitespace-only content as the empty document — never error on empty.
-    pub merge_install: fn(content: &str, hook_cmd: &str) -> Result<String>,
+    /// `changed` reflects a SEMANTIC (parsed) diff, not a byte diff.
+    pub merge_install: fn(content: &str, hook_cmd: &str) -> Result<MergeOutcome>,
     /// Parse `content`, remove only managed entries, reserialize. Same empty rule.
-    pub merge_uninstall: fn(content: &str) -> Result<String>,
+    pub merge_uninstall: fn(content: &str) -> Result<MergeOutcome>,
     /// True if the bare hook name must resolve on PATH (Claude writes the bare name).
     pub needs_path_warning: bool,
     /// Optional courtesy note printed after a successful install — e.g. Codex's

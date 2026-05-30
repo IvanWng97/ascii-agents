@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use toml::value::Table;
 
+use crate::install::target::MergeOutcome;
+
 const SENTINEL_KEY: &str = "_pixtuoid";
 
 const CODEX_EVENTS: &[&str] = &[
@@ -21,33 +23,52 @@ pub fn default_config_path() -> PathBuf {
     PathBuf::from(format!("{home}/.codex/config.toml"))
 }
 
+/// POSIX single-quote a string so a shell treats it as one literal token —
+/// embedded single quotes become `'\''`. Codex runs the `command` under a
+/// shell, so an unquoted path containing spaces would split into multiple args
+/// and the hook would never be found.
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Codex runs the `command` string under a shell; we write an ABSOLUTE path
-/// (robust regardless of PATH) prefixed with PIXTUOID_SOURCE so the shim can
-/// stamp the source. Err on non-UTF-8 (prevents the to_string_lossy dead-hook).
+/// (robust regardless of PATH), single-quoted (robust to spaces), prefixed with
+/// PIXTUOID_SOURCE so the shim can stamp the source. Err on non-UTF-8 (prevents
+/// the to_string_lossy dead-hook).
 pub fn hook_command(resolved: &Path) -> Result<String> {
     let p = resolved
         .to_str()
         .ok_or_else(|| anyhow!("pixtuoid-hook path is non-UTF-8: {}", resolved.display()))?;
-    Ok(format!("PIXTUOID_SOURCE=codex {p}"))
+    Ok(format!("PIXTUOID_SOURCE=codex {}", shell_single_quote(p)))
 }
 
 fn parse_or_empty(content: &str) -> Result<toml::Value> {
     if content.trim().is_empty() {
         return Ok(toml::Value::Table(Table::new()));
     }
-    toml::from_str(content).context("config.toml is not valid TOML — refusing to overwrite")
+    // No file path here — the orchestrator wraps the error with the real path
+    // (which may be a `--config` override, not the default config.toml).
+    toml::from_str(content).context("not valid TOML — refusing to overwrite")
 }
 
-pub fn merge_install(content: &str, hook_cmd: &str) -> Result<String> {
+pub fn merge_install(content: &str, hook_cmd: &str) -> Result<MergeOutcome> {
     let doc = parse_or_empty(content)?;
-    let merged = toml_merge_install(doc, hook_cmd);
-    Ok(toml::to_string_pretty(&merged)?)
+    let merged = toml_merge_install(doc.clone(), hook_cmd);
+    let changed = merged != doc;
+    Ok(MergeOutcome {
+        content: toml::to_string_pretty(&merged)?,
+        changed,
+    })
 }
 
-pub fn merge_uninstall(content: &str) -> Result<String> {
+pub fn merge_uninstall(content: &str) -> Result<MergeOutcome> {
     let doc = parse_or_empty(content)?;
-    let cleaned = toml_merge_uninstall(doc);
-    Ok(toml::to_string_pretty(&cleaned)?)
+    let cleaned = toml_merge_uninstall(doc.clone());
+    let changed = cleaned != doc;
+    Ok(MergeOutcome {
+        content: toml::to_string_pretty(&cleaned)?,
+        changed,
+    })
 }
 
 fn command_basename_is_hook(command: &str) -> bool {
@@ -181,7 +202,8 @@ mod tests {
     #[test]
     fn install_creates_groups_for_all_events_with_sentinel() {
         let out = merge_install("", "PIXTUOID_SOURCE=codex /opt/bin/pixtuoid-hook").unwrap();
-        let v = parse(&out);
+        assert!(out.changed);
+        let v = parse(&out.content);
         for ev in CODEX_EVENTS {
             let arr = v["hooks"][*ev].as_array().unwrap();
             assert_eq!(arr.len(), 1, "event {ev}");
@@ -202,7 +224,7 @@ mod tests {
     #[test]
     fn install_does_not_write_features_hooks() {
         let out = merge_install("", "/x").unwrap();
-        let v = parse(&out);
+        let v = parse(&out.content);
         assert!(
             v.get("features").is_none(),
             "must not write [features] hooks = true"
@@ -214,8 +236,8 @@ mod tests {
         // Sentinel (not basename/path) drives replacement → re-install with a
         // different resolved path replaces, never duplicates.
         let a = merge_install("", "/opt/a/pixtuoid-hook").unwrap();
-        let b = merge_install(&a, "/opt/b/pixtuoid-hook").unwrap();
-        let v = parse(&b);
+        let b = merge_install(&a.content, "/opt/b/pixtuoid-hook").unwrap();
+        let v = parse(&b.content);
         for ev in CODEX_EVENTS {
             assert_eq!(
                 v["hooks"][*ev].as_array().unwrap().len(),
@@ -225,11 +247,29 @@ mod tests {
         }
     }
 
+    // Re-install with the SAME command is a semantic no-op (changed=false) →
+    // orchestrator won't rewrite the file. Guards the F1/F3 byte-vs-semantic fix.
+    #[test]
+    fn install_same_command_reports_unchanged() {
+        let first = merge_install("", "/opt/a/pixtuoid-hook").unwrap();
+        let second = merge_install(&first.content, "/opt/a/pixtuoid-hook").unwrap();
+        assert!(!second.changed, "identical re-install is a no-op");
+    }
+
+    // Uninstall on a config with user hooks but NO pixtuoid entries must be a
+    // no-op so the orchestrator never rewrites it or deletes the backup.
+    #[test]
+    fn uninstall_no_pixtuoid_hooks_reports_unchanged() {
+        let cfg = "model = \"o1\"\n\n[[hooks.PreToolUse]]\nmatcher = \"*\"\n\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"/usr/bin/mytool\"\n";
+        let out = merge_uninstall(cfg).unwrap();
+        assert!(!out.changed, "no managed entries → semantic no-op");
+    }
+
     #[test]
     fn uninstall_keeps_user_handler_in_mixed_group() {
         // A group with one managed + one user handler: uninstall strips only ours.
         let installed = merge_install("", "/x/pixtuoid-hook").unwrap();
-        let mut v = parse(&installed);
+        let mut v = parse(&installed.content);
         // inject a user handler into the PreToolUse group
         let group = &mut v["hooks"]["PreToolUse"].as_array_mut().unwrap()[0];
         group["hooks"]
@@ -242,7 +282,8 @@ mod tests {
                 t
             }));
         let cleaned = merge_uninstall(&toml::to_string_pretty(&v).unwrap()).unwrap();
-        let cv = parse(&cleaned);
+        assert!(cleaned.changed, "the managed handler was removed");
+        let cv = parse(&cleaned.content);
         let arr = cv["hooks"]["PreToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 1, "group kept (user handler remains)");
         let hooks = arr[0]["hooks"].as_array().unwrap();
@@ -253,11 +294,12 @@ mod tests {
     #[test]
     fn uninstall_removes_empty_groups_and_events() {
         let installed = merge_install("", "/x/pixtuoid-hook").unwrap();
-        let cleaned = merge_uninstall(&installed).unwrap();
-        let v = parse(&cleaned);
+        let cleaned = merge_uninstall(&installed.content).unwrap();
+        let v = parse(&cleaned.content);
         assert!(
             v.get("hooks").is_none(),
-            "all managed → hooks table dropped: {cleaned}"
+            "all managed → hooks table dropped: {}",
+            cleaned.content
         );
     }
 
@@ -272,10 +314,11 @@ type = "command"
 command = "/old/pixtuoid-hook"
 "#;
         let cleaned = merge_uninstall(cfg).unwrap();
-        let v = parse(&cleaned);
+        let v = parse(&cleaned.content);
         assert!(
             v.get("hooks").is_none(),
-            "legacy basename entry removed: {cleaned}"
+            "legacy basename entry removed: {}",
+            cleaned.content
         );
     }
 
@@ -290,6 +333,17 @@ command = "/old/pixtuoid-hook"
     #[test]
     fn hook_command_prefixes_source_for_valid_path() {
         let cmd = hook_command(std::path::Path::new("/opt/bin/pixtuoid-hook")).unwrap();
-        assert_eq!(cmd, "PIXTUOID_SOURCE=codex /opt/bin/pixtuoid-hook");
+        assert_eq!(cmd, "PIXTUOID_SOURCE=codex '/opt/bin/pixtuoid-hook'");
+    }
+
+    // F9: a hook path containing spaces must be single-quoted so the shell does
+    // not split it into multiple args (which would silently never find the hook).
+    #[test]
+    fn hook_command_quotes_path_with_spaces() {
+        let cmd = hook_command(std::path::Path::new("/Users/Jane Doe/bin/pixtuoid-hook")).unwrap();
+        assert_eq!(
+            cmd,
+            "PIXTUOID_SOURCE=codex '/Users/Jane Doe/bin/pixtuoid-hook'"
+        );
     }
 }

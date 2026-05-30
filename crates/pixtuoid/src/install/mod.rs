@@ -6,7 +6,7 @@ pub mod target;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use target::{Target, BACKUP_SUFFIX};
 
@@ -36,7 +36,6 @@ pub fn plan_targets(
     requested: Option<&str>,
     explicit_config: bool,
     present: &[(&'static Target, bool)],
-    _yes: bool,
     is_tty: bool,
 ) -> Plan {
     match requested {
@@ -114,52 +113,48 @@ fn detection() -> Vec<(&'static Target, bool)> {
 }
 
 pub fn install(args: InstallArgs) -> Result<()> {
-    let present = detection();
     let is_tty = std::io::stdin().is_terminal();
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
-        &present,
-        args.yes,
+        &detection(),
         is_tty,
     );
-    let targets = resolve_plan(plan, args.target.as_deref())?;
-    // Confirm ONLY on bare auto-detect (no --target) resolving to >1 target.
-    // An explicit --target (incl. `all`) is treated as intent and skips the prompt.
-    if args.target.is_none() && targets.len() > 1 && !args.yes && is_tty {
-        let names: Vec<_> = targets.iter().map(|t| t.display_name).collect();
-        if !confirm(&format!(
-            "install pixtuoid hooks into {}?",
-            names.join(" + ")
-        )) {
-            println!("aborted");
-            return Ok(());
-        }
+    let targets = resolve_plan(plan)?;
+    if needs_confirm(&args.target, targets.len(), args.yes, is_tty)
+        && !confirm_targets("install pixtuoid hooks into", &targets)
+    {
+        println!("aborted");
+        return Ok(());
     }
-    for t in targets {
-        run_install(t, args.config.clone(), args.hook_path.clone())?;
-    }
-    Ok(())
+    run_each(&targets, "install", |t| {
+        run_install(t, args.config.clone(), args.hook_path.clone())
+    })
 }
 
 pub fn uninstall(args: UninstallArgs) -> Result<()> {
-    let present = detection();
     let is_tty = std::io::stdin().is_terminal();
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
-        &present,
-        args.yes,
+        &detection(),
         is_tty,
     );
-    let targets = resolve_plan(plan, args.target.as_deref())?;
-    for t in targets {
-        run_uninstall(t, args.config.clone())?;
+    let targets = resolve_plan(plan)?;
+    // Symmetric with install(): the destructive op must also confirm before
+    // touching >1 auto-detected target (it rewrites configs + deletes backups).
+    if needs_confirm(&args.target, targets.len(), args.yes, is_tty)
+        && !confirm_targets("remove pixtuoid hooks from", &targets)
+    {
+        println!("aborted");
+        return Ok(());
     }
-    Ok(())
+    run_each(&targets, "uninstall", |t| {
+        run_uninstall(t, args.config.clone())
+    })
 }
 
-fn resolve_plan(plan: Plan, _requested: Option<&str>) -> Result<Vec<&'static Target>> {
+fn resolve_plan(plan: Plan) -> Result<Vec<&'static Target>> {
     match plan {
         Plan::Targets(t) => Ok(t),
         Plan::NothingDetected => {
@@ -170,18 +165,59 @@ fn resolve_plan(plan: Plan, _requested: Option<&str>) -> Result<Vec<&'static Tar
     }
 }
 
+/// Confirm only on bare auto-detect (no `--target`) hitting >1 target on a TTY.
+/// An explicit `--target` (incl. `all`) is intent and skips the prompt; `--yes` skips.
+fn needs_confirm(requested: &Option<String>, n: usize, yes: bool, is_tty: bool) -> bool {
+    requested.is_none() && n > 1 && !yes && is_tty
+}
+
+fn confirm_targets(verb: &str, targets: &[&'static Target]) -> bool {
+    let names: Vec<_> = targets.iter().map(|t| t.display_name).collect();
+    confirm(&format!("{verb} {}?", names.join(" + ")))
+}
+
+/// Run `op` for each target independently. A failure on one target is reported
+/// but does NOT abort the others — otherwise a malformed second config (e.g.
+/// `--target all` with bad TOML) could hide that the first target was already
+/// modified. Returns Err iff any target failed.
+fn run_each(
+    targets: &[&'static Target],
+    verb: &str,
+    op: impl Fn(&'static Target) -> Result<()>,
+) -> Result<()> {
+    let mut failed = 0usize;
+    for &t in targets {
+        if let Err(e) = op(t) {
+            eprintln!("error: {verb} for {} failed: {e:#}", t.display_name);
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        bail!("{failed} of {} target(s) failed", targets.len());
+    }
+    Ok(())
+}
+
 fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) -> Result<()> {
     let path = config.unwrap_or_else(|| (t.default_config_path)());
     let binary = hook_path.map(Ok).unwrap_or_else(io::default_hook_binary)?;
     let hook_cmd = (t.hook_command)(&binary)?;
     let content = io::read_config(&path)?;
-    let merged = (t.merge_install)(&content, &hook_cmd)?;
-    if merged == content {
+    let outcome = (t.merge_install)(&content, &hook_cmd)
+        .with_context(|| format!("processing {}", path.display()))?;
+    // The PATH check is an install-time environment check, independent of whether
+    // the file content changed — always surface it (a no-op re-install on a box
+    // where pixtuoid-hook isn't on PATH would otherwise warn nothing).
+    if t.needs_path_warning && !io::hook_on_path() {
+        println!("warn: `pixtuoid-hook` not found on PATH (checked against this shell).");
+        println!("      Install it on PATH, e.g. `cargo install --path crates/pixtuoid-hook`.");
+    }
+    if !outcome.changed {
         println!("[{}] already up to date — {}", t.name, path.display());
         return Ok(());
     }
     let backup = io::backup_once(&path, BACKUP_SUFFIX)?;
-    io::write_config_atomic(&path, &merged)?;
+    io::write_config_atomic(&path, &outcome.content)?;
     println!(
         "ok: installed pixtuoid hooks into {} ({})",
         path.display(),
@@ -192,10 +228,6 @@ fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) 
             "backup: {} (removed automatically on uninstall-hooks)",
             b.display()
         );
-    }
-    if t.needs_path_warning && !io::hook_on_path() {
-        println!("warn: `pixtuoid-hook` not found on PATH (checked against this shell).");
-        println!("      Install it on PATH, e.g. `cargo install --path crates/pixtuoid-hook`.");
     }
     if let Some(note) = t.post_install_note {
         println!("{note}");
@@ -210,10 +242,13 @@ fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) 
 fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> {
     let path = config.unwrap_or_else(|| (t.default_config_path)());
     let content = io::read_config(&path)?;
-    let cleaned = (t.merge_uninstall)(&content)?;
-    if cleaned == content {
-        // Covers both file-absent (content == "") and no-match. The backup is
-        // the user's only recovery path — never destroyed on a no-op.
+    let outcome =
+        (t.merge_uninstall)(&content).with_context(|| format!("processing {}", path.display()))?;
+    if !outcome.changed {
+        // SEMANTIC no-op (covers file-absent — content == "" — and no managed
+        // entries). Never rewrite the file or delete the backup here: the backup
+        // is the user's only recovery path. A byte comparison here would falsely
+        // fire on any hand-formatted config and destroy the backup.
         println!(
             "[{}] no pixtuoid hooks found in {} — nothing to remove",
             t.name,
@@ -221,7 +256,7 @@ fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> {
         );
         return Ok(());
     }
-    io::write_config_atomic(&path, &cleaned)?;
+    io::write_config_atomic(&path, &outcome.content)?;
     println!(
         "ok: removed pixtuoid hooks from {} ({})",
         path.display(),
@@ -240,7 +275,7 @@ fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::install::target::{Target, CLAUDE};
+    use crate::install::target::{MergeOutcome, Target, CLAUDE};
 
     // A second fake target for "both present" rows (avoids depending on Phase 2's CODEX).
     static FAKE: Target = Target {
@@ -249,8 +284,18 @@ mod tests {
         restart_noun: "Fake",
         default_config_path: || std::path::PathBuf::from("/nonexistent/fake"),
         hook_command: |_| Ok("x".into()),
-        merge_install: |c, _| Ok(c.to_string()),
-        merge_uninstall: |c| Ok(c.to_string()),
+        merge_install: |c, _| {
+            Ok(MergeOutcome {
+                content: c.to_string(),
+                changed: false,
+            })
+        },
+        merge_uninstall: |c| {
+            Ok(MergeOutcome {
+                content: c.to_string(),
+                changed: false,
+            })
+        },
         needs_path_warning: false,
         post_install_note: None,
     };
@@ -261,37 +306,37 @@ mod tests {
 
     #[test]
     fn explicit_target_claude_ignores_detection() {
-        let p = plan_targets(Some("claude"), false, &present(false, false), false, false);
+        let p = plan_targets(Some("claude"), false, &present(false, false), false);
         assert!(matches!(p, Plan::Targets(ref t) if t.len() == 1 && t[0].name == "claude"));
     }
 
     #[test]
     fn explicit_all_with_config_is_conflict() {
-        let p = plan_targets(Some("all"), true, &present(true, true), false, true);
+        let p = plan_targets(Some("all"), true, &present(true, true), true);
         assert!(matches!(p, Plan::Conflict(_)));
     }
 
     #[test]
     fn no_target_tty_returns_detected() {
-        let p = plan_targets(None, false, &present(true, true), false, true);
+        let p = plan_targets(None, false, &present(true, true), true);
         assert!(matches!(p, Plan::Targets(ref t) if t.len() == 2));
     }
 
     #[test]
     fn no_target_non_tty_single_claude_installs_claude() {
-        let p = plan_targets(None, false, &present(true, false), false, false);
+        let p = plan_targets(None, false, &present(true, false), false);
         assert!(matches!(p, Plan::Targets(ref t) if t.len() == 1 && t[0].name == "claude"));
     }
 
     #[test]
     fn no_target_non_tty_multiple_present_is_conflict() {
-        let p = plan_targets(None, false, &present(true, true), false, false);
+        let p = plan_targets(None, false, &present(true, true), false);
         assert!(matches!(p, Plan::Conflict(_)));
     }
 
     #[test]
     fn no_target_nothing_present_is_nothing_detected() {
-        let p = plan_targets(None, false, &present(false, false), false, false);
+        let p = plan_targets(None, false, &present(false, false), false);
         assert!(matches!(p, Plan::NothingDetected));
     }
 
