@@ -74,30 +74,28 @@ fn json_merge_install(doc: Value, hook_command: &str) -> Value {
     let hooks = root
         .entry("hooks".to_string())
         .or_insert_with(|| Value::Object(Map::new()));
-    let hooks_obj = match hooks.as_object_mut() {
-        Some(o) => o,
-        None => {
-            *hooks = Value::Object(Map::new());
-            hooks.as_object_mut().expect("just stored Value::Object")
-        }
-    };
-    for ev in EVENTS {
-        let list = hooks_obj
-            .entry((*ev).to_string())
-            .or_insert_with(|| Value::Array(vec![]));
-        let arr = match list.as_array_mut() {
-            Some(a) => a,
-            None => {
+    // Coerce a non-object `hooks` to an empty object, then bind via `if let`
+    // (always matches now) — avoids an `.expect()` in production code.
+    if !hooks.is_object() {
+        *hooks = Value::Object(Map::new());
+    }
+    if let Value::Object(hooks_obj) = hooks {
+        for ev in EVENTS {
+            let list = hooks_obj
+                .entry((*ev).to_string())
+                .or_insert_with(|| Value::Array(vec![]));
+            if !list.is_array() {
                 *list = Value::Array(vec![]);
-                list.as_array_mut().expect("just stored Value::Array")
             }
-        };
-        arr.retain(|entry| !is_managed_entry(entry));
-        arr.push(json!({
-            SENTINEL_KEY: true,
-            "matcher": ".*",
-            "hooks": [ { "type": "command", "command": hook_command } ]
-        }));
+            if let Value::Array(arr) = list {
+                arr.retain(|entry| !is_managed_entry(entry));
+                arr.push(json!({
+                    SENTINEL_KEY: true,
+                    "matcher": ".*",
+                    "hooks": [ { "type": "command", "command": hook_command } ]
+                }));
+            }
+        }
     }
     Value::Object(root)
 }

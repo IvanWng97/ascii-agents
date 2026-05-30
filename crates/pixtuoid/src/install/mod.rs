@@ -112,17 +112,19 @@ fn detection() -> Vec<(&'static Target, bool)> {
         .collect()
 }
 
-/// Whether `t`'s config currently contains pixtuoid-managed hooks — a dry-run
-/// uninstall that would change the parsed doc. Used to list only real removal
-/// candidates in the interactive uninstall picker. False on any read/parse error
-/// or an absent config (`read_config` → "" → no change).
+/// Whether `t` is a candidate for the interactive uninstall picker. A dry-run
+/// uninstall that would change the parsed doc means managed hooks are present.
+/// An absent/empty config is excluded; a config that is present but unreadable
+/// or unparseable is INCLUDED (true) so a hooks-bearing-but-malformed config
+/// still appears and the user sees the real error from `run_uninstall`, rather
+/// than a misleading "nothing to remove".
 fn has_hooks(t: &'static Target) -> bool {
     let path = (t.default_config_path)();
-    io::read_config(&path)
-        .ok()
-        .and_then(|c| (t.merge_uninstall)(&c).ok())
-        .map(|o| o.changed)
-        .unwrap_or(false)
+    match io::read_config(&path) {
+        Ok(c) if c.trim().is_empty() => false,
+        Ok(c) => (t.merge_uninstall)(&c).map(|o| o.changed).unwrap_or(true),
+        Err(_) => true,
+    }
 }
 
 /// Interactive checklist of `candidates`, all pre-checked. Returns the chosen
@@ -135,15 +137,19 @@ fn select_targets(
     let all: Vec<usize> = (0..options.len()).collect();
     let chosen = inquire::MultiSelect::new(prompt, options)
         .with_default(&all)
-        .prompt_skippable()
+        .raw_prompt_skippable()
         .context("target selection prompt failed")?;
-    Ok(chosen.map(|sel| {
-        candidates
-            .iter()
-            .copied()
-            .filter(|t| sel.contains(&t.display_name))
-            .collect()
-    }))
+    // Map back by INDEX, not display label — two targets sharing a display_name
+    // must not both get selected when only one is checked.
+    Ok(chosen.map(|sel| sel.into_iter().map(|opt| candidates[opt.index]).collect()))
+}
+
+/// Both stdin AND stdout must be a terminal before we run an interactive prompt:
+/// inquire reads keys via /dev/tty but renders to the output stream, so gating on
+/// stdin alone would let `install-hooks > log` render a garbled prompt into the
+/// redirected file. Output redirection ⇒ treat the run as non-interactive.
+fn interactive_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// True when the run is an interactive bare invocation — no explicit `--target`
@@ -157,42 +163,61 @@ fn interactive_pick(
     target.is_none() && config.is_none() && !yes && is_tty
 }
 
-pub fn install(args: InstallArgs) -> Result<()> {
-    let is_tty = std::io::stdin().is_terminal();
+/// Shared interactive picker flow for install + uninstall: 0 candidates → print
+/// `empty_msg`; 1 → act directly (no list to pick from); >1 → checklist, where
+/// Esc/none-selected aborts. Keeps install's and uninstall's UX identical.
+fn run_interactive(
+    candidates: Vec<&'static Target>,
+    empty_msg: &str,
+    prompt: &str,
+    verb: &str,
+    op: impl Fn(&'static Target) -> Result<()>,
+) -> Result<()> {
+    let chosen = match candidates.len() {
+        0 => {
+            println!("{empty_msg}");
+            return Ok(());
+        }
+        1 => candidates,
+        _ => match select_targets(prompt, &candidates)? {
+            Some(sel) if !sel.is_empty() => sel,
+            Some(_) => {
+                println!("nothing selected");
+                return Ok(());
+            }
+            None => {
+                println!("aborted");
+                return Ok(());
+            }
+        },
+    };
+    run_each(&chosen, verb, op)
+}
 
-    // Interactive picker: show detected CLIs as a checklist (all pre-checked) so
-    // the user can install into a subset instead of always all. A single
-    // detection installs directly (no list to pick from); explicit `--target` /
-    // `--config` / `--yes` / non-TTY take the flag-driven path below.
+pub fn install(args: InstallArgs) -> Result<()> {
+    let is_tty = interactive_terminal();
+
+    // Interactive picker: detected CLIs as a checklist (all pre-checked) so the
+    // user installs into a subset instead of always all. Explicit `--target` /
+    // `--config` / `--yes` / non-interactive take the flag-driven path below.
     if interactive_pick(&args.target, &args.config, args.yes, is_tty) {
         let detected: Vec<&'static Target> = detection()
             .into_iter()
             .filter(|(_, p)| *p)
             .map(|(t, _)| t)
             .collect();
-        let chosen = match detected.len() {
-            0 => {
-                println!("no supported CLIs detected; pass --target claude|codex|all");
-                return Ok(());
-            }
-            1 => detected,
-            _ => match select_targets("Install pixtuoid hooks into", &detected)? {
-                Some(sel) if !sel.is_empty() => sel,
-                Some(_) => {
-                    println!("nothing selected");
-                    return Ok(());
-                }
-                None => {
-                    println!("aborted");
-                    return Ok(());
-                }
-            },
-        };
-        return run_each(&chosen, "install", |t| {
-            run_install(t, None, args.hook_path.clone())
-        });
+        return run_interactive(
+            detected,
+            "no supported CLIs detected; pass --target claude|codex|all",
+            "Install pixtuoid hooks into",
+            "install",
+            |t| run_install(t, None, args.hook_path.clone()),
+        );
     }
 
+    // Flag-driven path (explicit/--yes/non-interactive). Bare interactive
+    // multi-target is handled by the picker above, so install never needs a
+    // text confirm here — act directly.
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
@@ -200,50 +225,32 @@ pub fn install(args: InstallArgs) -> Result<()> {
         is_tty,
     );
     let targets = resolve_plan(plan)?;
-    if needs_confirm(&args.target, targets.len(), args.yes, is_tty, false)
-        && !confirm_targets("install pixtuoid hooks into", &targets)
-    {
-        println!("aborted");
-        return Ok(());
-    }
     run_each(&targets, "install", |t| {
         run_install(t, args.config.clone(), args.hook_path.clone())
     })
 }
 
 pub fn uninstall(args: UninstallArgs) -> Result<()> {
-    let is_tty = std::io::stdin().is_terminal();
+    let is_tty = interactive_terminal();
 
-    // Interactive picker: list only CLIs that ACTUALLY have pixtuoid hooks, as a
-    // checklist (all pre-checked) so the user removes a subset. Single → direct;
-    // explicit `--target` / `--config` / `--yes` / non-TTY use the path below.
+    // Interactive picker: list only CLIs that ACTUALLY have pixtuoid hooks.
     if interactive_pick(&args.target, &args.config, args.yes, is_tty) {
         let installed: Vec<&'static Target> = target::TARGETS
             .iter()
             .copied()
             .filter(|t| has_hooks(t))
             .collect();
-        let chosen = match installed.len() {
-            0 => {
-                println!("no pixtuoid hooks found to remove");
-                return Ok(());
-            }
-            1 => installed,
-            _ => match select_targets("Remove pixtuoid hooks from", &installed)? {
-                Some(sel) if !sel.is_empty() => sel,
-                Some(_) => {
-                    println!("nothing selected");
-                    return Ok(());
-                }
-                None => {
-                    println!("aborted");
-                    return Ok(());
-                }
-            },
-        };
-        return run_each(&chosen, "uninstall", |t| run_uninstall(t, None));
+        return run_interactive(
+            installed,
+            "no pixtuoid hooks found to remove",
+            "Remove pixtuoid hooks from",
+            "uninstall",
+            |t| run_uninstall(t, None),
+        );
     }
 
+    // Flag-driven path. Destructive: confirm an explicit multi-target run (e.g.
+    // `--target all`) on a terminal — it rewrites configs + deletes backups.
     let plan = plan_targets(
         args.target.as_deref(),
         args.config.is_some(),
@@ -251,9 +258,7 @@ pub fn uninstall(args: UninstallArgs) -> Result<()> {
         is_tty,
     );
     let targets = resolve_plan(plan)?;
-    // Destructive: confirm before touching >1 target (rewrites configs + deletes
-    // backups), including an explicit `--target all` — not just bare auto-detect.
-    if needs_confirm(&args.target, targets.len(), args.yes, is_tty, true)
+    if needs_confirm(targets.len(), args.yes, is_tty)
         && !confirm_targets("remove pixtuoid hooks from", &targets)
     {
         println!("aborted");
@@ -275,23 +280,12 @@ fn resolve_plan(plan: Plan) -> Result<Vec<&'static Target>> {
     }
 }
 
-/// Whether to interactively confirm before acting. Always skipped by `--yes`,
-/// non-TTY, or a single target. Install (non-`destructive`): only a bare
-/// auto-detect (no `--target`) hitting >1 target confirms — an explicit
-/// `--target` (incl. `all`) is intent. Uninstall (`destructive`): ANY multi-
-/// target run confirms, including an explicit `--target all`, because it
-/// rewrites every config and deletes every backup (the only recovery path).
-fn needs_confirm(
-    requested: &Option<String>,
-    n: usize,
-    yes: bool,
-    is_tty: bool,
-    destructive: bool,
-) -> bool {
-    if yes || !is_tty || n <= 1 {
-        return false;
-    }
-    destructive || requested.is_none()
+/// Confirm a destructive multi-target run before acting. Only uninstall calls
+/// this (it rewrites configs + deletes backups); install's interactive case is
+/// handled by the picker, and its flag path never confirms. Skipped by `--yes`,
+/// a non-interactive terminal, or a single target.
+fn needs_confirm(n: usize, yes: bool, is_tty: bool) -> bool {
+    !yes && is_tty && n > 1
 }
 
 fn confirm_targets(verb: &str, targets: &[&'static Target]) -> bool {
