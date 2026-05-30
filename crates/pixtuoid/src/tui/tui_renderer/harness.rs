@@ -1021,3 +1021,125 @@ fn weather_variants_render_without_panic_and_vary() {
         sigs.len()
     );
 }
+
+/// Concatenated symbols of a ratatui cell rectangle — for asserting that a
+/// specific bit of text (e.g. a chitchat bubble) rendered inside a region.
+fn region_text(buf: &ratatui::buffer::Buffer, cx: u16, cy: u16, cw: u16, ch: u16) -> String {
+    let area = buf.area;
+    let mut out = String::new();
+    for y in cy..(cy + ch).min(area.y + area.height) {
+        for x in cx..(cx + cw).min(area.x + area.width) {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+    }
+    out
+}
+
+// Meeting-room rendering, end-to-end. Drives idle agents on a floor that has a
+// meeting room and asserts that, over simulated time, the room (1) visibly
+// fills with characters and (2) hosts a GROUP chitchat — a bubble appearing in
+// the meeting-room region requires ≥2 agents seated/standing at meeting SLOTS
+// (the new waypoint kinds) AND the whole render pipeline (slots → sit/stand
+// sprites → venue-keyed chat → bubble widget) working. Emergent, not forced:
+// the long per-spot dwell makes overlaps reliable.
+#[test]
+fn meeting_room_fills_and_hosts_group_chitchat() {
+    let pack = pack();
+    let mut now = t0();
+
+    let cap = 64;
+    let n_agents = 40usize;
+    let mut scene = SceneState::uniform(cap);
+    for i in 0..n_agents {
+        let id = AgentId::from_transcript_path(&format!("/h/mtg{i}.jsonl"));
+        // Stagger start times so wander cycles desync and the room sees a mix
+        // of arrivals/departures.
+        let started = now - Duration::from_secs(5 + (i as u64 * 11) % 80);
+        scene.agents.insert(id, slot(id, 0, i, started));
+    }
+
+    let mut r = build(160, 56, vec![]);
+    r.render(&scene, &pack, now).expect("render");
+    let layout = r.cached_layout().expect("layout").clone();
+    let mr = layout
+        .meeting_room
+        .expect("floor 0 must have a meeting room at this size");
+
+    // Empty-room pixel baseline (same furniture, no agents) so the region diff
+    // isolates the characters.
+    let mut r0 = build(160, 56, vec![]);
+    r0.render(&SceneState::uniform(cap), &pack, now)
+        .expect("render");
+    let baseline = r0.buf().clone();
+
+    // The layout must actually carry meeting slots (otherwise the test is
+    // vacuous — agents could "occupy" the room while just passing through).
+    let slot_count = layout
+        .waypoints
+        .iter()
+        .filter(|w| {
+            matches!(
+                w.kind,
+                crate::tui::layout::WaypointKind::MeetingSofa
+                    | crate::tui::layout::WaypointKind::MeetingStand
+            )
+        })
+        .count();
+    assert!(slot_count >= 4, "expected meeting slots, got {slot_count}");
+
+    // Meeting-room cell band (px→cell: x unchanged, y halved), padded upward so
+    // a bubble drawn above a sitter's head is included.
+    let cell_y0 = (mr.y / 2).saturating_sub(4);
+    let cell_h = mr.height / 2 + 8;
+
+    // Step the clock in coarse 250 ms beats rather than 33 ms frames: this test
+    // cares about simulated *time* (agents wandering into the room and chatting),
+    // not per-frame smoothness, and 250 ms stays well under the stale-resume
+    // trigger (≥7 s) so the wander machine advances normally — ~6× fewer renders.
+    const BUDGET: usize = 1200; // 250ms beats → 300s simulated
+    let mut saw_characters = false;
+    let mut chat_iter: Option<usize> = None;
+    for iter in 1..=BUDGET {
+        now += Duration::from_millis(250);
+        r.render(&scene, &pack, now).expect("render");
+
+        if !saw_characters {
+            let d = region_diff(&baseline, r.buf(), mr.x, mr.y, mr.width, mr.height);
+            saw_characters = d > 4_000;
+        }
+        if chat_iter.is_none() {
+            // A chitchat line inside the meeting-room cell band can only come
+            // from ≥2 agents seated/standing at meeting SLOTS forming a group
+            // conversation — exercising slots → sit/stand sprites → venue-keyed
+            // chat → bubble widget end to end.
+            let text = region_text(r.frame_buffer(), mr.x, cell_y0, mr.width + 6, cell_h);
+            if crate::tui::chitchat::CHITCHAT_LINES
+                .iter()
+                .any(|l| text.contains(l))
+            {
+                chat_iter = Some(iter);
+            }
+        }
+        if saw_characters && chat_iter.is_some() {
+            break;
+        }
+    }
+
+    assert!(
+        saw_characters,
+        "agents never visibly occupied the meeting room"
+    );
+    let chat_iter = chat_iter.expect("no group chitchat bubble ever appeared in the meeting room");
+    // Headroom guard: with this density the group should form in the first
+    // ~third of the budget. Asserting a comfortable margin means that if a
+    // future constant change (trip rate, dwell, room placement) erodes the
+    // fill, it surfaces here as a clear "took too long" rather than a confusing
+    // timeout at the very edge of the budget.
+    assert!(
+        chat_iter < BUDGET / 2,
+        "group chitchat took {chat_iter}/{BUDGET} iterations — fill margin eroded; \
+         expected well under half the budget"
+    );
+}

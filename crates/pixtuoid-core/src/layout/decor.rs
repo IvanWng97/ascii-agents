@@ -22,6 +22,24 @@ pub enum WaypointKind {
     VendingMachine,
     /// Corridor printer — agent stands in front while "printing."
     Printer,
+    /// Meeting-room sofa seat — agent sits, facing the table. Multiple
+    /// seats per sofa; a group conversation runs when ≥2 share the room.
+    MeetingSofa,
+    /// Meeting-room standing spot beside the table — agent stands, facing
+    /// the table. Part of the same room conversation venue as MeetingSofa.
+    MeetingStand,
+}
+
+/// Which way a waypoint occupant faces. Drives sprite choice (back vs
+/// front view) and horizontal mirroring at render time. Most waypoints
+/// are `South` (facing the viewer / facing-neutral); meeting-room slots
+/// face the table at the room centre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Facing {
+    North,
+    South,
+    East,
+    West,
 }
 
 /// Wall-mounted / wall-leaning furniture, painted as decor in the top wall

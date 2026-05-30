@@ -88,7 +88,7 @@ pub struct PixelCtx<'a> {
     pub floor: crate::tui::floor::FloorMeta,
     pub active_pet: Option<&'a crate::tui::renderer::PetState>,
     pub floor_pet_kind: Option<PetKind>,
-    pub chitchat_state: &'a mut HashMap<(usize, usize), ActiveChitchat>,
+    pub chitchat_state: &'a mut HashMap<crate::tui::chitchat::VenueKey, ActiveChitchat>,
     pub coffee_holders: &'a std::collections::HashSet<pixtuoid_core::AgentId>,
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
     pub coffee_stains: &'a HashMap<pixtuoid_core::AgentId, Vec<crate::tui::tui_renderer::StainPos>>,
@@ -135,6 +135,28 @@ pub(super) fn paint_character_at(
         },
     );
     blit_frame(cached, anchor.x, anchor.y, buf);
+}
+
+/// Sprite name + horizontal flip for an agent at a meeting slot, by facing.
+/// A north-side sofa seat faces the viewer across the table (front `seated`);
+/// a south-side seat faces away (back view). A meeting stand faces inward, so
+/// the west-side stander (which the layout marks `Facing::East`) is mirrored.
+/// Extracted so the facing→sprite mapping is unit-testable without a render.
+pub(super) fn meeting_sprite(
+    kind: crate::tui::layout::WaypointKind,
+    facing: crate::tui::layout::Facing,
+) -> (&'static str, bool) {
+    use crate::tui::layout::{Facing, WaypointKind};
+    match kind {
+        WaypointKind::MeetingSofa => match facing {
+            Facing::North => ("back_couch", false),
+            _ => ("seated", false),
+        },
+        // Stand mirrors toward the table centre; west stand is `Facing::East`.
+        WaypointKind::MeetingStand => ("standing", matches!(facing, Facing::East)),
+        // Not a meeting slot — caller dispatches these directly.
+        _ => ("standing", false),
+    }
 }
 
 pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
@@ -710,6 +732,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
+            // Meeting slots ride on the sofa/table furniture, which is
+            // painted via the `meeting_sofas` / `meeting_tables` drawables
+            // elsewhere — no per-slot furniture here.
+            WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {}
         }
     }
 
@@ -842,7 +868,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // rank for crowded waypoints — stable across frames thanks to
     // BTreeMap iteration order.
     let mut wp_rank: HashMap<usize, usize> = HashMap::new();
-    let mut waypoint_visitors: Vec<(usize, pixtuoid_core::AgentId, Point)> = Vec::new();
+    let mut waypoint_visitors: Vec<chitchat::Visitor> = Vec::new();
     for agent in &agents {
         let Some(desk) = ctx.layout.home_desks.get(agent.desk_index).copied() else {
             continue;
@@ -943,10 +969,25 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     wp_rank.insert(wp, rank + 1);
                     let dx = waypoint_rank_offset_x(kind, rank);
                     use crate::tui::layout::WaypointKind;
-                    let (anim_name, anchor_base, sprite_h) = match kind {
-                        WaypointKind::Couch => ("back_couch", back_couch_anchor(wp_obj.pos), 9u16),
+                    let (anim_name, anchor_base, sprite_h, flip_x) = match kind {
+                        WaypointKind::Couch => {
+                            ("back_couch", back_couch_anchor(wp_obj.pos), 9u16, false)
+                        }
                         WaypointKind::Pantry => {
-                            ("holding_coffee", waypoint_anchor(wp_obj.pos), 12u16)
+                            ("holding_coffee", waypoint_anchor(wp_obj.pos), 12u16, false)
+                        }
+                        // Meeting sofa: the north-side seat faces the viewer
+                        // across the table (front "seated"); the south-side seat
+                        // faces away (back view) — the pair reads as two people
+                        // facing each other. Both reuse the 16×7-sofa anchor.
+                        WaypointKind::MeetingSofa => {
+                            let (anim, flip) = meeting_sprite(kind, wp_obj.facing);
+                            (anim, back_couch_anchor(wp_obj.pos), 9u16, flip)
+                        }
+                        // Meeting stand: beside the table, facing inward.
+                        WaypointKind::MeetingStand => {
+                            let (anim, flip) = meeting_sprite(kind, wp_obj.facing);
+                            (anim, waypoint_anchor(wp_obj.pos), 12u16, flip)
                         }
                         // PhoneBooth + StandingDesk → agent just stands at the
                         // decor. waypoint_anchor positions them directly above
@@ -955,14 +996,21 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                         WaypointKind::PhoneBooth
                         | WaypointKind::StandingDesk
                         | WaypointKind::VendingMachine
-                        | WaypointKind::Printer => ("standing", waypoint_anchor(wp_obj.pos), 12u16),
+                        | WaypointKind::Printer => {
+                            ("standing", waypoint_anchor(wp_obj.pos), 12u16, false)
+                        }
                     };
                     let anchor_no_breath = Point {
                         x: anchor_base.x.saturating_add_signed(dx),
                         y: anchor_base.y,
                     };
                     if chitchat::supports_chitchat(kind) {
-                        waypoint_visitors.push((wp, agent.agent_id, anchor_no_breath));
+                        waypoint_visitors.push(chitchat::Visitor {
+                            wp_idx: wp,
+                            agent_id: agent.agent_id,
+                            anchor: anchor_no_breath,
+                            room_id: wp_obj.room_id,
+                        });
                     }
                     let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                     drawables.push(Drawable {
@@ -972,7 +1020,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                             anim_name,
                             frame_idx: 0,
                             anchor,
-                            flip_x: false,
+                            flip_x,
                             glow_tint: None,
                             sleep_z_seed: None,
                             waiting_bubble: false,
@@ -1078,6 +1126,31 @@ mod tests {
     use pixtuoid_core::sprite::{Frame, Palette};
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn meeting_sprite_maps_facing_to_sprite_and_flip() {
+        use crate::tui::layout::{Facing, WaypointKind};
+        // North-side sofa seat faces away → back view, no flip.
+        assert_eq!(
+            meeting_sprite(WaypointKind::MeetingSofa, Facing::North),
+            ("back_couch", false)
+        );
+        // South-side sofa seat faces the viewer → front seated, no flip.
+        assert_eq!(
+            meeting_sprite(WaypointKind::MeetingSofa, Facing::South),
+            ("seated", false)
+        );
+        // West stand (layout marks it Facing::East) mirrors toward the table.
+        assert_eq!(
+            meeting_sprite(WaypointKind::MeetingStand, Facing::East),
+            ("standing", true)
+        );
+        // East stand (Facing::West) is unmirrored.
+        assert_eq!(
+            meeting_sprite(WaypointKind::MeetingStand, Facing::West),
+            ("standing", false)
+        );
+    }
 
     fn make_slot(id: pixtuoid_core::AgentId, state: ActivityState) -> AgentSlot {
         let now = SystemTime::UNIX_EPOCH;

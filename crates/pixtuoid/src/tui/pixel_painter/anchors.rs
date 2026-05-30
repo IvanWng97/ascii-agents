@@ -140,7 +140,7 @@ pub(in crate::tui) fn character_anchor(
         Pose::AtWaypoint { wp, kind } => {
             let wp_obj = layout.waypoints.get(wp)?;
             match kind {
-                WaypointKind::Couch => back_couch_anchor(wp_obj.pos),
+                WaypointKind::Couch | WaypointKind::MeetingSofa => back_couch_anchor(wp_obj.pos),
                 _ => waypoint_anchor(wp_obj.pos),
             }
         }

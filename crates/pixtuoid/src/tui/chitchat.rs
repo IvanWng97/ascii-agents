@@ -1,6 +1,9 @@
-//! Pantry chitchat — short speech-bubble conversations between agents
-//! who happen to be visiting the same social waypoint (pantry, couch,
-//! vending machine, printer).
+//! Office chitchat — short speech-bubble conversations between agents who
+//! share a social venue. A venue is either a single social waypoint (pantry,
+//! couch, vending machine, printer) or a whole meeting room (all its sofa +
+//! standing slots), so a meeting room hosts one GROUP conversation rather than
+//! a pile of independent pairs. Conversations are N-way: each turn the current
+//! speaker rotates round-robin through whoever is present.
 
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -14,6 +17,9 @@ pub const CHITCHAT_TOTAL_MS: u64 = 6_000;
 
 /// Each speaker gets 1.5 s per turn.
 const TURN_MS: u64 = 1_500;
+
+/// Number of speaking turns before the silent gap.
+const TURNS: u64 = 4;
 
 /// Pool of dev-humor one-liners for speech bubbles.
 pub const CHITCHAT_LINES: &[&str] = &[
@@ -43,40 +49,58 @@ pub const CHITCHAT_LINES: &[&str] = &[
     "blame git",
 ];
 
-/// A live conversation between two agents at a waypoint.
+/// A social venue that hosts at most one conversation at a time. Meeting-room
+/// slots all map to the same `Room` so the room hosts a single group chat;
+/// every other social waypoint is its own `Waypoint` venue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VenueKey {
+    Room { floor_idx: usize, room_id: usize },
+    Waypoint { floor_idx: usize, wp_idx: usize },
+}
+
+/// A live conversation among the agents currently at a venue.
 pub struct ActiveChitchat {
-    pub wp_key: (usize, usize),
-    pub agent_a: AgentId,
-    pub agent_b: AgentId,
+    pub venue: VenueKey,
+    /// Current attendees, sorted ascending by raw id for a stable speaker
+    /// rotation. Refreshed each frame so agents joining/leaving the venue are
+    /// folded into / out of the rotation.
+    pub participants: Vec<AgentId>,
     pub started_at: SystemTime,
     seed: u64,
 }
 
 impl ActiveChitchat {
-    pub fn new(
-        wp_key: (usize, usize),
-        agent_a: AgentId,
-        agent_b: AgentId,
-        now: SystemTime,
-    ) -> Self {
+    pub fn new(venue: VenueKey, participants: Vec<AgentId>, now: SystemTime) -> Self {
         let ms = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        let seed = agent_a.raw().wrapping_mul(0x9e3779b97f4a7c15) ^ agent_b.raw() ^ ms;
-        // Stable speaker assignment: lower raw id = agent_a.
-        let (a, b) = if agent_a.raw() <= agent_b.raw() {
-            (agent_a, agent_b)
-        } else {
-            (agent_b, agent_a)
-        };
-        Self {
-            wp_key,
-            agent_a: a,
-            agent_b: b,
+        let mut chat = Self {
+            venue,
+            participants: Vec::new(),
             started_at: now,
-            seed,
-        }
+            seed: 0,
+        };
+        chat.set_participants(participants);
+        // Seed from the SORTED participant set (set_participants sorts) + start
+        // time, so the line choice is independent of the HashMap iteration order
+        // the `present` vec was built in — restarting the same group never flips
+        // the line just because agents were enumerated in a different order.
+        chat.seed = chat
+            .participants
+            .iter()
+            .fold(ms.wrapping_mul(0x9e37_79b9_7f4a_7c15), |acc, a| {
+                acc.rotate_left(7) ^ a.raw()
+            });
+        chat
+    }
+
+    /// Replace the attendee set (sorted + de-duplicated) — called each frame so
+    /// the rotation tracks who is actually present.
+    pub fn set_participants(&mut self, mut participants: Vec<AgentId>) {
+        participants.sort_by_key(|a| a.raw());
+        participants.dedup();
+        self.participants = participants;
     }
 
     pub fn is_expired(&self, now: SystemTime) -> bool {
@@ -89,20 +113,21 @@ impl ActiveChitchat {
             .unwrap_or(CHITCHAT_TOTAL_MS)
     }
 
-    /// Returns `(speaker_is_a, line_text)` for the current turn, or `None`
-    /// in the silent gap after the last turn.
-    pub fn current_bubble(&self, now: SystemTime) -> Option<(bool, &'static str)> {
+    /// The agent speaking this turn and their line, or `None` in the silent
+    /// gap / once expired / if nobody is present. The speaker rotates
+    /// round-robin through `participants`.
+    pub fn current_bubble(&self, now: SystemTime) -> Option<(AgentId, &'static str)> {
         let elapsed = self.elapsed_ms(now);
         if elapsed >= CHITCHAT_TOTAL_MS {
             return None;
         }
         let turn = elapsed / TURN_MS;
-        if turn >= 4 {
+        if turn >= TURNS || self.participants.is_empty() {
             return None;
         }
-        let is_speaker_a = turn % 2 == 0;
+        let speaker = self.participants[(turn as usize) % self.participants.len()];
         let line_idx = (self.seed.wrapping_add(turn) as usize) % CHITCHAT_LINES.len();
-        Some((is_speaker_a, CHITCHAT_LINES[line_idx]))
+        Some((speaker, CHITCHAT_LINES[line_idx]))
     }
 }
 
@@ -114,6 +139,8 @@ pub fn supports_chitchat(kind: WaypointKind) -> bool {
             | WaypointKind::Couch
             | WaypointKind::VendingMachine
             | WaypointKind::Printer
+            | WaypointKind::MeetingSofa
+            | WaypointKind::MeetingStand
     )
 }
 
@@ -124,46 +151,64 @@ pub struct ChitchatBubble {
     pub anchor: Point,
 }
 
-/// Expire old conversations, start new ones where two agents share a
-/// waypoint, and return the active bubbles for this frame.
+/// A chitchat-eligible agent present at a venue this frame. `room_id` is
+/// `Some` for meeting slots (they group by room) and `None` for single-point
+/// waypoints (which group by `wp_idx`). Named (not a tuple) so the producer
+/// and consumer can't transpose the two `usize`-ish fields.
+#[derive(Debug, Clone, Copy)]
+pub struct Visitor {
+    pub wp_idx: usize,
+    pub agent_id: AgentId,
+    pub anchor: Point,
+    pub room_id: Option<usize>,
+}
+
+/// Expire old conversations, start/refresh one per venue that has ≥2 agents,
+/// and return the active speech bubbles for this frame.
 pub fn update_and_collect(
-    state: &mut HashMap<(usize, usize), ActiveChitchat>,
+    state: &mut HashMap<VenueKey, ActiveChitchat>,
     floor_idx: usize,
-    visitors: &[(usize, AgentId, Point)],
+    visitors: &[Visitor],
     now: SystemTime,
 ) -> Vec<ChitchatBubble> {
     // Expire old conversations.
     state.retain(|_, chat| !chat.is_expired(now));
 
-    // Group visitors by waypoint index.
-    let mut by_wp: HashMap<usize, Vec<(AgentId, Point)>> = HashMap::new();
-    for &(wp_idx, agent_id, anchor) in visitors {
-        by_wp.entry(wp_idx).or_default().push((agent_id, anchor));
+    // Group visitors by venue (meeting slots → their room, others → the point).
+    let mut by_venue: HashMap<VenueKey, Vec<(AgentId, Point)>> = HashMap::new();
+    for v in visitors {
+        let venue = match v.room_id {
+            Some(room_id) => VenueKey::Room { floor_idx, room_id },
+            None => VenueKey::Waypoint {
+                floor_idx,
+                wp_idx: v.wp_idx,
+            },
+        };
+        by_venue
+            .entry(venue)
+            .or_default()
+            .push((v.agent_id, v.anchor));
     }
 
     let mut bubbles = Vec::new();
-
-    for (wp_idx, agents) in &by_wp {
+    for (venue, agents) in &by_venue {
         if agents.len() < 2 {
             continue;
         }
-        let key = (floor_idx, *wp_idx);
+        let present: Vec<AgentId> = agents.iter().map(|(id, _)| *id).collect();
 
-        // Create new conversation if none exists for this waypoint.
-        state
-            .entry(key)
-            .or_insert_with(|| ActiveChitchat::new(key, agents[0].0, agents[1].0, now));
+        let chat = state
+            .entry(*venue)
+            .or_insert_with(|| ActiveChitchat::new(*venue, present.clone(), now));
+        // Refresh the rotation so joiners/leavers are tracked.
+        chat.set_participants(present);
 
-        // Generate bubble for active conversation.
-        if let Some(chat) = state.get(&key) {
-            if let Some((is_a, text)) = chat.current_bubble(now) {
-                let speaker_id = if is_a { chat.agent_a } else { chat.agent_b };
-                if let Some((_, anchor)) = agents.iter().find(|(id, _)| *id == speaker_id) {
-                    bubbles.push(ChitchatBubble {
-                        text,
-                        anchor: *anchor,
-                    });
-                }
+        if let Some((speaker_id, text)) = chat.current_bubble(now) {
+            if let Some((_, anchor)) = agents.iter().find(|(id, _)| *id == speaker_id) {
+                bubbles.push(ChitchatBubble {
+                    text,
+                    anchor: *anchor,
+                });
             }
         }
     }
@@ -180,118 +225,224 @@ mod tests {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
     }
 
-    fn id_a() -> AgentId {
-        AgentId::from_transcript_path("/a.jsonl")
+    fn aid(s: &str) -> AgentId {
+        AgentId::from_transcript_path(s)
     }
 
-    fn id_b() -> AgentId {
-        AgentId::from_transcript_path("/b.jsonl")
+    fn vk(wp: usize) -> VenueKey {
+        VenueKey::Waypoint {
+            floor_idx: 0,
+            wp_idx: wp,
+        }
+    }
+
+    fn vis(wp_idx: usize, id: &str, room_id: Option<usize>) -> Visitor {
+        Visitor {
+            wp_idx,
+            agent_id: aid(id),
+            anchor: Point {
+                x: (wp_idx as u16) * 4 + 10,
+                y: 20,
+            },
+            room_id,
+        }
     }
 
     #[test]
     fn test_expires_after_total_ms() {
         let start = base_time();
-        let chat = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-        let later = start + Duration::from_millis(7_000);
-        assert!(chat.is_expired(later));
+        let chat = ActiveChitchat::new(vk(0), vec![aid("/a"), aid("/b")], start);
+        assert!(chat.is_expired(start + Duration::from_millis(7_000)));
     }
 
     #[test]
     fn test_not_expired_before_total_ms() {
         let start = base_time();
-        let chat = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-        let later = start + Duration::from_millis(3_000);
-        assert!(!chat.is_expired(later));
+        let chat = ActiveChitchat::new(vk(0), vec![aid("/a"), aid("/b")], start);
+        assert!(!chat.is_expired(start + Duration::from_millis(3_000)));
     }
 
     #[test]
-    fn test_bubble_turn_a_then_b() {
+    fn round_robin_two_participants_alternates() {
         let start = base_time();
-        let chat = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-
-        // Turn 0 (0 ms) — speaker A
-        let bubble_0 = chat.current_bubble(start);
-        assert!(bubble_0.is_some());
-        let (is_a_0, _) = bubble_0.unwrap();
-        assert!(is_a_0, "turn 0 should be speaker A");
-
-        // Turn 1 (1.5 s) — speaker B
-        let bubble_1 = chat.current_bubble(start + Duration::from_millis(1_500));
-        assert!(bubble_1.is_some());
-        let (is_a_1, _) = bubble_1.unwrap();
-        assert!(!is_a_1, "turn 1 should be speaker B");
+        let (a, b) = (aid("/a"), aid("/b"));
+        let chat = ActiveChitchat::new(vk(0), vec![a, b], start);
+        // Sorted ascending: participants[0] speaks turn 0, [1] turn 1, [0] 2...
+        let p0 = chat.participants[0];
+        let p1 = chat.participants[1];
+        assert_eq!(chat.current_bubble(start).unwrap().0, p0);
+        assert_eq!(
+            chat.current_bubble(start + Duration::from_millis(1_500))
+                .unwrap()
+                .0,
+            p1
+        );
+        assert_eq!(
+            chat.current_bubble(start + Duration::from_millis(3_000))
+                .unwrap()
+                .0,
+            p0
+        );
     }
 
     #[test]
-    fn test_no_bubble_after_4_turns() {
+    fn round_robin_cycles_all_participants() {
         let start = base_time();
-        let chat = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-        // 5.5 s = past 4 turns (4 * 1.5 = 6.0), but CHITCHAT_TOTAL_MS = 6.0
-        // so at 5.5s we are in turn 3 (5500/1500 = 3), which is the 4th turn
-        // (0-indexed). That's still valid. Let's check exactly at 6.0s.
-        let at_6s = start + Duration::from_millis(6_000);
-        assert!(chat.current_bubble(at_6s).is_none());
+        let ids: Vec<AgentId> = (0..4).map(|i| aid(&format!("/g{i}"))).collect();
+        let chat = ActiveChitchat::new(vk(0), ids.clone(), start);
+        // Four turns, four participants → every participant speaks exactly once.
+        let mut speakers = std::collections::HashSet::new();
+        for turn in 0..4u64 {
+            let t = start + Duration::from_millis(turn * 1_500);
+            speakers.insert(chat.current_bubble(t).unwrap().0);
+        }
+        assert_eq!(speakers.len(), 4, "all four should get a turn");
+        for id in &ids {
+            assert!(speakers.contains(id));
+        }
     }
 
     #[test]
-    fn test_snippet_stable_same_seed() {
+    fn round_robin_three_participants_wraps() {
         let start = base_time();
-        let chat1 = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-        let chat2 = ActiveChitchat::new((0, 0), id_a(), id_b(), start);
-
-        let b1 = chat1.current_bubble(start);
-        let b2 = chat2.current_bubble(start);
-        assert_eq!(b1.map(|b| b.1), b2.map(|b| b.1));
+        let chat = ActiveChitchat::new(vk(0), vec![aid("/x"), aid("/y"), aid("/z")], start);
+        let p = chat.participants.clone();
+        // turns 0,1,2,3 → p0,p1,p2,p0
+        let speaker = |turn: u64| {
+            chat.current_bubble(start + Duration::from_millis(turn * 1_500))
+                .unwrap()
+                .0
+        };
+        assert_eq!(speaker(0), p[0]);
+        assert_eq!(speaker(1), p[1]);
+        assert_eq!(speaker(2), p[2]);
+        assert_eq!(speaker(3), p[0]);
     }
 
     #[test]
-    fn test_update_and_collect_creates_conversation() {
+    fn no_bubble_after_four_turns() {
+        let start = base_time();
+        let chat = ActiveChitchat::new(vk(0), vec![aid("/a"), aid("/b")], start);
+        assert!(chat
+            .current_bubble(start + Duration::from_millis(6_000))
+            .is_none());
+    }
+
+    #[test]
+    fn meeting_slots_in_same_room_form_one_conversation() {
         let now = base_time();
         let mut state = HashMap::new();
-        let visitors = vec![
-            (0, id_a(), Point { x: 10, y: 20 }),
-            (0, id_b(), Point { x: 15, y: 20 }),
+        // Two different meeting-room waypoints (wp 4 and 5) in room 0.
+        let visitors: Vec<Visitor> = vec![vis(4, "/a", Some(0)), vis(5, "/b", Some(0))];
+        let bubbles = update_and_collect(&mut state, 0, &visitors, now);
+        assert_eq!(state.len(), 1, "one room conversation, not two");
+        assert!(state.contains_key(&VenueKey::Room {
+            floor_idx: 0,
+            room_id: 0
+        }));
+        assert_eq!(bubbles.len(), 1);
+    }
+
+    #[test]
+    fn two_meeting_rooms_host_separate_conversations() {
+        // A dual-meeting-room floor: room 0 and room 1 each get a pair. They
+        // must NOT merge — `room_id` keys distinct venues.
+        let now = base_time();
+        let mut state = HashMap::new();
+        let visitors: Vec<Visitor> = vec![
+            vis(4, "/a", Some(0)),
+            vis(5, "/b", Some(0)),
+            vis(8, "/c", Some(1)),
+            vis(9, "/d", Some(1)),
         ];
         let bubbles = update_and_collect(&mut state, 0, &visitors, now);
-        assert_eq!(state.len(), 1, "one conversation should be created");
-        assert_eq!(bubbles.len(), 1, "one bubble should be emitted");
+        assert_eq!(state.len(), 2, "two rooms → two conversations");
+        assert!(state.contains_key(&VenueKey::Room {
+            floor_idx: 0,
+            room_id: 0
+        }));
+        assert!(state.contains_key(&VenueKey::Room {
+            floor_idx: 0,
+            room_id: 1
+        }));
+        assert_eq!(bubbles.len(), 2);
     }
 
     #[test]
-    fn test_update_and_collect_no_conversation_for_single_visitor() {
+    fn distinct_waypoints_do_not_merge() {
         let now = base_time();
         let mut state = HashMap::new();
-        let visitors = vec![(0, id_a(), Point { x: 10, y: 20 })];
+        // Two agents at wp 0 and one agent each at wp 1 — only wp 0 (with 2)
+        // chats; wp 1's lone agent does not.
+        let visitors: Vec<Visitor> =
+            vec![vis(0, "/a", None), vis(0, "/b", None), vis(1, "/c", None)];
+        let bubbles = update_and_collect(&mut state, 0, &visitors, now);
+        assert_eq!(state.len(), 1, "only the 2-agent waypoint chats");
+        assert!(state.contains_key(&VenueKey::Waypoint {
+            floor_idx: 0,
+            wp_idx: 0
+        }));
+        assert_eq!(bubbles.len(), 1);
+    }
+
+    #[test]
+    fn single_visitor_starts_no_conversation() {
+        let now = base_time();
+        let mut state = HashMap::new();
+        let visitors: Vec<Visitor> = vec![vis(0, "/a", None)];
         let bubbles = update_and_collect(&mut state, 0, &visitors, now);
         assert!(state.is_empty());
         assert!(bubbles.is_empty());
     }
 
     #[test]
-    fn test_update_and_collect_expires_old() {
-        let start = base_time();
+    fn participant_join_extends_rotation() {
+        let now = base_time();
         let mut state = HashMap::new();
-        let visitors = vec![
-            (0, id_a(), Point { x: 10, y: 20 }),
-            (0, id_b(), Point { x: 15, y: 20 }),
-        ];
-        // Create conversation.
-        update_and_collect(&mut state, 0, &visitors, start);
-        assert_eq!(state.len(), 1);
+        // Start with two agents in room 0.
+        let v2: Vec<Visitor> = vec![vis(4, "/a", Some(0)), vis(5, "/b", Some(0))];
+        update_and_collect(&mut state, 0, &v2, now);
+        let key = VenueKey::Room {
+            floor_idx: 0,
+            room_id: 0,
+        };
+        assert_eq!(state.get(&key).unwrap().participants.len(), 2);
 
-        // Advance past expiry — conversation should be reaped and a new
-        // one created (since both visitors are still present).
-        let later = start + Duration::from_millis(7_000);
-        update_and_collect(&mut state, 0, &visitors, later);
-        assert_eq!(state.len(), 1, "old expired, new created");
+        // A third joins mid-conversation → rotation now includes them.
+        let v3: Vec<Visitor> = vec![
+            vis(4, "/a", Some(0)),
+            vis(5, "/b", Some(0)),
+            vis(6, "/c", Some(0)),
+        ];
+        update_and_collect(&mut state, 0, &v3, now + Duration::from_millis(500));
+        assert_eq!(state.get(&key).unwrap().participants.len(), 3);
     }
 
     #[test]
-    fn test_supports_chitchat_kinds() {
+    fn update_and_collect_expires_old() {
+        let start = base_time();
+        let mut state = HashMap::new();
+        let visitors: Vec<Visitor> = vec![vis(0, "/a", None), vis(0, "/b", None)];
+        update_and_collect(&mut state, 0, &visitors, start);
+        assert_eq!(state.len(), 1);
+        // Past expiry → reaped, then a fresh one created (both still present).
+        update_and_collect(
+            &mut state,
+            0,
+            &visitors,
+            start + Duration::from_millis(7_000),
+        );
+        assert_eq!(state.len(), 1);
+    }
+
+    #[test]
+    fn supports_chitchat_kinds() {
         assert!(supports_chitchat(WaypointKind::Pantry));
         assert!(supports_chitchat(WaypointKind::Couch));
         assert!(supports_chitchat(WaypointKind::VendingMachine));
         assert!(supports_chitchat(WaypointKind::Printer));
+        assert!(supports_chitchat(WaypointKind::MeetingSofa));
+        assert!(supports_chitchat(WaypointKind::MeetingStand));
         assert!(!supports_chitchat(WaypointKind::PhoneBooth));
         assert!(!supports_chitchat(WaypointKind::StandingDesk));
     }

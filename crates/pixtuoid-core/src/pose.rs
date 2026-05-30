@@ -28,15 +28,29 @@ use crate::AgentId;
 /// core's `derive` and the tui-side dispatch.
 pub const THINKING_WINDOW_SECS: u64 = 20;
 
-/// Base cycle length. Each agent's actual cycle = base + per-agent jitter.
+/// Base cycle length used only as the stale-resume / off-screen-gap sentinel
+/// in `tui::motion::advance_wander` (a few seconds, above on-screen frame
+/// cadence and below a floor-switch-away gap). NOT the wander dwell anymore —
+/// see `dwell_ms` / `seated_dwell_ms` for the absolute per-spot timeline.
 pub const WANDER_CYCLE_BASE_MS: u64 = 7_000;
 /// Maximum extra time added per agent — jitter range is `[0, RANGE)`.
 pub const WANDER_CYCLE_RANGE_MS: u64 = 6_000;
-/// Phase fractions of a cycle (×1000 to stay in integer math).
-pub const PHASE_SEATED_FRAC: u64 = 250; // 0..250/1000
-pub const PHASE_WALK_OUT_FRAC: u64 = 417; // 250..417/1000
-pub const PHASE_AT_WAYPOINT_FRAC: u64 = 833; // 417..833/1000
-                                             // walk-back is 833..1000/1000.
+
+/// Stateless-overlay wander-timeline estimates. The render authority
+/// (`tui::motion::advance_wander`) drives the at-waypoint beat with the
+/// per-spot `dwell_ms`; `idle_pose` only needs an approximate timeline to
+/// place the occupancy overlay, so it uses these fixed estimates plus a
+/// constant per-agent cycle period (`est_wander_cycle_ms`). Exact coherence
+/// with the routed timeline is impossible — core has no router and walk legs
+/// are physics-timed only in the tui path — and #62's frozen leg paths make
+/// approximate overlay timing safe (a new leg's shape is snapshotted once).
+pub const WANDER_WALK_EST_MS: u64 = 3_500;
+pub const WANDER_DWELL_EST_MS: u64 = 18_000;
+
+/// Absolute desk dwell between wander trips (the Seated beat). Per-agent
+/// jitter via `seated_dwell_ms`.
+pub const SEATED_DWELL_BASE_MS: u64 = 15_000;
+pub const SEATED_DWELL_RANGE_MS: u64 = 15_000;
 
 /// Frame-cycle period for animated poses.
 pub const TYPING_FRAME_MS: u64 = 140;
@@ -56,6 +70,52 @@ pub const ENTRY_ANIMATION_MS: u64 = 4000;
 /// different speed so walkers don't move in lockstep.
 pub fn cycle_ms_for(agent_id: AgentId) -> u64 {
     WANDER_CYCLE_BASE_MS + (agent_id.raw() >> 16) % WANDER_CYCLE_RANGE_MS
+}
+
+/// splitmix64 of the whole agent id with a per-purpose `tag`, for deterministic
+/// per-agent dwell jitter. The `tag` is NOT a cryptographic salt — it just
+/// disambiguates the two callers (`dwell_ms` vs `seated_dwell_ms`) so their
+/// jitter is decorrelated from each other and from `speed_mult` / `pause_ms` /
+/// `cycle_ms` (which slice raw id bits). No security relevance.
+fn dwell_mix(agent_id: AgentId, tag: u64) -> u64 {
+    let mut z = agent_id.raw() ^ tag;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
+}
+
+/// Absolute dwell (ms) an agent lingers at a waypoint, per spot kind, with
+/// per-agent jitter. A sofa / meeting seat is a long lounge; a vending grab
+/// is quick. The render authority (`tui::motion::advance_wander`) uses this
+/// for the AtWaypoint beat.
+pub fn dwell_ms(kind: WaypointKind, agent_id: AgentId) -> u64 {
+    let (base, range) = match kind {
+        // Lounge seating — sit a good while.
+        WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {
+            (20_000, 20_000)
+        }
+        // Coffee / snack break.
+        WaypointKind::Pantry => (10_000, 8_000),
+        // Task-length stations.
+        WaypointKind::PhoneBooth | WaypointKind::StandingDesk => (8_000, 22_000),
+        // Grab-and-go.
+        WaypointKind::VendingMachine | WaypointKind::Printer => (4_000, 4_000),
+    };
+    base + dwell_mix(agent_id, 0xd1b5_4a32_d192_ed03) % range.max(1)
+}
+
+/// Absolute dwell (ms) an agent sits at its desk between wander trips.
+pub fn seated_dwell_ms(agent_id: AgentId) -> u64 {
+    SEATED_DWELL_BASE_MS + dwell_mix(agent_id, 0x9e37_79b9_7f4a_7c15) % SEATED_DWELL_RANGE_MS.max(1)
+}
+
+/// Estimated full wander-cycle wall-time for an agent (desk dwell + two walk
+/// legs + one waypoint dwell). Used by `idle_pose` (stateless overlay) for
+/// `cycle_n` / `phase_t` and by `advance_wander`'s bootstrap fast-forward, so
+/// both place a long-idle agent on the same approximate cycle. Approximate —
+/// the real cycle is physics-timed and per-spot.
+pub fn est_wander_cycle_ms(agent_id: AgentId) -> u64 {
+    seated_dwell_ms(agent_id) + 2 * WANDER_WALK_EST_MS + WANDER_DWELL_EST_MS
 }
 
 /// Per-agent wander personality derived from the agent's id hash.
@@ -336,7 +396,7 @@ pub fn pick_aimless_dest(layout: &SceneLayout, seed: u64) -> Point {
 }
 
 fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u64) -> Pose {
-    let cycle_ms = cycle_ms_for(slot.agent_id);
+    let cycle_ms = est_wander_cycle_ms(slot.agent_id);
     let cycle_n = elapsed_ms / cycle_ms;
     let phase_t = elapsed_ms % cycle_ms;
 
@@ -348,10 +408,12 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
     // mix between lounge waypoint and aimless wander.
     let aimless = is_aimless_cycle(slot.agent_id, cycle_n);
 
-    // Phase boundaries.
-    let seated_end = cycle_ms * PHASE_SEATED_FRAC / 1000;
-    let walk_out_end = cycle_ms * PHASE_WALK_OUT_FRAC / 1000;
-    let at_wp_end = cycle_ms * PHASE_AT_WAYPOINT_FRAC / 1000;
+    // Absolute phase boundaries (fixed overlay estimates; the routed render
+    // path uses per-spot `dwell_ms`). cycle_ms == at_wp_end + WANDER_WALK_EST_MS
+    // by construction, so the walk-back span below is always positive.
+    let seated_end = seated_dwell_ms(slot.agent_id);
+    let walk_out_end = seated_end + WANDER_WALK_EST_MS;
+    let at_wp_end = walk_out_end + WANDER_DWELL_EST_MS;
 
     // Destination: lounge waypoint OR aimless point.
     let (dest, at_dest_pose): (Point, Pose) = if aimless {
@@ -395,7 +457,11 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
     } else if phase_t < at_wp_end {
         at_dest_pose
     } else {
+        // span == WANDER_WALK_EST_MS by construction (cycle_ms == at_wp_end +
+        // WANDER_WALK_EST_MS); assert it so a future estimate-constant change
+        // that zeroed it can't silently divide-by-zero here.
         let span = cycle_ms - at_wp_end;
+        debug_assert!(span > 0, "idle_pose walk-back span invariant violated");
         let t = ((phase_t - at_wp_end) * 1000 / span) as u16;
         let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
         let carrying_coffee = matches!(
@@ -463,14 +529,16 @@ mod tests {
         }
     }
 
-    /// Phase boundary helper using the agent's actual cycle length.
+    /// Phase boundary helper mirroring idle_pose's absolute estimate timeline.
     fn phases(agent_id: AgentId) -> (u64, u64, u64, u64) {
-        let c = cycle_ms_for(agent_id);
+        let seated_end = seated_dwell_ms(agent_id);
+        let walk_out_end = seated_end + WANDER_WALK_EST_MS;
+        let at_wp_end = walk_out_end + WANDER_DWELL_EST_MS;
         (
-            c * PHASE_SEATED_FRAC / 1000,
-            c * PHASE_WALK_OUT_FRAC / 1000,
-            c * PHASE_AT_WAYPOINT_FRAC / 1000,
-            c,
+            seated_end,
+            walk_out_end,
+            at_wp_end,
+            est_wander_cycle_ms(agent_id),
         )
     }
 
@@ -519,7 +587,7 @@ mod tests {
     fn idle_phase_1_is_walking_out() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
         let (seated_end, walk_out_end, _, _) = phases(test_slot.agent_id);
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let trip_n = first_trip_cycle(test_slot.agent_id);
         let midpoint = trip_n * cycle + seated_end + (walk_out_end - seated_end) / 2;
         let (s, now) = slot(ActivityState::Idle, midpoint);
@@ -537,7 +605,7 @@ mod tests {
     fn idle_phase_2_is_at_waypoint() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
         let (_, walk_out_end, at_wp_end, _) = phases(test_slot.agent_id);
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let trip_n = first_trip_cycle(test_slot.agent_id);
         let midpoint = trip_n * cycle + walk_out_end + (at_wp_end - walk_out_end) / 2;
         let (s, now) = slot(ActivityState::Idle, midpoint);
@@ -564,6 +632,82 @@ mod tests {
                 assert!((400..=600).contains(&t_x1000));
             }
             other => panic!("expected Walking, got {other:?}"),
+        }
+    }
+
+    fn aid(i: usize) -> AgentId {
+        AgentId::from_transcript_path(&format!("/p/dwell{i}.jsonl"))
+    }
+
+    #[test]
+    fn dwell_ms_is_within_per_kind_range() {
+        let cases = [
+            (WaypointKind::Couch, 20_000u64, 40_000u64),
+            (WaypointKind::MeetingSofa, 20_000, 40_000),
+            (WaypointKind::MeetingStand, 20_000, 40_000),
+            (WaypointKind::Pantry, 10_000, 18_000),
+            (WaypointKind::PhoneBooth, 8_000, 30_000),
+            (WaypointKind::StandingDesk, 8_000, 30_000),
+            (WaypointKind::VendingMachine, 4_000, 8_000),
+            (WaypointKind::Printer, 4_000, 8_000),
+        ];
+        for (kind, lo, hi) in cases {
+            for i in 0..256 {
+                let d = dwell_ms(kind, aid(i));
+                assert!(
+                    (lo..hi).contains(&d),
+                    "{kind:?} dwell {d} out of [{lo},{hi}) for agent {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dwell_ms_varies_across_agents_and_is_deterministic() {
+        let vals: std::collections::HashSet<u64> = (0..64)
+            .map(|i| dwell_ms(WaypointKind::Couch, aid(i)))
+            .collect();
+        assert!(vals.len() >= 16, "expected dwell jitter across agents");
+        // Deterministic per agent.
+        assert_eq!(
+            dwell_ms(WaypointKind::Couch, aid(7)),
+            dwell_ms(WaypointKind::Couch, aid(7))
+        );
+    }
+
+    #[test]
+    fn seated_dwell_and_est_cycle_are_consistent() {
+        for i in 0..128 {
+            let id = aid(i);
+            let sd = seated_dwell_ms(id);
+            assert!((15_000..30_000).contains(&sd), "seated dwell {sd}");
+            assert_eq!(
+                est_wander_cycle_ms(id),
+                sd + 2 * WANDER_WALK_EST_MS + WANDER_DWELL_EST_MS
+            );
+        }
+    }
+
+    #[test]
+    fn idle_pose_holds_at_waypoint_for_the_whole_dwell_window() {
+        // Across the full at-waypoint beat the agent stays put (AtWaypoint or
+        // AimlessAt), never walking — the "rests too briefly" fix.
+        let (test_slot, _) = slot(ActivityState::Idle, 0);
+        let (_, walk_out_end, at_wp_end, cycle) = phases(test_slot.agent_id);
+        let trip_n = first_trip_cycle(test_slot.agent_id);
+        let l = layout();
+        let window = at_wp_end - walk_out_end;
+        assert!(
+            window >= WANDER_DWELL_EST_MS,
+            "dwell window too short: {window}"
+        );
+        for k in 0..=10 {
+            let t = trip_n * cycle + walk_out_end + (k * window / 10).min(window - 1);
+            let (s, now) = slot(ActivityState::Idle, t);
+            match derive(&s, now, &l).expect("pose") {
+                Pose::AtWaypoint { .. } | Pose::AimlessAt { .. } => {}
+                other => panic!("at t={t} (k={k}) expected resting pose, got {other:?}"),
+            }
         }
     }
 
@@ -600,7 +744,7 @@ mod tests {
     fn non_trip_cycle_is_seated_idle_throughout() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
         let id = test_slot.agent_id;
-        let cycle = cycle_ms_for(id);
+        let cycle = est_wander_cycle_ms(id);
         // Find a cycle where the agent does NOT trip.
         let stay_n = (0u64..100)
             .find(|n| !takes_trip(id, *n))
@@ -621,7 +765,7 @@ mod tests {
     #[test]
     fn idle_cycle_loops_after_one_cycle() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let (s_early, now_early) = slot(ActivityState::Idle, 1_000);
         let (s_loop, now_loop) = slot(ActivityState::Idle, 1_000 + cycle);
         let l = layout();
@@ -701,7 +845,7 @@ mod tests {
     fn waypoint_choice_changes_across_cycles_for_same_agent() {
         let l = layout();
         let (test_slot, _) = slot(ActivityState::Idle, 0);
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let (_, walk_out_end, at_wp_end, _) = phases(test_slot.agent_id);
         let mid_at_wp = walk_out_end + (at_wp_end - walk_out_end) / 2;
 
@@ -772,7 +916,7 @@ mod tests {
     fn walk_back_from_pantry_carries_coffee() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
         let l = layout();
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let (_, _, at_wp_end, _) = phases(test_slot.agent_id);
         let trip_n = first_trip_cycle_to_kind(test_slot.agent_id, &l, WaypointKind::Pantry)
             .expect("agent should visit Pantry within 2000 cycles");
@@ -793,7 +937,7 @@ mod tests {
     fn walk_back_from_non_pantry_no_coffee() {
         let (test_slot, _) = slot(ActivityState::Idle, 0);
         let l = layout();
-        let cycle = cycle_ms_for(test_slot.agent_id);
+        let cycle = est_wander_cycle_ms(test_slot.agent_id);
         let (_, _, at_wp_end, _) = phases(test_slot.agent_id);
         // Find a trip cycle to a non-Pantry waypoint.
         let trip_n = (0u64..2000)

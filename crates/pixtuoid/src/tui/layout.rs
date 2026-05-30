@@ -4,8 +4,8 @@
 //! computation, walkability mask, and primitive geometry.
 
 pub use pixtuoid_core::layout::{
-    Bounds, PlantKind, PodDecor, Point, SceneLayout, WallDecor, Waypoint, WaypointKind, DESK_GAP_X,
-    DESK_GAP_Y, DESK_H, DESK_W, MAX_VISIBLE_DESKS, MIN_TOP_MARGIN, OBSTACLE_PAD_PX,
+    Bounds, Facing, PlantKind, PodDecor, Point, SceneLayout, WallDecor, Waypoint, WaypointKind,
+    DESK_GAP_X, DESK_GAP_Y, DESK_H, DESK_W, MAX_VISIBLE_DESKS, MIN_TOP_MARGIN, OBSTACLE_PAD_PX,
 };
 
 /// Backwards-compat alias — existing call sites construct `Layout::compute()`.

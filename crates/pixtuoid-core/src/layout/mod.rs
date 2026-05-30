@@ -14,7 +14,7 @@ mod compute;
 mod decor;
 mod mask;
 
-pub use decor::{PlantKind, PodDecor, WallDecor, WaypointKind};
+pub use decor::{Facing, PlantKind, PodDecor, WallDecor, WaypointKind};
 
 use crate::walkable::WalkableMask;
 
@@ -39,6 +39,14 @@ pub struct Point {
 pub struct Waypoint {
     pub pos: Point,
     pub kind: WaypointKind,
+    /// Direction the occupant faces while at this waypoint. `South` for
+    /// all the legacy single-point waypoints (facing-neutral); set toward
+    /// the table for meeting-room slots.
+    pub facing: Facing,
+    /// Meeting-room id this slot belongs to (`Some(idx)` for
+    /// `MeetingSofa` / `MeetingStand`, `None` otherwise). Slots sharing a
+    /// `room_id` form one group-chitchat venue.
+    pub room_id: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +224,117 @@ mod tests {
                 }
                 WaypointKind::VendingMachine | WaypointKind::Printer => {
                     assert!(w.pos.y >= l.top_margin);
+                }
+                WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {
+                    // A meeting slot only exists when a meeting room does, and
+                    // it carries the room id it belongs to.
+                    assert!(l.meeting_room.is_some());
+                    assert!(w.room_id.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn meeting_slots_track_meeting_rooms() {
+        // Across every floor variant, a meeting slot exists iff a meeting
+        // room exists, every slot carries a valid room_id, and a dual-meeting
+        // floor produces slots for both rooms.
+        let mut saw_room = false;
+        let mut saw_no_room = false;
+        let mut saw_dual = false;
+        for seed in 0..40u64 {
+            let l = SceneLayout::compute_with_seed(160, 120, 8, seed).expect("fits");
+            let sofa_slots: Vec<_> = l
+                .waypoints
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w.kind,
+                        WaypointKind::MeetingSofa | WaypointKind::MeetingStand
+                    )
+                })
+                .collect();
+            if l.meeting_room.is_some() {
+                saw_room = true;
+                assert!(
+                    sofa_slots
+                        .iter()
+                        .any(|w| w.kind == WaypointKind::MeetingSofa),
+                    "seed {seed}: meeting room but no sofa slot"
+                );
+                assert!(
+                    sofa_slots
+                        .iter()
+                        .any(|w| w.kind == WaypointKind::MeetingStand),
+                    "seed {seed}: meeting room but no standing slot"
+                );
+                let rooms = l.meeting_tables.len();
+                for w in &sofa_slots {
+                    let rid = w.room_id.expect("meeting slot has room_id");
+                    assert!(
+                        rid < rooms,
+                        "seed {seed}: room_id {rid} out of range {rooms}"
+                    );
+                }
+                if rooms == 2 {
+                    saw_dual = true;
+                    assert!(
+                        sofa_slots.iter().any(|w| w.room_id == Some(1)),
+                        "seed {seed}: dual meeting but no room-1 slot"
+                    );
+                }
+            } else {
+                saw_no_room = true;
+                assert!(
+                    sofa_slots.is_empty(),
+                    "seed {seed}: no meeting room but {} meeting slots",
+                    sofa_slots.len()
+                );
+            }
+        }
+        assert!(saw_room, "no seed produced a meeting room");
+        assert!(saw_no_room, "no seed produced a meeting-less floor");
+        assert!(saw_dual, "no seed produced a dual-meeting floor");
+    }
+
+    #[test]
+    fn meeting_slots_face_the_table() {
+        // Sofa seats face the table across the room (north seat faces South,
+        // south seat faces North); standing slots face inward toward the table
+        // centre (west faces East, east faces West). This is what makes the
+        // render pick front "seated" vs "back_couch" and the correct flip.
+        for seed in 0..40u64 {
+            let l = SceneLayout::compute_with_seed(160, 120, 8, seed).expect("fits");
+            for w in &l.waypoints {
+                let Some(room_id) = w.room_id else { continue };
+                let table = l.meeting_tables[room_id];
+                match w.kind {
+                    WaypointKind::MeetingSofa => {
+                        let want = if w.pos.y < table.y {
+                            Facing::South
+                        } else {
+                            Facing::North
+                        };
+                        assert_eq!(
+                            w.facing, want,
+                            "seed {seed}: sofa {:?} vs table {:?}",
+                            w.pos, table
+                        );
+                    }
+                    WaypointKind::MeetingStand => {
+                        let want = if w.pos.x < table.x {
+                            Facing::East
+                        } else {
+                            Facing::West
+                        };
+                        assert_eq!(
+                            w.facing, want,
+                            "seed {seed}: stand {:?} vs table {:?}",
+                            w.pos, table
+                        );
+                    }
+                    _ => {}
                 }
             }
         }

@@ -134,6 +134,8 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
             WaypointKind::StandingDesk => (8, 8),
             WaypointKind::VendingMachine => (4, 6),
             WaypointKind::Printer => (5, 4),
+            // Meeting slots hover via the dedicated meeting_sofas loop below.
+            WaypointKind::MeetingSofa | WaypointKind::MeetingStand => continue,
         };
         let wx = wp.pos.x.saturating_sub(w / 2);
         let wy = wp.pos.y.saturating_sub(h / 2);
@@ -145,6 +147,8 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
                 WaypointKind::StandingDesk => "Standing Desk",
                 WaypointKind::VendingMachine => "Vending Machine",
                 WaypointKind::Printer => "Printer",
+                // Unreachable: meeting slots `continue` above.
+                WaypointKind::MeetingSofa | WaypointKind::MeetingStand => unreachable!(),
             });
         }
     }
