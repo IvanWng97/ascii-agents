@@ -84,7 +84,9 @@ crates/
 │       ├── default/        coworking-lounge pack (embedded via include_str!)
 │       ├── robot/          proof-of-concept robot character pack (loadable via --pack-dir)
 │       └── skeleton/       template pack for custom sprite creation (extracted via init-pack)
-scripts/                    preflight.sh (CI mirror), crop-snapshot.py (visual verification)
+scripts/                    preflight.sh (CI mirror), crop-snapshot.py (visual verification),
+                            replay-fixture.sh (replay a captured source rollout fixture into a
+                            headless run via --codex-sessions-root, for eyeballing lifecycle)
 ```
 
 ## Build & test
