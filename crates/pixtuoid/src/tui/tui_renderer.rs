@@ -1584,4 +1584,180 @@ mod harness_tests {
             "Edit vs Bash should tint the cubicle measurably differently (diff={d})"
         );
     }
+
+    // ===================================================================
+    // Tooltip variants on hover (exercise widgets/tooltip.rs branches)
+    // ===================================================================
+
+    #[test]
+    fn coffee_machine_tooltip_on_hover() {
+        let scene = scene_with(vec![idle("/tt/c.jsonl", 0, t0())], 16);
+        let mut r = build(140, 48, vec![]);
+        r.render(&scene, &pack(), t0()).unwrap();
+        let layout = r.cached_layout().expect("layout");
+        // Find a cell that hits the coffee machine.
+        let mut hover = None;
+        'scan: for my in 0..48u16 {
+            for mx in 0..140u16 {
+                if crate::tui::hit_test::hit_test_coffee_machine(layout, mx, my) {
+                    hover = Some((mx, my));
+                    break 'scan;
+                }
+            }
+        }
+        let hover = hover.expect("coffee machine should be hit-testable");
+        r.set_mouse_pos(Some(hover));
+        r.render(&scene, &pack(), t0()).unwrap();
+        assert!(
+            frame_text(r.frame_buffer()).contains("Ivan"),
+            "hovering the coffee machine shows the Buy-Ivan-a-coffee tooltip"
+        );
+    }
+
+    #[test]
+    fn furniture_tooltip_on_hover_over_empty_desk() {
+        // Agent on desk 0; hover an EMPTY desk so furniture (not agent) tooltip wins.
+        let scene = scene_with(vec![idle("/tt/f.jsonl", 0, t0())], 16);
+        let mut r = build(140, 48, vec![]);
+        r.render(&scene, &pack(), t0()).unwrap();
+        let layout = r.cached_layout().expect("layout");
+        if layout.home_desks.len() < 2 {
+            return;
+        }
+        let d1 = layout.home_desks[1];
+        r.set_mouse_pos(Some((d1.x + 4, d1.y / 2 + 1)));
+        r.render(&scene, &pack(), t0()).unwrap();
+        assert!(
+            frame_text(r.frame_buffer()).contains("Desk"),
+            "hovering an empty desk shows the Desk furniture tooltip"
+        );
+    }
+
+    #[test]
+    fn pet_tooltip_on_hover() {
+        let scene = scene_with(vec![active("/tt/p.jsonl", 0, "Edit", t0())], 16);
+        let mut r = build(140, 48, vec![PetKind::Cat]);
+        r.render(&scene, &pack(), t0()).unwrap();
+        let (pos, _, _) = r.cached_pet_pos().expect("cat placed");
+        r.set_mouse_pos(Some((pos.x, pos.y / 2)));
+        r.render(&scene, &pack(), t0()).unwrap();
+        let text = frame_text(r.frame_buffer());
+        assert!(
+            text.contains("Cat") || text.contains("purr"),
+            "hovering the cat shows its tooltip"
+        );
+    }
+
+    // ===================================================================
+    // Theme picker + version-popup PAINT (renderer.rs / hud.rs branches)
+    // ===================================================================
+
+    #[test]
+    fn theme_picker_renders_theme_names() {
+        let scene = scene_with(vec![idle("/tp/0.jsonl", 0, t0())], 16);
+        let mut r = build(140, 48, vec![]);
+        r.set_theme_picker(Some(0));
+        r.render(&scene, &pack(), t0()).unwrap();
+        let text = frame_text(r.frame_buffer());
+        assert!(
+            text.contains("cyberpunk") || text.contains("normal"),
+            "the theme picker lists theme names"
+        );
+    }
+
+    #[test]
+    fn version_popup_paints_when_open() {
+        let scene = scene_with(vec![idle("/vp/0.jsonl", 0, t0())], 16);
+        let mut r = build(140, 48, vec![]);
+        // Baseline (no popup).
+        r.render(&scene, &pack(), t0()).unwrap();
+        let baseline = r.buf().clone();
+        // Open popup; render past the 200ms entrance so it's at full scale.
+        r.set_version_popup(true, t0());
+        let t1 = t0() + Duration::from_millis(250);
+        r.render(&scene, &pack(), t1).unwrap();
+        assert!(
+            r.last_popup_scale() > 0.9,
+            "popup should be near full scale"
+        );
+        let d = region_diff(&baseline, r.buf(), 0, 0, baseline.width, baseline.height);
+        assert!(
+            d > 1000,
+            "an open version popup must paint over the scene (diff={d})"
+        );
+    }
+
+    // ===================================================================
+    // Desk personalization by session age (drawable.rs)
+    // ===================================================================
+
+    #[test]
+    fn aged_agent_personalizes_desk() {
+        // A long-lived agent accrues desk items (plant ≥30min, photo ≥1hr);
+        // its desk region should differ from a brand-new agent's.
+        let render_age = |age_secs: u64| -> (RgbBuffer, Point) {
+            let scene = scene_with(
+                vec![idle(
+                    "/age/0.jsonl",
+                    0,
+                    t0() - Duration::from_secs(age_secs),
+                )],
+                16,
+            );
+            let mut r = build(120, 44, vec![]);
+            r.render(&scene, &pack(), t0()).unwrap();
+            let desk = r.cached_layout().expect("layout").home_desks[0];
+            (r.buf().clone(), desk)
+        };
+        let (fresh, desk) = render_age(5);
+        let (aged, _) = render_age(7200); // 2h ⇒ plant + photo frame
+        let d = region_diff(
+            &fresh,
+            &aged,
+            desk.x.saturating_sub(2),
+            desk.y.saturating_sub(4),
+            20,
+            12,
+        );
+        assert!(
+            d > 0,
+            "an aged agent's desk should show personalization items"
+        );
+    }
+
+    // ===================================================================
+    // Weather smoke-render (background/* + ambient.rs paint paths)
+    // ===================================================================
+
+    #[test]
+    fn weather_variants_render_without_panic_and_vary() {
+        // Weather is a deterministic hash of wall-clock (changes every ~10min).
+        // Render across a week of 10-min steps: every variant's paint path runs
+        // (no panic), and the window strip takes several distinct appearances.
+        let scene = scene_with(vec![idle("/w/0.jsonl", 0, t0())], 16);
+        let mut r = build(120, 44, vec![]);
+        let mut sigs = std::collections::HashSet::new();
+        for step in 0..120u64 {
+            // 10-min steps so each sample can land on a different weather window.
+            let now = t0() + Duration::from_secs(step * 600 + 12 * 3600);
+            r.render(&scene, &pack(), now).unwrap();
+            // Signature the top window strip (where weather effects paint).
+            let buf = r.buf();
+            let mut s: u64 = 0;
+            for y in 0..(buf.height / 4).max(1) {
+                for x in (0..buf.width).step_by(7) {
+                    let c = buf.get(x, y);
+                    s = s
+                        .wrapping_mul(1099511628211)
+                        .wrapping_add((c.0 as u64) << 16 | (c.1 as u64) << 8 | c.2 as u64);
+                }
+            }
+            sigs.insert(s);
+        }
+        assert!(
+            sigs.len() >= 4,
+            "weather/time variation should produce several distinct window renders, saw {}",
+            sigs.len()
+        );
+    }
 }
