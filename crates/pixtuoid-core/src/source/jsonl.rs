@@ -16,6 +16,16 @@ pub type LineDecoder = fn(&str, &str, serde_json::Value) -> Result<Vec<AgentEven
 pub type LabelDeriver = fn(&Path, &str, &Path) -> String;
 pub type SessionEndChecker = fn(&[u8]) -> bool;
 
+/// Derives the opaque session-id string used to build the generic
+/// `SessionStart`'s `AgentId`. Default returns the transcript file path
+/// (CC/Antigravity coalesce hook↔JSONL on the path). Codex overrides it to
+/// the rollout filename's trailing UUID so it matches the hook `session_id`.
+pub type IdDeriver = fn(&Path) -> String;
+
+fn default_id_from_path(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
+
 pub struct JsonlWatcher {
     root: PathBuf,
     initial_window: Duration,
@@ -23,6 +33,7 @@ pub struct JsonlWatcher {
     decode_line: LineDecoder,
     derive_label: LabelDeriver,
     check_session_ended: SessionEndChecker,
+    id_derive: IdDeriver,
 }
 
 const DEFAULT_INITIAL_WINDOW: Duration = Duration::from_secs(3600);
@@ -42,11 +53,17 @@ impl JsonlWatcher {
             decode_line,
             derive_label,
             check_session_ended,
+            id_derive: default_id_from_path,
         }
     }
 
     pub fn with_initial_window(mut self, window: Duration) -> Self {
         self.initial_window = window;
+        self
+    }
+
+    pub fn with_id_deriver(mut self, id_derive: IdDeriver) -> Self {
+        self.id_derive = id_derive;
         self
     }
 
@@ -73,6 +90,7 @@ impl JsonlWatcher {
         let decode_line = self.decode_line;
         let derive_label = self.derive_label;
         let check_ended = self.check_session_ended;
+        let id_derive = self.id_derive;
 
         initial_seed_root(
             &self.root,
@@ -84,6 +102,7 @@ impl JsonlWatcher {
             &cursors,
             &seen_sessions,
             &tx,
+            id_derive,
         )
         .await;
 
@@ -98,14 +117,14 @@ impl JsonlWatcher {
             let source_arc = source_arc.clone();
             tokio::select! {
                 Some(path) = notify_rx.recv() => {
-                    walk_jsonl(&path, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
+                    walk_jsonl(&path, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx, id_derive).await;
                 }
                 _ = &mut rescan_delay, if !rescan_done => {
                     rescan_done = true;
-                    scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
+                    scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx, id_derive).await;
                 }
                 _ = tokio::time::sleep(Duration::from_secs(60)) => {
-                    scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx).await;
+                    scan_root(&self.root, &source_arc, decode_line, derive_label, &cursors, &seen_sessions, &tx, id_derive).await;
                 }
             }
         }
@@ -123,6 +142,7 @@ async fn initial_seed_root(
     cursors: &Arc<Mutex<HashMap<PathBuf, u64>>>,
     seen: &Arc<Mutex<HashMap<PathBuf, bool>>>,
     tx: &TaggedSender,
+    id_derive: IdDeriver,
 ) {
     if let Ok(mut read) = tokio::fs::read_dir(root).await {
         while let Ok(Some(entry)) = read.next_entry().await {
@@ -136,6 +156,7 @@ async fn initial_seed_root(
                 cursors,
                 seen,
                 tx,
+                id_derive,
             )
             .await;
         }
@@ -153,6 +174,7 @@ async fn initial_seed_walk(
     cursors: &Arc<Mutex<HashMap<PathBuf, u64>>>,
     seen: &Arc<Mutex<HashMap<PathBuf, bool>>>,
     tx: &TaggedSender,
+    id_derive: IdDeriver,
 ) {
     let meta = match tokio::fs::metadata(path).await {
         Ok(m) => m,
@@ -171,6 +193,7 @@ async fn initial_seed_walk(
                     cursors,
                     seen,
                     tx,
+                    id_derive,
                 ))
                 .await;
             }
@@ -198,13 +221,24 @@ async fn initial_seed_walk(
         if ended {
             cursors.lock().await.insert(path.to_path_buf(), meta.len());
         } else {
-            walk_jsonl(path, source, decode_line, derive_label, cursors, seen, tx).await;
+            walk_jsonl(
+                path,
+                source,
+                decode_line,
+                derive_label,
+                cursors,
+                seen,
+                tx,
+                id_derive,
+            )
+            .await;
         }
     } else {
         cursors.lock().await.insert(path.to_path_buf(), meta.len());
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn scan_root(
     root: &Path,
     source: &Arc<str>,
@@ -213,6 +247,7 @@ async fn scan_root(
     cursors: &Arc<Mutex<HashMap<PathBuf, u64>>>,
     seen: &Arc<Mutex<HashMap<PathBuf, bool>>>,
     tx: &TaggedSender,
+    id_derive: IdDeriver,
 ) {
     if let Ok(mut read) = tokio::fs::read_dir(root).await {
         while let Ok(Some(entry)) = read.next_entry().await {
@@ -224,12 +259,14 @@ async fn scan_root(
                 cursors,
                 seen,
                 tx,
+                id_derive,
             )
             .await;
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn walk_jsonl(
     path: &Path,
     source: &Arc<str>,
@@ -238,6 +275,7 @@ async fn walk_jsonl(
     cursors: &Arc<Mutex<HashMap<PathBuf, u64>>>,
     seen: &Arc<Mutex<HashMap<PathBuf, bool>>>,
     tx: &TaggedSender,
+    id_derive: IdDeriver,
 ) {
     let meta = match tokio::fs::metadata(path).await {
         Ok(m) => m,
@@ -254,6 +292,7 @@ async fn walk_jsonl(
                     cursors,
                     seen,
                     tx,
+                    id_derive,
                 ))
                 .await;
             }
@@ -330,7 +369,7 @@ async fn walk_jsonl(
     {
         let mut seen = seen.lock().await;
         if seen.insert(path.to_path_buf(), true).is_none() {
-            let id = AgentId::from_parts(source, &transcript_path_str);
+            let id = AgentId::from_parts(source, &id_derive(path));
             let session_id = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -446,6 +485,34 @@ fn extract_cwd(bytes: &[u8]) -> Option<PathBuf> {
         if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
             return Some(PathBuf::from(cwd));
         }
+        if let Some(cwd) = v
+            .get("payload")
+            .and_then(|p| p.get("cwd"))
+            .and_then(|c| c.as_str())
+        {
+            return Some(PathBuf::from(cwd));
+        }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_id_from_path_returns_full_path_string() {
+        let p = Path::new("/Users/me/.claude/projects/x/abc.jsonl");
+        assert_eq!(default_id_from_path(p), "/Users/me/.claude/projects/x/abc.jsonl");
+    }
+
+    #[test]
+    fn extract_cwd_reads_top_level_and_nested_payload() {
+        // CC/AG shape: top-level cwd.
+        let top = br#"{"cwd":"/repo/a"}"#;
+        assert_eq!(extract_cwd(top), Some(PathBuf::from("/repo/a")));
+        // Codex shape: cwd nested under payload (session_meta).
+        let nested = br#"{"type":"session_meta","payload":{"cwd":"/repo/b","id":"u"}}"#;
+        assert_eq!(extract_cwd(nested), Some(PathBuf::from("/repo/b")));
+    }
 }
