@@ -589,12 +589,19 @@ pub fn plan_targets(
             None => Plan::Conflict(format!("unknown target: {name}")),
         },
         None => {
-            let detected: Vec<_> = present.iter().filter(|(_, p)| *p).map(|(t, _)| *t).collect();
-            if explicit_config && detected.len() != 1 {
-                return Plan::Conflict(
-                    "--config requires exactly one target; pass --target".into(),
-                );
+            // `--config`/`--settings` without `--target` is the legacy Claude-only
+            // contract (pre-multi-CLI scripts). The supplied path IS the target
+            // selection signal — `$HOME` detection is meaningless here — so default
+            // to Claude rather than coupling the explicit path to ambient detection.
+            // (This is why the `--settings` back-compat oracle keeps passing once
+            // CODEX joins TARGETS and detection could see 0 or 2 present CLIs.)
+            if explicit_config {
+                return match target::by_name("claude") {
+                    Some(t) => Plan::Targets(vec![t]),
+                    None => Plan::Conflict("claude target not registered".into()),
+                };
             }
+            let detected: Vec<_> = present.iter().filter(|(_, p)| *p).map(|(t, _)| *t).collect();
             match detected.len() {
                 0 => Plan::NothingDetected,
                 1 => Plan::Targets(detected), // TTY or not: a single detected target is safe

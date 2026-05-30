@@ -26,6 +26,10 @@ pub struct Target {
     pub merge_uninstall: fn(content: &str) -> Result<String>,
     /// True if the bare hook name must resolve on PATH (Claude writes the bare name).
     pub needs_path_warning: bool,
+    /// Optional courtesy note printed after a successful install — e.g. Codex's
+    /// `config.toml` loses comments/ordering on the `toml::Value` round-trip.
+    /// Format-agnostic: the orchestrator just prints it, no per-target name-matching.
+    pub post_install_note: Option<&'static str>,
 }
 
 /// Backup suffix — the same constant for every target (not a per-target field).
@@ -40,6 +44,7 @@ pub const CLAUDE: Target = Target {
     merge_install: crate::install::claude::merge_install,
     merge_uninstall: crate::install::claude::merge_uninstall,
     needs_path_warning: true,
+    post_install_note: None,
 };
 
 pub const CODEX: Target = Target {
@@ -51,6 +56,9 @@ pub const CODEX: Target = Target {
     merge_install: crate::install::codex::merge_install,
     merge_uninstall: crate::install::codex::merge_uninstall,
     needs_path_warning: false,
+    post_install_note: Some(
+        "note: comments and formatting in config.toml are not preserved (restore from the backup if needed).",
+    ),
 };
 
 pub const TARGETS: &[&Target] = &[&CLAUDE, &CODEX];

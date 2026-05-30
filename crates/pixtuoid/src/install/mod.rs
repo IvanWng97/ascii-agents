@@ -197,6 +197,9 @@ fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) 
         println!("warn: `pixtuoid-hook` not found on PATH (checked against this shell).");
         println!("      Install it on PATH, e.g. `cargo install --path crates/pixtuoid-hook`.");
     }
+    if let Some(note) = t.post_install_note {
+        println!("{note}");
+    }
     println!(
         "→ start a new {} session for this to take effect.",
         t.restart_noun
@@ -249,6 +252,7 @@ mod tests {
         merge_install: |c, _| Ok(c.to_string()),
         merge_uninstall: |c| Ok(c.to_string()),
         needs_path_warning: false,
+        post_install_note: None,
     };
 
     fn present(claude: bool, fake: bool) -> Vec<(&'static Target, bool)> {
