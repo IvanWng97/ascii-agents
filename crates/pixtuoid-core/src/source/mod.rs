@@ -160,6 +160,7 @@ pub trait Source: Send + 'static {
 
 pub mod antigravity;
 pub mod claude_code;
+pub mod codex;
 pub mod decoder;
 pub mod hook;
 pub mod jsonl;
