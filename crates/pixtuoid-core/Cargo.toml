@@ -30,4 +30,5 @@ libc        = "0.2"
 tokio = { workspace = true, features = ["sync", "rt", "macros", "fs", "net", "time", "io-util", "rt-multi-thread"] }
 tempfile = "3"
 filetime = "0.2"
+insta = { version = "1", features = ["yaml"] }
 

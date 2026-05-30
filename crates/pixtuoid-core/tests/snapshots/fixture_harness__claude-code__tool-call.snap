@@ -1,0 +1,27 @@
+---
+source: crates/pixtuoid-core/tests/fixture_harness.rs
+expression: events
+---
+- Rename:
+    agent_id: 13551487942093082797
+    label: code-architect
+- ActivityStart:
+    agent_id: 13551487942093082797
+    activity: Typing
+    tool_use_id: toolu_demo0000000000000001
+    detail:
+      Generic:
+        display: "Glob: crates/**/*.rs"
+- ActivityEnd:
+    agent_id: 13551487942093082797
+    tool_use_id: toolu_demo0000000000000001
+- ActivityStart:
+    agent_id: 13551487942093082797
+    activity: Typing
+    tool_use_id: toolu_demo0000000000000001
+    detail:
+      Generic:
+        display: "Glob: crates/**/*.rs"
+- ActivityEnd:
+    agent_id: 13551487942093082797
+    tool_use_id: toolu_demo0000000000000001
