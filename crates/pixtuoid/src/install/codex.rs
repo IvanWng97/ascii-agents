@@ -1,0 +1,295 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, Context, Result};
+use toml::value::Table;
+
+const SENTINEL_KEY: &str = "_pixtuoid";
+
+const CODEX_EVENTS: &[&str] = &[
+    "SessionStart",
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+    "PermissionRequest",
+];
+
+pub fn default_config_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(format!("{home}/.codex/config.toml"))
+}
+
+/// Codex runs the `command` string under a shell; we write an ABSOLUTE path
+/// (robust regardless of PATH) prefixed with PIXTUOID_SOURCE so the shim can
+/// stamp the source. Err on non-UTF-8 (prevents the to_string_lossy dead-hook).
+pub fn hook_command(resolved: &Path) -> Result<String> {
+    let p = resolved
+        .to_str()
+        .ok_or_else(|| anyhow!("pixtuoid-hook path is non-UTF-8: {}", resolved.display()))?;
+    Ok(format!("PIXTUOID_SOURCE=codex {p}"))
+}
+
+fn parse_or_empty(content: &str) -> Result<toml::Value> {
+    if content.trim().is_empty() {
+        return Ok(toml::Value::Table(Table::new()));
+    }
+    toml::from_str(content).context("config.toml is not valid TOML — refusing to overwrite")
+}
+
+pub fn merge_install(content: &str, hook_cmd: &str) -> Result<String> {
+    let doc = parse_or_empty(content)?;
+    let merged = toml_merge_install(doc, hook_cmd);
+    Ok(toml::to_string_pretty(&merged)?)
+}
+
+pub fn merge_uninstall(content: &str) -> Result<String> {
+    let doc = parse_or_empty(content)?;
+    let cleaned = toml_merge_uninstall(doc);
+    Ok(toml::to_string_pretty(&cleaned)?)
+}
+
+fn command_basename_is_hook(command: &str) -> bool {
+    // The command string may be "PIXTUOID_SOURCE=codex /path/pixtuoid-hook";
+    // take the last whitespace-separated token, then its file_name.
+    let token = command.split_whitespace().last().unwrap_or(command);
+    Path::new(token).file_name().and_then(|s| s.to_str()) == Some("pixtuoid-hook")
+}
+
+fn handler_is_managed(h: &toml::Value) -> bool {
+    if h.get(SENTINEL_KEY).and_then(|v| v.as_bool()) == Some(true) {
+        return true;
+    }
+    // Legacy fallback for pre-sentinel (#59) entries.
+    h.get("type").and_then(|v| v.as_str()) == Some("command")
+        && h.get("command")
+            .and_then(|v| v.as_str())
+            .is_some_and(command_basename_is_hook)
+}
+
+fn prune_managed_handlers(group: &mut toml::Value) {
+    if let Some(hooks) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+        hooks.retain(|h| !handler_is_managed(h));
+    }
+}
+
+fn group_has_no_hooks(group: &toml::Value) -> bool {
+    group
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .is_some_and(|h| h.is_empty())
+}
+
+fn managed_group(event: &str, hook_command: &str) -> toml::Value {
+    let mut handler = Table::new();
+    handler.insert("type".into(), toml::Value::String("command".into()));
+    handler.insert("command".into(), toml::Value::String(hook_command.into()));
+    handler.insert("timeout".into(), toml::Value::Integer(5));
+    handler.insert(
+        "statusMessage".into(),
+        toml::Value::String("pixtuoid visualizer".into()),
+    );
+    handler.insert(SENTINEL_KEY.into(), toml::Value::Boolean(true));
+
+    let mut group = Table::new();
+    if matches!(
+        event,
+        "PreToolUse" | "PostToolUse" | "SubagentStart" | "SubagentStop" | "PermissionRequest"
+    ) {
+        group.insert("matcher".into(), toml::Value::String("*".into()));
+    } else if event == "SessionStart" {
+        group.insert(
+            "matcher".into(),
+            toml::Value::String("startup|resume|clear|compact".into()),
+        );
+    }
+    group.insert(
+        "hooks".into(),
+        toml::Value::Array(vec![toml::Value::Table(handler)]),
+    );
+    toml::Value::Table(group)
+}
+
+fn toml_merge_install(doc: toml::Value, hook_command: &str) -> toml::Value {
+    let mut root = doc.as_table().cloned().unwrap_or_default();
+    let hooks = root
+        .entry("hooks".to_string())
+        .or_insert_with(|| toml::Value::Table(Table::new()));
+    if !hooks.is_table() {
+        *hooks = toml::Value::Table(Table::new());
+    }
+    if let Some(hooks) = hooks.as_table_mut() {
+        for ev in CODEX_EVENTS {
+            let entry = hooks
+                .entry((*ev).to_string())
+                .or_insert_with(|| toml::Value::Array(vec![]));
+            if !entry.is_array() {
+                *entry = toml::Value::Array(vec![]);
+            }
+            if let Some(arr) = entry.as_array_mut() {
+                for group in arr.iter_mut() {
+                    prune_managed_handlers(group);
+                }
+                arr.retain(|group| !group_has_no_hooks(group));
+                arr.push(managed_group(ev, hook_command));
+            }
+        }
+    }
+    toml::Value::Table(root)
+}
+
+fn toml_merge_uninstall(mut doc: toml::Value) -> toml::Value {
+    let Some(root) = doc.as_table_mut() else {
+        return doc;
+    };
+    let Some(toml::Value::Table(hooks)) = root.get_mut("hooks") else {
+        return doc;
+    };
+    for (_ev, list) in hooks.iter_mut() {
+        if let Some(arr) = list.as_array_mut() {
+            for group in arr.iter_mut() {
+                prune_managed_handlers(group);
+            }
+            arr.retain(|group| !group_has_no_hooks(group));
+        }
+    }
+    let empty: Vec<String> = hooks
+        .iter()
+        .filter_map(|(k, v)| match v.as_array() {
+            Some(a) if a.is_empty() => Some(k.clone()),
+            _ => None,
+        })
+        .collect();
+    for k in empty {
+        hooks.remove(&k);
+    }
+    if hooks.is_empty() {
+        root.remove("hooks");
+    }
+    doc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(s: &str) -> toml::Value {
+        toml::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn install_creates_groups_for_all_events_with_sentinel() {
+        let out = merge_install("", "PIXTUOID_SOURCE=codex /opt/bin/pixtuoid-hook").unwrap();
+        let v = parse(&out);
+        for ev in CODEX_EVENTS {
+            let arr = v["hooks"][*ev].as_array().unwrap();
+            assert_eq!(arr.len(), 1, "event {ev}");
+            let handler = &arr[0]["hooks"][0];
+            assert_eq!(
+                handler["command"].as_str().unwrap(),
+                "PIXTUOID_SOURCE=codex /opt/bin/pixtuoid-hook"
+            );
+            assert_eq!(handler["timeout"].as_integer().unwrap(), 5);
+            assert_eq!(
+                handler["statusMessage"].as_str().unwrap(),
+                "pixtuoid visualizer"
+            );
+            assert!(handler["_pixtuoid"].as_bool().unwrap());
+        }
+    }
+
+    #[test]
+    fn install_does_not_write_features_hooks() {
+        let out = merge_install("", "/x").unwrap();
+        let v = parse(&out);
+        assert!(
+            v.get("features").is_none(),
+            "must not write [features] hooks = true"
+        );
+    }
+
+    #[test]
+    fn install_is_idempotent_across_different_paths() {
+        // Sentinel (not basename/path) drives replacement → re-install with a
+        // different resolved path replaces, never duplicates.
+        let a = merge_install("", "/opt/a/pixtuoid-hook").unwrap();
+        let b = merge_install(&a, "/opt/b/pixtuoid-hook").unwrap();
+        let v = parse(&b);
+        for ev in CODEX_EVENTS {
+            assert_eq!(
+                v["hooks"][*ev].as_array().unwrap().len(),
+                1,
+                "event {ev} duplicated"
+            );
+        }
+    }
+
+    #[test]
+    fn uninstall_keeps_user_handler_in_mixed_group() {
+        // A group with one managed + one user handler: uninstall strips only ours.
+        let installed = merge_install("", "/x/pixtuoid-hook").unwrap();
+        let mut v = parse(&installed);
+        // inject a user handler into the PreToolUse group
+        let group = &mut v["hooks"]["PreToolUse"].as_array_mut().unwrap()[0];
+        group["hooks"]
+            .as_array_mut()
+            .unwrap()
+            .push(toml::Value::Table({
+                let mut t = toml::value::Table::new();
+                t.insert("type".into(), "command".into());
+                t.insert("command".into(), "/usr/bin/mytool".into());
+                t
+            }));
+        let cleaned = merge_uninstall(&toml::to_string_pretty(&v).unwrap()).unwrap();
+        let cv = parse(&cleaned);
+        let arr = cv["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(arr.len(), 1, "group kept (user handler remains)");
+        let hooks = arr[0]["hooks"].as_array().unwrap();
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0]["command"].as_str().unwrap(), "/usr/bin/mytool");
+    }
+
+    #[test]
+    fn uninstall_removes_empty_groups_and_events() {
+        let installed = merge_install("", "/x/pixtuoid-hook").unwrap();
+        let cleaned = merge_uninstall(&installed).unwrap();
+        let v = parse(&cleaned);
+        assert!(
+            v.get("hooks").is_none(),
+            "all managed → hooks table dropped: {cleaned}"
+        );
+    }
+
+    #[test]
+    fn uninstall_legacy_basename_fallback() {
+        // A pre-sentinel #59 entry (no _pixtuoid, command basename pixtuoid-hook) is removed.
+        let cfg = r#"
+[[hooks.PreToolUse]]
+matcher = "*"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/old/pixtuoid-hook"
+"#;
+        let cleaned = merge_uninstall(cfg).unwrap();
+        let v = parse(&cleaned);
+        assert!(
+            v.get("hooks").is_none(),
+            "legacy basename entry removed: {cleaned}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn hook_command_errors_on_non_utf8_path() {
+        use std::os::unix::ffi::OsStrExt;
+        let bad = std::path::Path::new(std::ffi::OsStr::from_bytes(b"/x/\xff/pixtuoid-hook"));
+        assert!(hook_command(bad).is_err());
+    }
+
+    #[test]
+    fn hook_command_prefixes_source_for_valid_path() {
+        let cmd = hook_command(std::path::Path::new("/opt/bin/pixtuoid-hook")).unwrap();
+        assert_eq!(cmd, "PIXTUOID_SOURCE=codex /opt/bin/pixtuoid-hook");
+    }
+}

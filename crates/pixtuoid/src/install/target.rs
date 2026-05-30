@@ -42,7 +42,18 @@ pub const CLAUDE: Target = Target {
     needs_path_warning: true,
 };
 
-pub const TARGETS: &[&Target] = &[&CLAUDE];
+pub const CODEX: Target = Target {
+    name: "codex",
+    display_name: "Codex",
+    restart_noun: "Codex",
+    default_config_path: crate::install::codex::default_config_path,
+    hook_command: crate::install::codex::hook_command,
+    merge_install: crate::install::codex::merge_install,
+    merge_uninstall: crate::install::codex::merge_uninstall,
+    needs_path_warning: false,
+};
+
+pub const TARGETS: &[&Target] = &[&CLAUDE, &CODEX];
 
 pub fn by_name(name: &str) -> Option<&'static Target> {
     TARGETS.iter().copied().find(|t| t.name == name)
@@ -65,6 +76,7 @@ mod tests {
     #[test]
     fn by_name_resolves_claude_and_rejects_unknown() {
         assert_eq!(by_name("claude").unwrap().name, "claude");
+        assert_eq!(by_name("codex").unwrap().name, "codex");
         assert!(by_name("nope").is_none());
         assert!(by_name("all").is_none()); // "all" is a meta-value, not a Target
     }
