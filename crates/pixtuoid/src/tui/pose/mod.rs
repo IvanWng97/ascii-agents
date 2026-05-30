@@ -462,7 +462,7 @@ pub fn derive_with_routing(
                 // unwrap in non-test code).
                 match ms_entry.snap_back.clone() {
                     None => raw,
-                    Some((started_at, profile, _snap_prev)) => {
+                    Some((started_at, profile, snap_prev)) => {
                         let elapsed_ms = now
                             .duration_since(started_at)
                             .unwrap_or(Duration::ZERO)
@@ -487,8 +487,17 @@ pub fn derive_with_routing(
                             let t_x1000 = walk_progress(&profile, eff_elapsed);
                             let frame =
                                 ((eff_elapsed / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
+                            // Walk from the FROZEN origin captured when the leg
+                            // armed, not the per-frame `prev`. route_walking_pose
+                            // re-records the advancing walker position into the
+                            // single-slot history every frame, so reading it back
+                            // as the origin would creep `from` toward the desk
+                            // (a contraction that finishes ahead of the frozen
+                            // physics profile and breaks the walk_path freeze's
+                            // `wp.from == from` reuse guard). Mirrors the exit
+                            // branch, which likewise freezes its origin Point.
                             Pose::Walking {
-                                from: prev,
+                                from: snap_prev,
                                 to: snap_target,
                                 t_x1000,
                                 frame,
