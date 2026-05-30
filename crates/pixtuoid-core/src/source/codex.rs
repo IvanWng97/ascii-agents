@@ -8,7 +8,6 @@
 //! keys on the trailing UUID of the rollout filename. Verified equal
 //! (hook.session_id == session_meta.id == filename UUID), so both transports
 //! merge onto one sprite.
-#![allow(unused_imports)]
 
 use std::path::{Path, PathBuf};
 
@@ -120,6 +119,54 @@ fn codex_tool_start(agent_id: AgentId, payload: Option<&Map<String, Value>>) -> 
     }
 }
 
+fn derive_codex_label(_path: &Path, _source: &str, cwd: &Path) -> String {
+    if cwd != Path::new("") && cwd != Path::new("/") {
+        if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
+            return format!("cx·{name}");
+        }
+    }
+    "cx".to_string()
+}
+
+/// Codex writes no session-end marker; the reducer's stale-sweep reaps dead
+/// sessions. Always false (defer to mtime window + stale-sweep).
+fn codex_session_ended(_tail: &[u8]) -> bool {
+    false
+}
+
+/// Source that watches the Codex session transcript directory.
+pub struct CodexSource {
+    pub sessions_root: PathBuf,
+}
+
+impl CodexSource {
+    pub fn default_paths() -> Self {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        Self {
+            sessions_root: PathBuf::from(format!("{home}/.codex/sessions")),
+        }
+    }
+}
+
+#[async_trait]
+impl Source for CodexSource {
+    fn name(&self) -> &str {
+        SOURCE_NAME
+    }
+
+    async fn run(self: Box<Self>, tx: TaggedSender) -> Result<()> {
+        let watcher = JsonlWatcher::new(
+            self.sessions_root.clone(),
+            SOURCE_NAME.to_string(),
+            decode_codex_line,
+            derive_codex_label,
+            codex_session_ended,
+        )
+        .with_id_deriver(codex_id_from_path);
+        watcher.run(tx).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +234,22 @@ mod tests {
     fn session_meta_and_unknown_emit_nothing() {
         assert!(ev(json!({"type":"session_meta","payload":{"id":"u","cwd":"/r"}})).is_empty());
         assert!(ev(json!({"type":"event_msg","payload":{"type":"token_count"}})).is_empty());
+    }
+
+    #[test]
+    fn label_is_cx_basename() {
+        assert_eq!(
+            derive_codex_label(
+                Path::new("/x.jsonl"),
+                SOURCE_NAME,
+                Path::new("/Users/me/dotfiles")
+            ),
+            "cx·dotfiles"
+        );
+        assert_eq!(
+            derive_codex_label(Path::new("/x.jsonl"), SOURCE_NAME, Path::new("")),
+            "cx"
+        );
     }
 
     #[test]
