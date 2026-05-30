@@ -1511,3 +1511,59 @@ fn activity_end_while_waiting_does_not_arm_pending_idle() {
         "pending_idle_at must not be armed when state is Waiting"
     );
 }
+
+#[test]
+fn codex_permission_then_jsonl_output_resumes_to_active() {
+    // Regression: a cx· agent stuck Waiting on a permission prompt must return
+    // to Active once the transcript's function_call_output (an ActivityStart)
+    // arrives. Hook and JSONL coalesce on the session UUID.
+    use pixtuoid_core::source::ToolDetail;
+    let mut reducer = Reducer::new();
+    let mut scene = SceneState::uniform(4);
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    let uuid = "019e7762-9ded-7e33-be41-946ecf105bf4";
+    let id = AgentId::from_parts("codex", uuid);
+
+    reducer.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: id,
+            source: "codex".into(),
+            session_id: uuid.into(),
+            cwd: PathBuf::from("/Users/me/dotfiles"),
+            parent_id: None,
+        },
+        now,
+        Transport::Hook,
+    );
+
+    reducer.apply(
+        &mut scene,
+        AgentEvent::Waiting {
+            agent_id: id,
+            reason: "permission".into(),
+        },
+        now,
+        Transport::Hook,
+    );
+    assert!(
+        matches!(scene.agents[&id].state, ActivityState::Waiting { .. }),
+        "should be Waiting on permission"
+    );
+
+    reducer.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: id,
+            activity: Activity::Typing,
+            tool_use_id: None,
+            detail: Some(ToolDetail::from("exec_command")),
+        },
+        now,
+        Transport::Jsonl,
+    );
+    assert!(
+        matches!(scene.agents[&id].state, ActivityState::Active { .. }),
+        "resume must return to Active"
+    );
+}
