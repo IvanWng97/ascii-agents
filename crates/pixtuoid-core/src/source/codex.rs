@@ -119,7 +119,7 @@ fn codex_tool_start(agent_id: AgentId, payload: Option<&Map<String, Value>>) -> 
     }
 }
 
-fn derive_codex_label(_path: &Path, _source: &str, cwd: &Path) -> String {
+pub fn derive_codex_label(_path: &Path, _source: &str, cwd: &Path) -> String {
     if cwd != Path::new("") && cwd != Path::new("/") {
         if let Some(name) = cwd.file_name().and_then(|n| n.to_str()) {
             return format!("cx·{name}");

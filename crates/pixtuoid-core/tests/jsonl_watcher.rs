@@ -9,6 +9,7 @@ use pixtuoid_core::source::claude_code::{cc_derive_label, cc_session_ended, deco
 use pixtuoid_core::source::jsonl::JsonlWatcher;
 use pixtuoid_core::source::AgentEvent;
 use pixtuoid_core::source::Transport;
+use pixtuoid_core::AgentId;
 
 fn cc_watcher(root: std::path::PathBuf) -> JsonlWatcher {
     JsonlWatcher::new(
@@ -520,5 +521,133 @@ async fn watcher_custom_label_deriver() {
         got_custom_rename,
         "expected Rename event with custom label from label deriver fn"
     );
+    handle.abort();
+}
+
+#[tokio::test]
+async fn codex_rollout_yields_uuid_keyed_session_start() {
+    use pixtuoid_core::source::codex::{codex_id_from_path, decode_codex_line, derive_codex_label};
+
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    let uuid = "019e7762-9ded-7e33-be41-946ecf105bf4";
+    let transcript = root.join(format!("rollout-2026-05-29T22-36-52-{uuid}.jsonl"));
+
+    let (tx, mut rx) = mpsc::channel::<(Transport, AgentEvent)>(32);
+    let watcher = JsonlWatcher::new(
+        root.clone(),
+        "codex".to_string(),
+        decode_codex_line,
+        derive_codex_label,
+        |_t| false,
+    )
+    .with_id_deriver(codex_id_from_path);
+    let handle = tokio::spawn(async move { watcher.run(tx).await });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut f = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&transcript)
+        .await
+        .unwrap();
+    let meta = serde_json::json!({
+        "type": "session_meta",
+        "payload": { "id": uuid, "cwd": "/Users/me/dotfiles" }
+    });
+    f.write_all(format!("{meta}\n").as_bytes()).await.unwrap();
+    let task_started = serde_json::json!({
+        "type": "event_msg",
+        "payload": { "type": "task_started", "turn_id": "t" }
+    });
+    f.write_all(format!("{task_started}\n").as_bytes())
+        .await
+        .unwrap();
+    f.flush().await.unwrap();
+    drop(f);
+
+    let expected = AgentId::from_parts("codex", uuid);
+    let mut saw_session_start = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            Ok(Some((_t, AgentEvent::SessionStart { agent_id, .. }))) => {
+                assert_eq!(agent_id, expected, "Codex SessionStart must be UUID-keyed");
+                saw_session_start = true;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {}
+        }
+    }
+    assert!(saw_session_start, "expected a SessionStart event");
+    handle.abort();
+}
+
+#[tokio::test]
+async fn default_id_deriver_stays_path_keyed() {
+    // Pin the IdDeriver default: a non-Codex watcher must key on the file path
+    // (so CC/Antigravity hook↔JSONL coalescing is unchanged).
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().to_path_buf();
+    let project_dir = root.join("proj-y");
+    tokio::fs::create_dir_all(&project_dir).await.unwrap();
+    let transcript = project_dir.join("abc.jsonl");
+
+    let (tx, mut rx) = mpsc::channel::<(Transport, AgentEvent)>(32);
+    let watcher = cc_watcher(root.clone());
+    let handle = tokio::spawn(async move { watcher.run(tx).await });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut f = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&transcript)
+        .await
+        .unwrap();
+    let start_line = serde_json::json!({
+        "type": "system",
+        "subtype": "session_start",
+        "sessionId": "abc",
+        "cwd": "/repo"
+    });
+    f.write_all(format!("{start_line}\n").as_bytes())
+        .await
+        .unwrap();
+    f.flush().await.unwrap();
+    drop(f);
+
+    // The default deriver keys on the file path. The watcher may report the
+    // raw TempDir path (rescan via read_dir) or the symlink-resolved path
+    // (macOS FSEvents canonicalizes /var → /private/var), so accept either —
+    // both are path-keyed. What must NOT match is a UUID/stem key.
+    let raw = AgentId::from_parts("claude-code", &transcript.to_string_lossy());
+    let canon = std::fs::canonicalize(&transcript)
+        .map(|p| AgentId::from_parts("claude-code", &p.to_string_lossy()))
+        .unwrap_or(raw);
+    let stem_keyed = AgentId::from_parts("claude-code", "abc");
+    let mut ok = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+            Ok(Some((_t, AgentEvent::SessionStart { agent_id, .. }))) => {
+                assert_ne!(
+                    agent_id, stem_keyed,
+                    "default deriver must be path-keyed, not stem-keyed"
+                );
+                assert!(
+                    agent_id == raw || agent_id == canon,
+                    "default deriver must key on the file path (raw or canonical)"
+                );
+                ok = true;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => {}
+        }
+    }
+    assert!(ok, "expected a path-keyed SessionStart");
     handle.abort();
 }
