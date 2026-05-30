@@ -247,6 +247,10 @@ fn snap_back_origin_is_frozen_across_frames() {
     // re-arm guard keys on state_started_at, which is constant here).
     let slot = active_slot(now0, now0 - Duration::from_secs(60));
     let desk = l.home_desks[0];
+    // ~80px manhattan from the desk: far enough that the pre-fix integer-pixel
+    // drift surfaces within the 8-frame window (empirically first drifts at
+    // frame 4). A snap near SNAP_BACK_MIN_DIST=8 could delay the first integer
+    // drift past the window and false-pass on broken code.
     let prev0 = Point {
         x: desk.x + 50,
         y: desk.y + 30,
@@ -283,6 +287,107 @@ fn snap_back_origin_is_frozen_across_frames() {
              the interruption point {prev0:?} for the whole leg"
         );
     }
+}
+
+#[test]
+fn snap_back_cornered_leg_freezes_path_no_reroute() {
+    // Companion to `walk_leg_freezes_path_against_midleg_reroute` (entry walk),
+    // for the snap-back leg. A CORNERED snap-back (>2-point route) must
+    // snapshot its A* polyline once and reuse it, making NO router call on
+    // later frames — else the per-frame A* cost spikes and an overlay-churn
+    // reroute remaps frozen progress onto a new shape (the "flash"). This only
+    // holds because the origin is frozen: a per-frame-drifting `from` misses
+    // the `wp.from == from` reuse guard and re-routes every frame.
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let l = layout();
+    let desk = l.home_desks[0];
+    let snap_target = Point {
+        x: desk.x + 6,
+        y: desk.y + 4,
+    };
+    let prev0 = Point {
+        x: desk.x + 50,
+        y: desk.y + 30,
+    };
+    // Distinct corners so the frozen vs rerouted shapes are distinguishable.
+    let corner_a = Point {
+        x: prev0.x,
+        y: snap_target.y,
+    };
+    let corner_b = Point {
+        x: snap_target.x,
+        y: prev0.y,
+    };
+    assert_ne!(corner_a, corner_b, "test setup: corners must differ");
+
+    let mut router = ChangingRouter {
+        calls: 0,
+        first: vec![prev0, corner_a, snap_target],
+        rest: vec![prev0, corner_b, snap_target],
+    };
+    let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+    let mut history = PoseHistory::new();
+    let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+    // State flipped 100ms ago — inside the 900ms snap-back window on both frames.
+    let slot = active_slot(
+        now - Duration::from_millis(100),
+        now - Duration::from_secs(60),
+    );
+    history.record(slot.agent_id, prev0, now - Duration::from_millis(50));
+
+    // Frame 1: arms the snap-back and snapshots the cornered walk_path (the
+    // profile is built from octile length, not a router call, so this is the
+    // ONE route call of the leg).
+    let _ = derive_with_routing(
+        &slot,
+        now,
+        &l,
+        &mut router,
+        &overlay,
+        &mut history,
+        &mut motion,
+    );
+    let calls_after_frame1 = router.calls;
+    assert!(
+        calls_after_frame1 >= 1,
+        "frame 1 must route once to snapshot the cornered leg"
+    );
+
+    // Frame 2: 100ms later. The router WOULD return the `rest` shape if asked.
+    let later = now + Duration::from_millis(100);
+    let _ = derive_with_routing(
+        &slot,
+        later,
+        &l,
+        &mut router,
+        &overlay,
+        &mut history,
+        &mut motion,
+    );
+
+    // The frozen origin keeps `wp.from == from` matching, so frame 2 re-routes
+    // nothing. Pre-fix the drifting `from` missed the guard → a fresh call here.
+    assert_eq!(
+        router.calls,
+        calls_after_frame1,
+        "frozen cornered snap-back must not re-route on a later frame (got {} extra calls)",
+        router.calls - calls_after_frame1
+    );
+    let frozen = motion
+        .get(&slot.agent_id)
+        .and_then(|ms| ms.walk_path.as_ref())
+        .expect("walk_path must be snapshotted while snapping back");
+    assert!(
+        frozen.path.contains(&corner_a),
+        "frozen path must keep the first corner {corner_a:?}, got {:?}",
+        frozen.path
+    );
+    assert!(
+        !frozen.path.contains(&corner_b),
+        "frozen path must NOT adopt the rerouted corner {corner_b:?} mid-leg, got {:?}",
+        frozen.path
+    );
 }
 
 #[test]

@@ -71,8 +71,11 @@ pub struct MotionState {
     /// wander position if it was out, else the desk anchor — so the exit walk
     /// starts where the sprite actually is instead of teleporting to the desk.
     pub exit: Option<(SystemTime, WalkProfile, Point)>,
-    /// `(walk_started_at, profile, snap_target)` for the state-transition
-    /// snap-back walk (replaces the old `since_state < SNAP_BACK_MS` guard).
+    /// `(walk_started_at, profile, from)` for the state-transition snap-back
+    /// walk (replaces the old `since_state < SNAP_BACK_MS` guard). `from` is
+    /// the FROZEN walk origin — the position recorded when the leg armed —
+    /// reused every frame so the walk doesn't drift toward the desk (mirrors
+    /// `exit`).
     pub snap_back: Option<(SystemTime, WalkProfile, Point)>,
 
     // --- cyclic wander state ---
