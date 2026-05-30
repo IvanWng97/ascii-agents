@@ -36,7 +36,7 @@ fn decode_session_start() {
 #[test]
 fn decode_session_start_with_custom_source() {
     let mut payload = load("session_start");
-    payload["source"] = serde_json::Value::String("antigravity".into());
+    payload["_pixtuoid_source"] = serde_json::Value::String("antigravity".into());
     let ev = decode_hook_payload(payload).unwrap();
     match ev {
         AgentEvent::SessionStart { source, .. } => {

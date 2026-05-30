@@ -40,17 +40,8 @@ fn main() -> Result<()> {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis())
-            .unwrap_or(0);
-        map.insert("_shim_ts_ms".into(), Value::from(ts as u64));
-        // Per-CLI source tag: the install layer writes the hook command with
-        // `PIXTUOID_SOURCE=<cli>` (e.g. Codex), so the decoder attributes the
-        // event to the right source instead of defaulting to Claude. Only stamp
-        // when the payload didn't already carry a `source` (never clobber).
-        if let Ok(src) = std::env::var("PIXTUOID_SOURCE") {
-            if !src.is_empty() {
-                map.entry("source").or_insert_with(|| Value::from(src));
-            }
-        }
+            .unwrap_or(0) as u64;
+        enrich_payload(map, std::env::var("PIXTUOID_SOURCE").ok(), ts);
     }
 
     // Best-effort send with a hard write timeout so a stuck daemon can never
@@ -64,4 +55,60 @@ fn main() -> Result<()> {
         let _ = s.write_all(&line);
     }
     Ok(())
+}
+
+/// Stamp the shim timestamp and, when `PIXTUOID_SOURCE` is set, the trusted CLI
+/// source under the PRIVATE `_pixtuoid_source` key.
+///
+/// We deliberately do NOT write the public `source` field: CC's SessionStart
+/// payload already uses `source` for the start *reason* (startup/resume/clear/
+/// compact). Reading that as the CLI source namespaced the agent under
+/// "startup", splitting it from the claude-code-keyed tool/JSONL/SessionEnd
+/// events — an un-reapable ghost. The private key is shim-owned, so a plain
+/// insert is safe (nothing else writes it). Absent the env (bare `pixtuoid-hook`,
+/// i.e. CC), the decoder defaults to claude-code.
+fn enrich_payload(
+    map: &mut serde_json::Map<String, Value>,
+    source_env: Option<String>,
+    ts_ms: u64,
+) {
+    map.insert("_shim_ts_ms".into(), Value::from(ts_ms));
+    if let Some(src) = source_env {
+        if !src.is_empty() {
+            map.insert("_pixtuoid_source".into(), Value::from(src));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stamps_cli_source_under_private_key_and_leaves_public_source_untouched() {
+        // A CC SessionStart payload's `source` is the start *reason* — must survive.
+        let mut p = json!({ "hook_event_name": "SessionStart", "source": "startup" });
+        let map = p.as_object_mut().unwrap();
+        enrich_payload(map, Some("claude-code".into()), 123);
+        assert_eq!(map["_pixtuoid_source"], json!("claude-code"));
+        assert_eq!(map["source"], json!("startup"), "public reason untouched");
+        assert_eq!(map["_shim_ts_ms"], json!(123u64));
+    }
+
+    #[test]
+    fn no_source_env_omits_private_key_so_decoder_defaults_to_claude() {
+        let mut p = json!({ "hook_event_name": "Stop" });
+        let map = p.as_object_mut().unwrap();
+        enrich_payload(map, None, 1);
+        assert!(map.get("_pixtuoid_source").is_none());
+    }
+
+    #[test]
+    fn empty_source_env_is_ignored() {
+        let mut p = json!({});
+        let map = p.as_object_mut().unwrap();
+        enrich_payload(map, Some(String::new()), 1);
+        assert!(map.get("_pixtuoid_source").is_none());
+    }
 }

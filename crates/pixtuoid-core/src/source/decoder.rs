@@ -21,8 +21,15 @@ pub fn decode_hook_payload(v: Value) -> Result<AgentEvent> {
         .and_then(|s| s.as_str())
         .ok_or_else(|| anyhow!("missing session_id"))?
         .to_string();
+    // CLI attribution comes ONLY from the shim-owned `_pixtuoid_source` (the
+    // shim stamps it from `PIXTUOID_SOURCE`). We must NOT read the public
+    // `source` field: CC's SessionStart payload uses `source` for the start
+    // *reason* (startup/resume/clear/compact), which would namespace the agent
+    // under "startup" and split it from the claude-code-keyed tool/JSONL/
+    // SessionEnd events (an un-reapable ghost). Absent the private key (bare
+    // `pixtuoid-hook` with no env, i.e. CC), default to claude-code.
     let source = obj
-        .get("source")
+        .get("_pixtuoid_source")
         .and_then(|s| s.as_str())
         .unwrap_or(crate::source::claude_code::SOURCE_NAME);
     // `transcript_path` is the preferred stable per-session key for CC (its hook
@@ -166,7 +173,7 @@ mod tests {
         let ev = decode_hook_payload(json!({
             "hook_event_name": "SessionStart",
             "session_id": "codex-sess-1",
-            "source": "codex",
+            "_pixtuoid_source": "codex",
             "cwd": "/Users/me/work/myrepo"
         }))
         .expect("decodes without transcript_path");
@@ -190,7 +197,7 @@ mod tests {
         let ev = decode_hook_payload(json!({
             "hook_event_name": "PermissionRequest",
             "session_id": "s",
-            "source": "codex"
+            "_pixtuoid_source": "codex"
         }))
         .expect("decodes");
         assert!(matches!(ev, AgentEvent::Waiting { .. }));
@@ -205,7 +212,7 @@ mod tests {
         let ev = decode_hook_payload(json!({
             "hook_event_name": "UserPromptSubmit",
             "session_id": "codex-sess",
-            "source": "codex",
+            "_pixtuoid_source": "codex",
             "cwd": "/Users/me/work/myrepo",
             "transcript_path": "/Users/me/.codex/sessions/x.jsonl"
         }))
@@ -235,10 +242,58 @@ mod tests {
         let ev = decode_hook_payload(json!({
             "hook_event_name": "Stop",
             "session_id": "s",
-            "source": "codex"
+            "_pixtuoid_source": "codex"
         }))
         .expect("decodes");
         assert!(matches!(ev, AgentEvent::ActivityEnd { .. }));
+    }
+
+    // Regression: CC's SessionStart hook payload carries `source: "startup"`
+    // (the start *reason* — startup/resume/clear/compact), which is NOT a CLI
+    // name. Reading it as the CLI source namespaced the agent under "startup",
+    // splitting it from the claude-code-keyed tool/JSONL/SessionEnd events — an
+    // un-reapable `startup·…` ghost. The public `source` field must never drive
+    // CLI attribution; only the shim-owned `_pixtuoid_source` does.
+    #[test]
+    fn cc_session_start_reason_source_does_not_hijack_cli_source() {
+        let tp = "/Users/me/.claude/projects/x/ses-abc.jsonl";
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "SessionStart",
+            "session_id": "ses-abc",
+            "transcript_path": tp,
+            "cwd": "/repo",
+            "source": "startup"
+        }))
+        .expect("decodes");
+        match ev {
+            AgentEvent::SessionStart {
+                agent_id, source, ..
+            } => {
+                assert_eq!(source, crate::source::claude_code::SOURCE_NAME);
+                assert_eq!(
+                    agent_id,
+                    AgentId::from_parts(crate::source::claude_code::SOURCE_NAME, tp),
+                    "must coalesce with tool/JSONL/SessionEnd events on the claude-code id"
+                );
+            }
+            other => panic!("expected SessionStart, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pixtuoid_source_private_key_drives_cli_attribution() {
+        // The shim stamps the trusted CLI source under `_pixtuoid_source`.
+        let ev = decode_hook_payload(json!({
+            "hook_event_name": "Stop",
+            "session_id": "codex-sess",
+            "_pixtuoid_source": "codex"
+        }))
+        .expect("decodes");
+        assert_eq!(
+            ev.agent_id(),
+            AgentId::from_parts("codex", "codex-sess"),
+            "Codex Stop keys on session_id under the codex namespace"
+        );
     }
 
     #[test]
