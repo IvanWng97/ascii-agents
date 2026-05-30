@@ -45,9 +45,149 @@ fn is_uuid(s: &str) -> bool {
         })
 }
 
+/// Decode one transcript line. `tool_use_id` is always `None` so these events
+/// are never suppressed by the hook-wins dedup (which keys on `tool_use_id`).
+pub fn decode_codex_line(transcript_path: &str, source: &str, v: Value) -> Result<Vec<AgentEvent>> {
+    let agent_id = AgentId::from_parts(source, &codex_id_from_path(Path::new(transcript_path)));
+    let Some(obj) = v.as_object() else {
+        return Ok(vec![]);
+    };
+    let outer = obj.get("type").and_then(|s| s.as_str()).unwrap_or("");
+    let payload = obj.get("payload").and_then(|p| p.as_object());
+    let inner = payload
+        .and_then(|p| p.get("type"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+
+    let start = |activity| AgentEvent::ActivityStart {
+        agent_id,
+        activity,
+        tool_use_id: None,
+        detail: None,
+    };
+    let end = || AgentEvent::ActivityEnd {
+        agent_id,
+        tool_use_id: None,
+    };
+
+    let out = match (outer, inner) {
+        ("event_msg", "task_started") => vec![start(Activity::Thinking)],
+        ("response_item", "function_call") => {
+            if function_call_needs_approval(payload) {
+                vec![AgentEvent::Waiting {
+                    agent_id,
+                    reason: "permission".to_string(),
+                }]
+            } else {
+                vec![codex_tool_start(agent_id, payload)]
+            }
+        }
+        ("response_item", "function_call_output") | ("event_msg", "exec_command_end") => {
+            vec![start(Activity::Typing)]
+        }
+        ("event_msg", "task_complete") | ("event_msg", "turn_aborted") => vec![end()],
+        _ => vec![],
+    };
+    Ok(out)
+}
+
+/// A Codex `function_call` whose `arguments` (a JSON string) requests escalated
+/// sandbox permissions or carries a justification is an approval gate → Waiting.
+fn function_call_needs_approval(payload: Option<&Map<String, Value>>) -> bool {
+    let Some(args_str) = payload
+        .and_then(|p| p.get("arguments"))
+        .and_then(|a| a.as_str())
+    else {
+        return false;
+    };
+    let Ok(args) = serde_json::from_str::<Value>(args_str) else {
+        return false;
+    };
+    args.get("sandbox_permissions").and_then(|s| s.as_str()) == Some("require_escalated")
+        || args.get("justification").is_some()
+}
+
+fn codex_tool_start(agent_id: AgentId, payload: Option<&Map<String, Value>>) -> AgentEvent {
+    let name = payload
+        .and_then(|p| p.get("name"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("tool");
+    AgentEvent::ActivityStart {
+        agent_id,
+        activity: Activity::Typing,
+        tool_use_id: None,
+        detail: Some(make_tool_detail(name, String::new())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn ev(line: Value) -> Vec<AgentEvent> {
+        decode_codex_line(
+            "/x/rollout-1-019e7762-9ded-7e33-be41-946ecf105bf4.jsonl",
+            SOURCE_NAME,
+            line,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn task_started_is_activity_start() {
+        let out = ev(json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"t"}}));
+        assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn function_call_output_resumes_work() {
+        // THE fix: resume signal must be an ActivityStart (clears Waiting in the reducer).
+        let out = ev(
+            json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c","output":"ok"}}),
+        );
+        assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn escalated_function_call_is_waiting() {
+        let args = r#"{"cmd":"date","sandbox_permissions":"require_escalated","justification":"allow?"}"#;
+        let out = ev(
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":args}}),
+        );
+        assert!(matches!(out.as_slice(), [AgentEvent::Waiting { .. }]));
+    }
+
+    #[test]
+    fn plain_function_call_is_activity_start() {
+        let args = r#"{"cmd":"ls"}"#;
+        let out = ev(
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":args}}),
+        );
+        assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn malformed_arguments_does_not_panic_and_starts_work() {
+        let out = ev(
+            json!({"type":"response_item","payload":{"type":"function_call","name":"x","arguments":"{not json"}}),
+        );
+        assert!(matches!(out.as_slice(), [AgentEvent::ActivityStart { .. }]));
+    }
+
+    #[test]
+    fn task_complete_and_abort_end_activity() {
+        for t in ["task_complete", "turn_aborted"] {
+            let out = ev(json!({"type":"event_msg","payload":{"type":t,"turn_id":"t"}}));
+            assert!(matches!(out.as_slice(), [AgentEvent::ActivityEnd { .. }]), "{t}");
+        }
+    }
+
+    #[test]
+    fn session_meta_and_unknown_emit_nothing() {
+        assert!(ev(json!({"type":"session_meta","payload":{"id":"u","cwd":"/r"}})).is_empty());
+        assert!(ev(json!({"type":"event_msg","payload":{"type":"token_count"}})).is_empty());
+    }
 
     #[test]
     fn id_from_rollout_path_is_trailing_uuid() {
