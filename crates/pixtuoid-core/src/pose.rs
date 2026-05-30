@@ -72,11 +72,13 @@ pub fn cycle_ms_for(agent_id: AgentId) -> u64 {
     WANDER_CYCLE_BASE_MS + (agent_id.raw() >> 16) % WANDER_CYCLE_RANGE_MS
 }
 
-/// Salted splitmix64 of the whole agent id. Used for dwell jitter so it is
-/// decorrelated from `speed_mult` / `pause_ms` / `cycle_ms` (which slice raw
-/// id bits) and from each other (distinct salts) — no bit-budget overlap.
-fn dwell_mix(agent_id: AgentId, salt: u64) -> u64 {
-    let mut z = agent_id.raw() ^ salt;
+/// splitmix64 of the whole agent id with a per-purpose `tag`, for deterministic
+/// per-agent dwell jitter. The `tag` is NOT a cryptographic salt — it just
+/// disambiguates the two callers (`dwell_ms` vs `seated_dwell_ms`) so their
+/// jitter is decorrelated from each other and from `speed_mult` / `pause_ms` /
+/// `cycle_ms` (which slice raw id bits). No security relevance.
+fn dwell_mix(agent_id: AgentId, tag: u64) -> u64 {
+    let mut z = agent_id.raw() ^ tag;
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
@@ -455,7 +457,11 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
     } else if phase_t < at_wp_end {
         at_dest_pose
     } else {
+        // span == WANDER_WALK_EST_MS by construction (cycle_ms == at_wp_end +
+        // WANDER_WALK_EST_MS); assert it so a future estimate-constant change
+        // that zeroed it can't silently divide-by-zero here.
         let span = cycle_ms - at_wp_end;
+        debug_assert!(span > 0, "idle_pose walk-back span invariant violated");
         let t = ((phase_t - at_wp_end) * 1000 / span) as u16;
         let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
         let carrying_coffee = matches!(

@@ -1098,9 +1098,10 @@ fn meeting_room_fills_and_hosts_group_chitchat() {
     // cares about simulated *time* (agents wandering into the room and chatting),
     // not per-frame smoothness, and 250 ms stays well under the stale-resume
     // trigger (≥7 s) so the wander machine advances normally — ~6× fewer renders.
+    const BUDGET: usize = 1200; // 250ms beats → 300s simulated
     let mut saw_characters = false;
-    let mut saw_group_chat = false;
-    for _ in 0..1200 {
+    let mut chat_iter: Option<usize> = None;
+    for iter in 1..=BUDGET {
         now += Duration::from_millis(250);
         r.render(&scene, &pack, now).expect("render");
 
@@ -1108,17 +1109,20 @@ fn meeting_room_fills_and_hosts_group_chitchat() {
             let d = region_diff(&baseline, r.buf(), mr.x, mr.y, mr.width, mr.height);
             saw_characters = d > 4_000;
         }
-        if !saw_group_chat {
+        if chat_iter.is_none() {
             // A chitchat line inside the meeting-room cell band can only come
             // from ≥2 agents seated/standing at meeting SLOTS forming a group
             // conversation — exercising slots → sit/stand sprites → venue-keyed
             // chat → bubble widget end to end.
             let text = region_text(r.frame_buffer(), mr.x, cell_y0, mr.width + 6, cell_h);
-            saw_group_chat = crate::tui::chitchat::CHITCHAT_LINES
+            if crate::tui::chitchat::CHITCHAT_LINES
                 .iter()
-                .any(|l| text.contains(l));
+                .any(|l| text.contains(l))
+            {
+                chat_iter = Some(iter);
+            }
         }
-        if saw_characters && saw_group_chat {
+        if saw_characters && chat_iter.is_some() {
             break;
         }
     }
@@ -1127,8 +1131,15 @@ fn meeting_room_fills_and_hosts_group_chitchat() {
         saw_characters,
         "agents never visibly occupied the meeting room"
     );
+    let chat_iter = chat_iter.expect("no group chitchat bubble ever appeared in the meeting room");
+    // Headroom guard: with this density the group should form in the first
+    // ~third of the budget. Asserting a comfortable margin means that if a
+    // future constant change (trip rate, dwell, room placement) erodes the
+    // fill, it surfaces here as a clear "took too long" rather than a confusing
+    // timeout at the very edge of the budget.
     assert!(
-        saw_group_chat,
-        "no group chitchat bubble ever appeared in the meeting room"
+        chat_iter < BUDGET / 2,
+        "group chitchat took {chat_iter}/{BUDGET} iterations — fill margin eroded; \
+         expected well under half the budget"
     );
 }

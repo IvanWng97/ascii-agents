@@ -79,15 +79,19 @@ impl ActiveChitchat {
             venue,
             participants: Vec::new(),
             started_at: now,
-            // Seed mixes the start time with the participant set so different
-            // groups (and different start instants) pick different lines.
-            seed: participants
-                .iter()
-                .fold(ms.wrapping_mul(0x9e37_79b9_7f4a_7c15), |acc, a| {
-                    acc.rotate_left(7) ^ a.raw()
-                }),
+            seed: 0,
         };
         chat.set_participants(participants);
+        // Seed from the SORTED participant set (set_participants sorts) + start
+        // time, so the line choice is independent of the HashMap iteration order
+        // the `present` vec was built in — restarting the same group never flips
+        // the line just because agents were enumerated in a different order.
+        chat.seed = chat
+            .participants
+            .iter()
+            .fold(ms.wrapping_mul(0x9e37_79b9_7f4a_7c15), |acc, a| {
+                acc.rotate_left(7) ^ a.raw()
+            });
         chat
     }
 
@@ -147,10 +151,17 @@ pub struct ChitchatBubble {
     pub anchor: Point,
 }
 
-/// A chitchat-eligible agent present at a venue this frame:
-/// `(wp_idx, agent_id, anchor, room_id)`. `room_id` is `Some` for meeting
-/// slots (they group by room) and `None` for single-point waypoints.
-pub type Visitor = (usize, AgentId, Point, Option<usize>);
+/// A chitchat-eligible agent present at a venue this frame. `room_id` is
+/// `Some` for meeting slots (they group by room) and `None` for single-point
+/// waypoints (which group by `wp_idx`). Named (not a tuple) so the producer
+/// and consumer can't transpose the two `usize`-ish fields.
+#[derive(Debug, Clone, Copy)]
+pub struct Visitor {
+    pub wp_idx: usize,
+    pub agent_id: AgentId,
+    pub anchor: Point,
+    pub room_id: Option<usize>,
+}
 
 /// Expire old conversations, start/refresh one per venue that has ≥2 agents,
 /// and return the active speech bubbles for this frame.
@@ -165,12 +176,18 @@ pub fn update_and_collect(
 
     // Group visitors by venue (meeting slots → their room, others → the point).
     let mut by_venue: HashMap<VenueKey, Vec<(AgentId, Point)>> = HashMap::new();
-    for &(wp_idx, agent_id, anchor, room_id) in visitors {
-        let venue = match room_id {
+    for v in visitors {
+        let venue = match v.room_id {
             Some(room_id) => VenueKey::Room { floor_idx, room_id },
-            None => VenueKey::Waypoint { floor_idx, wp_idx },
+            None => VenueKey::Waypoint {
+                floor_idx,
+                wp_idx: v.wp_idx,
+            },
         };
-        by_venue.entry(venue).or_default().push((agent_id, anchor));
+        by_venue
+            .entry(venue)
+            .or_default()
+            .push((v.agent_id, v.anchor));
     }
 
     let mut bubbles = Vec::new();
@@ -216,6 +233,18 @@ mod tests {
         VenueKey::Waypoint {
             floor_idx: 0,
             wp_idx: wp,
+        }
+    }
+
+    fn vis(wp_idx: usize, id: &str, room_id: Option<usize>) -> Visitor {
+        Visitor {
+            wp_idx,
+            agent_id: aid(id),
+            anchor: Point {
+                x: (wp_idx as u16) * 4 + 10,
+                y: 20,
+            },
+            room_id,
         }
     }
 
@@ -304,10 +333,7 @@ mod tests {
         let now = base_time();
         let mut state = HashMap::new();
         // Two different meeting-room waypoints (wp 4 and 5) in room 0.
-        let visitors: Vec<Visitor> = vec![
-            (4, aid("/a"), Point { x: 10, y: 20 }, Some(0)),
-            (5, aid("/b"), Point { x: 14, y: 20 }, Some(0)),
-        ];
+        let visitors: Vec<Visitor> = vec![vis(4, "/a", Some(0)), vis(5, "/b", Some(0))];
         let bubbles = update_and_collect(&mut state, 0, &visitors, now);
         assert_eq!(state.len(), 1, "one room conversation, not two");
         assert!(state.contains_key(&VenueKey::Room {
@@ -318,16 +344,38 @@ mod tests {
     }
 
     #[test]
+    fn two_meeting_rooms_host_separate_conversations() {
+        // A dual-meeting-room floor: room 0 and room 1 each get a pair. They
+        // must NOT merge — `room_id` keys distinct venues.
+        let now = base_time();
+        let mut state = HashMap::new();
+        let visitors: Vec<Visitor> = vec![
+            vis(4, "/a", Some(0)),
+            vis(5, "/b", Some(0)),
+            vis(8, "/c", Some(1)),
+            vis(9, "/d", Some(1)),
+        ];
+        let bubbles = update_and_collect(&mut state, 0, &visitors, now);
+        assert_eq!(state.len(), 2, "two rooms → two conversations");
+        assert!(state.contains_key(&VenueKey::Room {
+            floor_idx: 0,
+            room_id: 0
+        }));
+        assert!(state.contains_key(&VenueKey::Room {
+            floor_idx: 0,
+            room_id: 1
+        }));
+        assert_eq!(bubbles.len(), 2);
+    }
+
+    #[test]
     fn distinct_waypoints_do_not_merge() {
         let now = base_time();
         let mut state = HashMap::new();
         // Two agents at wp 0 and one agent each at wp 1 — only wp 0 (with 2)
         // chats; wp 1's lone agent does not.
-        let visitors: Vec<Visitor> = vec![
-            (0, aid("/a"), Point { x: 10, y: 20 }, None),
-            (0, aid("/b"), Point { x: 14, y: 20 }, None),
-            (1, aid("/c"), Point { x: 50, y: 60 }, None),
-        ];
+        let visitors: Vec<Visitor> =
+            vec![vis(0, "/a", None), vis(0, "/b", None), vis(1, "/c", None)];
         let bubbles = update_and_collect(&mut state, 0, &visitors, now);
         assert_eq!(state.len(), 1, "only the 2-agent waypoint chats");
         assert!(state.contains_key(&VenueKey::Waypoint {
@@ -341,7 +389,7 @@ mod tests {
     fn single_visitor_starts_no_conversation() {
         let now = base_time();
         let mut state = HashMap::new();
-        let visitors: Vec<Visitor> = vec![(0, aid("/a"), Point { x: 10, y: 20 }, None)];
+        let visitors: Vec<Visitor> = vec![vis(0, "/a", None)];
         let bubbles = update_and_collect(&mut state, 0, &visitors, now);
         assert!(state.is_empty());
         assert!(bubbles.is_empty());
@@ -352,10 +400,7 @@ mod tests {
         let now = base_time();
         let mut state = HashMap::new();
         // Start with two agents in room 0.
-        let v2: Vec<Visitor> = vec![
-            (4, aid("/a"), Point { x: 10, y: 20 }, Some(0)),
-            (5, aid("/b"), Point { x: 14, y: 20 }, Some(0)),
-        ];
+        let v2: Vec<Visitor> = vec![vis(4, "/a", Some(0)), vis(5, "/b", Some(0))];
         update_and_collect(&mut state, 0, &v2, now);
         let key = VenueKey::Room {
             floor_idx: 0,
@@ -365,9 +410,9 @@ mod tests {
 
         // A third joins mid-conversation → rotation now includes them.
         let v3: Vec<Visitor> = vec![
-            (4, aid("/a"), Point { x: 10, y: 20 }, Some(0)),
-            (5, aid("/b"), Point { x: 14, y: 20 }, Some(0)),
-            (6, aid("/c"), Point { x: 18, y: 20 }, Some(0)),
+            vis(4, "/a", Some(0)),
+            vis(5, "/b", Some(0)),
+            vis(6, "/c", Some(0)),
         ];
         update_and_collect(&mut state, 0, &v3, now + Duration::from_millis(500));
         assert_eq!(state.get(&key).unwrap().participants.len(), 3);
@@ -377,10 +422,7 @@ mod tests {
     fn update_and_collect_expires_old() {
         let start = base_time();
         let mut state = HashMap::new();
-        let visitors: Vec<Visitor> = vec![
-            (0, aid("/a"), Point { x: 10, y: 20 }, None),
-            (0, aid("/b"), Point { x: 14, y: 20 }, None),
-        ];
+        let visitors: Vec<Visitor> = vec![vis(0, "/a", None), vis(0, "/b", None)];
         update_and_collect(&mut state, 0, &visitors, start);
         assert_eq!(state.len(), 1);
         // Past expiry → reaped, then a fresh one created (both still present).

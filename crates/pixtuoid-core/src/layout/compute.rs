@@ -842,6 +842,16 @@ pub(super) fn compute_waypoints(
     // group-chitchat venue keys on the room, not the individual seat.
     for (i, sofa) in meeting_sofas.iter().enumerate() {
         let room_id = i / 2;
+        // Lockstep invariant: 2 sofas + 1 table per room (see meeting_sofas /
+        // meeting_tables assembly), so room_id < meeting_tables.len() always.
+        // The map_or fallback below is therefore dead; assert it so a future
+        // break (e.g. a 3rd sofa, conditional table) surfaces loudly instead of
+        // silently flipping a sofa's facing.
+        debug_assert!(
+            room_id < meeting_tables.len(),
+            "meeting sofa/table lockstep broken: sofa {i} -> room {room_id} but {} tables",
+            meeting_tables.len()
+        );
         let table_y = meeting_tables.get(room_id).map_or(sofa.y, |t| t.y);
         // North-of-table sofa faces South (front toward the viewer); the
         // south sofa faces North (back toward the viewer) — the pair reads
@@ -877,6 +887,20 @@ pub(super) fn compute_waypoints(
             });
         }
     }
+
+    // Load-bearing invariant for chitchat venue grouping: a waypoint carries a
+    // `room_id` IFF it is a meeting slot. A non-meeting waypoint with a stray
+    // `room_id` would mis-group into a meeting venue; a meeting slot without one
+    // would never group. Enforced here at the single construction site.
+    debug_assert!(
+        waypoints.iter().all(|w| {
+            matches!(
+                w.kind,
+                WaypointKind::MeetingSofa | WaypointKind::MeetingStand
+            ) == w.room_id.is_some()
+        }),
+        "room_id must be Some exactly for meeting-slot waypoints"
+    );
 
     waypoints
 }
