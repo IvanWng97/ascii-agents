@@ -253,6 +253,9 @@ fn main() -> Result<()> {
         light: &mut light,
         mouse_pos: None,
         pinned_agent: None,
+        // The snapshot keeps its own cell-level --debug-walkable overlay + BFS
+        // report below; the live pixel overlay is the `w` toggle's job.
+        debug_walkable: false,
         ticker: &ticker,
         theme,
         theme_picker: args.theme_picker,
@@ -719,6 +722,7 @@ fn save_as_gif(
             light: &mut light,
             mouse_pos: None,
             pinned_agent: None,
+            debug_walkable: false,
             ticker: &ticker,
             theme,
             theme_picker: None,

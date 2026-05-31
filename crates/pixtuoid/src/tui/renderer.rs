@@ -82,6 +82,9 @@ pub struct DrawCtx<'a> {
     pub light: &'a mut crate::tui::floor::LightingState,
     pub mouse_pos: Option<(u16, u16)>,
     pub pinned_agent: Option<pixtuoid_core::AgentId>,
+    /// Live walkable/approach/route debug layer toggle (`w`). Threaded into the
+    /// pixel pass; off by default, transient (not persisted to config).
+    pub debug_walkable: bool,
     pub ticker: &'a TickerQueue,
     pub theme: &'a crate::tui::theme::Theme,
     pub theme_picker: Option<usize>,
@@ -247,6 +250,7 @@ pub fn draw_scene<B: Backend<Error: Send + Sync + 'static>>(
         coffee_stains: ctx.coffee_stains,
         light: ctx.light,
         door_anim_max_ms: ctx.door_anim_max_ms,
+        debug_walkable: ctx.debug_walkable,
     });
     ctx.last_pet_pos = pixel_result.pet_pos;
     ctx.chitchat_bubbles = pixel_result.chitchat_bubbles;

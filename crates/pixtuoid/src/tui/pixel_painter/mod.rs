@@ -44,6 +44,7 @@ pub struct PixelPassResult {
 mod ambient;
 mod anchors;
 mod background;
+mod debug_overlay;
 mod drawable;
 mod effects;
 mod furniture;
@@ -346,6 +347,9 @@ pub struct PixelCtx<'a> {
     pub coffee_fetched_at: &'a HashMap<pixtuoid_core::AgentId, SystemTime>,
     pub coffee_stains: &'a HashMap<pixtuoid_core::AgentId, Vec<crate::tui::tui_renderer::StainPos>>,
     pub light: &'a mut crate::tui::floor::LightingState,
+    /// When set, composite the walkable / approach / route debug layer over the
+    /// finished scene (the live `w` toggle). Off by default; transient.
+    pub debug_walkable: bool,
 }
 
 /// Paint a character at an arbitrary anchor with per-agent recolor. `flip_x`
@@ -1510,6 +1514,12 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // whole interior (floor, walls, furniture, characters), not just the window
     // strip. No-op outside a strike / non-storm weather.
     background::paint_lightning_flash(ctx.buf, ctx.now, background::weather_state(ctx.now));
+
+    // Debug layer (the `w` toggle) — composited LAST, over the finished scene:
+    // walkable mask + approach sides + live A* routes. Off by default.
+    if ctx.debug_walkable {
+        debug_overlay::paint(ctx.buf, ctx.layout, ctx.scene, ctx.motion);
+    }
 
     let chitchat_bubbles = chitchat::update_and_collect(
         ctx.chitchat_state,

@@ -398,6 +398,57 @@ fn theme_switch_recolors_floor() {
 }
 
 // ===================================================================
+// Debug overlay (the `w` toggle)
+// ===================================================================
+
+#[test]
+fn walkable_debug_toggle_tints_blocked_pixels_and_is_reversible() {
+    let scene = scene_with(vec![idle("/t/0.jsonl", 0, t0())], 16);
+    let mut r = build(120, 60, vec![]);
+    let now = t0();
+    r.render(&scene, &pack(), now).unwrap();
+    let before = r.buf().clone();
+
+    // A known-blocked pixel from the live mask, below the busy top wall band.
+    let layout = r.cached_layout().expect("layout").clone();
+    let (bx, by) = (0..layout.buf_h)
+        .flat_map(|y| (0..layout.buf_w).map(move |x| (x, y)))
+        .find(|&(x, y)| y > layout.top_margin + 4 && !layout.is_walkable(x, y))
+        .expect("some blocked cell below the wall band");
+
+    // Toggle ON → the overlay reddens the blocked cell + changes the frame.
+    r.set_debug_walkable(true);
+    r.render(&scene, &pack(), now).unwrap();
+    let on = r.buf().clone();
+    // The mask layer blends blocked cells toward the BLOCKED tint (220,60,60),
+    // so the cell must move CLOSER to that red than it was (a warm cell's red
+    // channel barely rises, but green/blue drop — distance is the robust check).
+    let to_red = |c: pixtuoid_core::sprite::Rgb| {
+        (c.0 as i32 - 220).abs() + (c.1 as i32 - 60).abs() + (c.2 as i32 - 60).abs()
+    };
+    assert!(
+        to_red(on.get(bx, by)) < to_red(before.get(bx, by)),
+        "debug overlay must tint a blocked cell toward red (was {:?}, now {:?})",
+        before.get(bx, by),
+        on.get(bx, by),
+    );
+    let on_diff = region_diff(&before, &on, 0, 0, before.width, before.height);
+    assert!(
+        on_diff > 1_000,
+        "the debug layer must visibly change the frame"
+    );
+
+    // Toggle OFF → the scene returns to the un-overlaid frame (additive layer).
+    r.set_debug_walkable(false);
+    r.render(&scene, &pack(), now).unwrap();
+    let off_diff = region_diff(&before, r.buf(), 0, 0, before.width, before.height);
+    assert!(
+        off_diff < 200,
+        "toggling the debug layer off must restore the scene (diff={off_diff})"
+    );
+}
+
+// ===================================================================
 // Lighting
 // ===================================================================
 

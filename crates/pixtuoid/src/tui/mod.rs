@@ -62,6 +62,8 @@ enum KeyAction {
     ThemeCancel,
     /// Navigate to this (already validated, in-range, no-transition) floor.
     NavigateFloor(usize),
+    /// Toggle the live walkable / approach / route debug layer (`w`).
+    ToggleWalkableDebug,
 }
 
 fn is_quit_chord(code: KeyCode, mods: KeyModifiers) -> bool {
@@ -111,6 +113,7 @@ fn dispatch_key(code: KeyCode, mods: KeyModifiers, ctx: KeyCtx) -> KeyAction {
         KeyCode::Char('p') => KeyAction::TogglePause,
         KeyCode::Char('t') => KeyAction::OpenThemePicker,
         KeyCode::Char('?') => KeyAction::ToggleHelp,
+        KeyCode::Char('w') => KeyAction::ToggleWalkableDebug,
         KeyCode::PageUp | KeyCode::Up | KeyCode::Char('k') => {
             if ctx.current_floor + 1 < ctx.n_floors && !ctx.in_transition {
                 KeyAction::NavigateFloor(ctx.current_floor + 1)
@@ -261,6 +264,10 @@ pub async fn run_tui(
                             }
                             KeyAction::NavigateFloor(target) => {
                                 renderer.navigate_floor(target, now);
+                            }
+                            KeyAction::ToggleWalkableDebug => {
+                                let on = renderer.debug_walkable();
+                                renderer.set_debug_walkable(!on);
                             }
                         }
                     }
@@ -428,6 +435,10 @@ mod dispatch_tests {
         assert_eq!(
             dispatch_key(KeyCode::Char('?'), NONE, ctx()),
             KeyAction::ToggleHelp
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('w'), NONE, ctx()),
+            KeyAction::ToggleWalkableDebug
         );
         assert_eq!(
             dispatch_key(KeyCode::Char('x'), NONE, ctx()),

@@ -13,6 +13,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+C", "quit"),
     ("p", "pause / resume"),
     ("t", "themes"),
+    ("w", "walkable / approach / route debug"),
     ("?", "toggle this overlay"),
     ("\u{2191} \u{2193} j k", "switch floor"),
     ("PgUp / PgDn", "switch floor"),

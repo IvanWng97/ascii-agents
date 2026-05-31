@@ -41,6 +41,7 @@ macro_rules! make_draw_ctx {
             light: &mut _light,
             mouse_pos: None,
             pinned_agent: None,
+            debug_walkable: false,
             ticker: &_ticker,
             theme: _theme,
             theme_picker: None,

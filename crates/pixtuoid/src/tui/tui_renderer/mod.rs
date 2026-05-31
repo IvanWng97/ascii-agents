@@ -72,6 +72,9 @@ pub struct TuiRenderer<B: Backend<Error: Send + Sync + 'static>> {
     version_popup: bool,
     version_popup_started_at: Option<SystemTime>,
     help_open: bool,
+    /// Live walkable/approach/route debug layer toggle (`w`). Off by default,
+    /// transient (not persisted).
+    debug_walkable: bool,
     /// Scale captured at the moment of the last visible↔hidden edge so that
     /// an interrupted animation continues from its current position instead
     /// of snapping back to the start/end.
@@ -110,6 +113,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
             version_popup: false,
             version_popup_started_at: None,
             help_open: false,
+            debug_walkable: false,
             version_popup_scale_at_edge: 0.0,
             last_popup_scale: 0.0,
         }
@@ -121,6 +125,14 @@ impl<B: Backend<Error: Send + Sync + 'static>> TuiRenderer<B> {
 
     pub fn set_help_open(&mut self, v: bool) {
         self.help_open = v;
+    }
+
+    pub fn debug_walkable(&self) -> bool {
+        self.debug_walkable
+    }
+
+    pub fn set_debug_walkable(&mut self, v: bool) {
+        self.debug_walkable = v;
     }
 
     pub fn current_floor(&self) -> usize {
@@ -504,6 +516,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 &mut transition_chitchat,
                 pack,
                 now,
+                self.debug_walkable,
             );
             render_transition_floor(
                 &to_scene,
@@ -521,6 +534,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
                 &mut transition_chitchat,
                 pack,
                 now,
+                self.debug_walkable,
             );
 
             // Compute y-offsets for vertical slide with divider gap.
@@ -636,6 +650,7 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             light: &mut fctx.light,
             mouse_pos: self.mouse_pos,
             pinned_agent: self.pinned_agent,
+            debug_walkable: self.debug_walkable,
             ticker: &self.ticker,
             theme: self.theme,
             theme_picker: self.theme_picker,
@@ -702,6 +717,7 @@ fn render_transition_floor(
     >,
     pack: &Pack,
     now: SystemTime,
+    debug_walkable: bool,
 ) {
     let Some(layout) =
         Layout::compute_with_seed(buf_w, buf_h, MAX_VISIBLE_DESKS, floor_meta.floor_seed)
@@ -730,6 +746,7 @@ fn render_transition_floor(
         coffee_fetched_at,
         coffee_stains,
         light: &mut fctx.light,
+        debug_walkable,
     });
     // Mirror the normal-path refresh: render_to_rgb_buffer may have
     // snapshotted new entry/exit profiles into fctx.motion during the
