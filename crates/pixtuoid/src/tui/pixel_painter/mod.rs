@@ -60,7 +60,7 @@ use background::{
     paint_floor_and_walls, paint_floor_lamp_halo, paint_neon_panel, paint_shadow, time_of_day_look,
 };
 use drawable::{paint_drawable, pet_position, Drawable, DrawableKind};
-use palette::{agent_palette, recolor_frame};
+use palette::{agent_palette, blend, recolor_frame};
 
 const COFFEE_STEAM_WINDOW_SECS: u64 = 120;
 const DOOR_SPRITE_WIDTH: u16 = 16;
@@ -273,48 +273,118 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     if let Some(corridor) = ctx.layout.corridor {
         paint_corridor_runner(ctx.buf, corridor, ctx.theme);
     }
-    // Room dividers. Stardew-style fake-3D perspective:
-    //   • horizontal walls (E-W) show the wall face — 4 px tall with
-    //     a light top trim (lit cap) and dark bottom trim (shadow).
-    //   • vertical walls (N-S) are seen edge-on — drawn as a single
-    //     1-px partition line.
+    // Room dividers rendered as glass partitions — a modern conference-room
+    // look. Each wall is a dark frame rail on its two long edges, a frame
+    // mullion post every MULLION_STRIDE px, and a translucent pane between
+    // them that lets the floor read faintly through. The frame reuses the
+    // façade window frame colour so the interior glass reads as the same
+    // material as the building's floor-to-ceiling windows.
+    //   • horizontal walls (E-W): top + bottom rails frame, panes between.
+    //   • vertical walls (N-S, seen edge-on): left + right rails frame, a
+    //     1-px pane down the middle.
     // Visual thickness is wider than the walkable mask (WALL_THICK_V=1 in
-    // mask.rs) because this renders the full wall trim, not the ground footprint.
+    // mask.rs) because this renders the full frame, not the ground footprint.
     const WALL_THICK_V_PX: u16 = 3;
     const WALL_THICK_H_PX: u16 = 4;
-    let wall_body = ctx.theme.office.room_wall_body;
-    let wall_trim_light = ctx.theme.office.room_wall_trim_light;
-    let wall_trim_dark = ctx.theme.office.room_wall_trim_dark;
+    const MULLION_STRIDE: u16 = 14;
+    let frame = ctx.theme.surface.window_frame;
+    // Cool pane tints derived from the lightest wall trim, so dark themes get
+    // a correspondingly dark pane rather than a fixed bluish wash. `sheen` is
+    // the bright specular edge of the glass; `tint` is the body. Translucent
+    // over whatever's already painted behind (floor/decor) so the room reads
+    // faintly through the pane.
+    let tl = ctx.theme.office.room_wall_trim_light;
+    let glass_tint = Rgb(
+        tl.0.saturating_add(34),
+        tl.1.saturating_add(64),
+        tl.2.saturating_add(92),
+    );
+    let glass_sheen = Rgb(
+        tl.0.saturating_add(96),
+        tl.1.saturating_add(120),
+        tl.2.saturating_add(135),
+    );
+    let pane = |buf: &RgbBuffer, x: u16, y: u16, specular: bool| {
+        let b = buf.get(x, y);
+        let (g, a) = if specular {
+            (glass_sheen, 0.7)
+        } else {
+            (glass_tint, 0.5)
+        };
+        Rgb(blend(b.0, g.0, a), blend(b.1, g.1, a), blend(b.2, g.2, a))
+    };
+    // Rows where a horizontal wall runs — used to stitch the vertical
+    // partition into its joints (the layout emits geometry only; the render
+    // thicknesses and offsets that open the gaps live here).
+    let h_rows: Vec<u16> = ctx
+        .layout
+        .room_walls
+        .iter()
+        .filter(|(s, e)| s.y == e.y)
+        .map(|(s, _)| s.y)
+        .collect();
     for (start, end) in &ctx.layout.room_walls {
         if start.x == end.x {
-            for y in start.y..=end.y.min(buf_h - 1) {
+            // Stitch the partition's joints so it reads as one connected wall
+            // rather than a floating strip:
+            //   • Top: a segment starting at top_margin abuts the north wall
+            //     band, which ends 4 px higher at top_wall_h — raise it so no
+            //     floor shows between window and wall. A segment just below a
+            //     horizontal wall (the dual-meeting layout offsets it by ~6 px
+            //     to clear the cross wall) is bridged up to meet it.
+            //   • Bottom: where the 3-px-wide vertical meets a 4-px-tall
+            //     horizontal wall, extend it down by the horizontal's thickness
+            //     so the frame post fully fills the inside corner (else its
+            //     right two columns leave an L-notch beside the horizontal run).
+            let y_top = if start.y == ctx.layout.top_margin {
+                top_wall_h
+            } else if let Some(&hr) = h_rows
+                .iter()
+                .find(|&&hr| hr < start.y && start.y - hr <= WALL_THICK_H_PX + 2)
+            {
+                hr
+            } else {
+                start.y
+            };
+            let y_bot = if h_rows.contains(&end.y) {
+                end.y + (WALL_THICK_H_PX - 1)
+            } else {
+                end.y
+            };
+            for y in y_top..=y_bot.min(buf_h - 1) {
+                let into_pane = (y - y_top) % MULLION_STRIDE;
+                let mullion = into_pane == 0;
+                // Specular glint just below each mullion — top of the pane.
+                let specular = into_pane == 1;
                 for dx in 0..WALL_THICK_V_PX {
                     let x = start.x + dx;
-                    if x < buf_w {
-                        let color = if dx == 0 {
-                            wall_trim_light
-                        } else if dx == WALL_THICK_V_PX - 1 {
-                            wall_trim_dark
-                        } else {
-                            wall_body
-                        };
-                        ctx.buf.put(x, y, color);
+                    if x >= buf_w {
+                        continue;
                     }
+                    let is_rail = dx == 0 || dx == WALL_THICK_V_PX - 1;
+                    let color = if mullion || is_rail {
+                        frame
+                    } else {
+                        pane(ctx.buf, x, y, specular)
+                    };
+                    ctx.buf.put(x, y, color);
                 }
             }
         } else {
             for x in start.x..=end.x.min(buf_w - 1) {
+                let mullion = (x - start.x) % MULLION_STRIDE == 0;
                 for dy in 0..WALL_THICK_H_PX {
                     let y = start.y + dy;
                     if y >= buf_h {
                         continue;
                     }
-                    let color = if dy == 0 {
-                        wall_trim_light
-                    } else if dy == WALL_THICK_H_PX - 1 {
-                        wall_trim_dark
+                    let is_rail = dy == 0 || dy == WALL_THICK_H_PX - 1;
+                    // Upper pane row carries the sheen, lower row the body tint.
+                    let specular = dy == 1;
+                    let color = if mullion || is_rail {
+                        frame
                     } else {
-                        wall_body
+                        pane(ctx.buf, x, y, specular)
                     };
                     ctx.buf.put(x, y, color);
                 }
