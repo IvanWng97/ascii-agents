@@ -15,7 +15,9 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::layout::{furniture_def, Bounds, Point, SceneLayout, WaypointKind};
+use crate::layout::{
+    desk_furniture_def, desk_walk_anchor, furniture_def, Bounds, Point, SceneLayout, WaypointKind,
+};
 use crate::state::{ActivityState, AgentSlot};
 use crate::AgentId;
 
@@ -46,11 +48,6 @@ pub const WANDER_CYCLE_RANGE_MS: u64 = 6_000;
 /// approximate overlay timing safe (a new leg's shape is snapshotted once).
 pub const WANDER_WALK_EST_MS: u64 = 3_500;
 pub const WANDER_DWELL_EST_MS: u64 = 18_000;
-
-/// Absolute desk dwell between wander trips (the Seated beat). Per-agent
-/// jitter via `seated_dwell_ms`.
-pub const SEATED_DWELL_BASE_MS: u64 = 15_000;
-pub const SEATED_DWELL_RANGE_MS: u64 = 15_000;
 
 /// Frame-cycle period for animated poses.
 pub const TYPING_FRAME_MS: u64 = 140;
@@ -95,7 +92,9 @@ pub fn dwell_ms(kind: WaypointKind, agent_id: AgentId) -> u64 {
 
 /// Absolute dwell (ms) an agent sits at its desk between wander trips.
 pub fn seated_dwell_ms(agent_id: AgentId) -> u64 {
-    SEATED_DWELL_BASE_MS + dwell_mix(agent_id, 0x9e37_79b9_7f4a_7c15) % SEATED_DWELL_RANGE_MS.max(1)
+    // Single source: the desk's own FurnitureDef.dwell (no separate constant).
+    let (base, range) = desk_furniture_def().dwell;
+    base + dwell_mix(agent_id, 0x9e37_79b9_7f4a_7c15) % range.max(1)
 }
 
 /// Estimated full wander-cycle wall-time for an agent (desk dwell + two walk
@@ -216,10 +215,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
             let t = (since_exit * 1000 / ENTRY_ANIMATION_MS).min(1000) as u16;
             let frame = ((since_exit / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
             return Some(Pose::Walking {
-                from: Point {
-                    x: desk.x + 6,
-                    y: desk.y + 4,
-                },
+                from: desk_walk_anchor(desk),
                 to: target,
                 t_x1000: t,
                 frame,
@@ -245,10 +241,7 @@ pub fn derive(slot: &AgentSlot, now: SystemTime, layout: &SceneLayout) -> Option
             let frame = ((since_spawn / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
             return Some(Pose::Walking {
                 from,
-                to: Point {
-                    x: desk.x + 6,
-                    y: desk.y + 4,
-                },
+                to: desk_walk_anchor(desk),
                 t_x1000: t,
                 frame,
                 carrying_coffee: false,

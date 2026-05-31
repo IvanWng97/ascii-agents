@@ -32,7 +32,7 @@ pub use pixtuoid_core::pose::{
     WANDER_CYCLE_RANGE_MS, WANDER_DWELL_EST_MS, WANDER_WALK_EST_MS,
 };
 
-use crate::tui::layout::{Layout, Point, WaypointKind};
+use crate::tui::layout::{desk_walk_anchor, Layout, Point, WaypointKind};
 use crate::tui::pathfind::Router;
 
 /// Per-agent rendered position cache. Updated each frame by
@@ -131,10 +131,7 @@ pub fn derive_with_routing(
             // desk anchor (the common case — exiting from a seated state).
             // Without this, an agent that's mid-coffee-run when its session
             // ends teleports back to the desk before walking to the door.
-            let desk_anchor = Point {
-                x: desk.x + 6,
-                y: desk.y + 4,
-            };
+            let desk_anchor = desk_walk_anchor(desk);
             let from = history
                 .recent(slot.agent_id, 300, now)
                 .unwrap_or(desk_anchor);
@@ -217,10 +214,7 @@ pub fn derive_with_routing(
 
         // Snapshot on first sighting if we're within the spawn window.
         if mstate.entry.is_none() && since_spawn < ENTRY_ANIMATION_MS {
-            let to_desk = Point {
-                x: desk.x + 6,
-                y: desk.y + 4,
-            };
+            let to_desk = desk_walk_anchor(desk);
             let h = slot.agent_id.raw();
             let jx = ((h % 9) as i32 - 4) as i16;
             let jy = (((h >> 16) % 9) as i32 - 4) as i16;
@@ -243,10 +237,7 @@ pub fn derive_with_routing(
             if !walk_arrived(profile, elapsed_ms) {
                 let t_x1000 = walk_progress(profile, elapsed_ms);
                 let frame = ((elapsed_ms / WALKING_FRAME_MS) as usize) % WALKING_FRAMES;
-                let to_desk = Point {
-                    x: desk.x + 6,
-                    y: desk.y + 4,
-                };
+                let to_desk = desk_walk_anchor(desk);
                 return route_walking_pose(
                     slot,
                     now,
@@ -306,10 +297,7 @@ pub fn derive_with_routing(
                 // This intentionally differs from core::idle_pose's raw
                 // `from: desk` (only the routed TUI path is user-visible) and
                 // matches the profile routed from desk+(6,4) in advance_wander.
-                let from = Point {
-                    x: desk_point.x + 6,
-                    y: desk_point.y + 4,
-                };
+                let from = desk_walk_anchor(desk_point);
                 let elapsed_phase = now
                     .duration_since(ms.wander_phase_started_at)
                     .unwrap_or(Duration::ZERO)
@@ -360,10 +348,7 @@ pub fn derive_with_routing(
                 // jump on arrival; this intentionally differs from
                 // core::idle_pose's raw `to: desk` (only the routed TUI path is
                 // user-visible).
-                let snap_target = Point {
-                    x: desk_point.x + 6,
-                    y: desk_point.y + 4,
-                };
+                let snap_target = desk_walk_anchor(desk_point);
                 let elapsed_phase = now
                     .duration_since(wander_phase_started_at)
                     .unwrap_or(Duration::ZERO)
@@ -430,10 +415,7 @@ pub fn derive_with_routing(
                 // pose flips from Walking → SeatedTyping. The agent ends
                 // visually AT the desk (anchor-equivalent), so there's no
                 // perceivable transition flash.
-                let snap_target = Point {
-                    x: desk.x + 6,
-                    y: desk.y + 4,
-                };
+                let snap_target = desk_walk_anchor(desk);
                 // Retrieve or snapshot the physics profile for this snap-back.
                 // Re-arm when EITHER there's no profile yet OR a NEW state
                 // transition began (stored `started_at != slot.state_started_at`):

@@ -2,6 +2,8 @@
 //! piece of furniture and waypoint kind in the office. Kept separate from
 //! geometry so adding a new sprite kind doesn't churn the layout math.
 
+use super::{Point, DESK_H, DESK_W};
+
 /// Wander destinations the Idle state machine can pick. Each kind controls
 /// the pose + sprite an arriving agent takes. Plants/lamps are decor, not
 /// waypoints. Coffee folded into Pantry — the pantry sprite already has
@@ -230,6 +232,57 @@ pub const fn furniture_def(kind: WaypointKind) -> FurnitureDef {
     }
 }
 
+/// The **home desk** — the agent's OWNED workstation — as a [`FurnitureDef`],
+/// the SAME descriptor visited furniture uses. The desk is not a
+/// [`WaypointKind`] (there are N per-agent desks, not a fixed kind set), so it
+/// gets this free-function accessor instead of a `furniture_def` table row —
+/// but it shares the one footprint + occupancy + dwell + approach model. The
+/// only attribute distinguishing it from a couch is ownership: the agent is
+/// *forced* here when Active (the existing Seated behavior), vs a couch it only
+/// drifts to when Idle.
+///
+/// How the shared fields apply to the desk:
+/// - `footprint = (DESK_W + 2, DESK_H)` — the +2 is the side-trim overhang. It
+///   is stamped TOP-LEFT at the desk Point (`mask.rs`), unlike visited
+///   furniture which stamps CENTERED on `pos`; the origin is the stamp call's
+///   choice, not a property of the descriptor.
+/// - `occupies_pos = false` — the agent's seat is NORTH of the footprint
+///   (`seated_anchor`), reached via the bespoke [`desk_walk_anchor`]; the desk's
+///   fixed seat is not a generic `stand_point` side-probe, so the furniture
+///   walk machinery (`stand_point`/`walk_target`/`dwell_ms`) is never run on it.
+/// - `dwell` is the seated dwell window — `pose::seated_dwell_ms` reads it
+///   (single source; the desk's personality jitter is applied there).
+/// - `approach = DESK_APPROACH` — no south front (sit behind the monitor); the
+///   editable entry-side knob (drop a side by flipping one bool).
+pub const fn desk_furniture_def() -> FurnitureDef {
+    FurnitureDef {
+        footprint: Some((DESK_W + 2, DESK_H)),
+        occupies_pos: false,
+        dwell: (15_000, 15_000),
+        approach: DESK_APPROACH,
+    }
+}
+
+/// Offsets from a home desk's top-left to the agent's WALK anchor (the cell the
+/// agent walks to/from for its desk). Chosen so the TUI `walking_anchor` of this
+/// point equals the TUI `seated_anchor` of the desk — the agent settles exactly
+/// onto its north seat with no arrival pop, just clear of the desk obstacle.
+/// The `walking_anchor(desk_walk_anchor(d)) == seated_anchor(d)` identity is
+/// locked by a tui-side test; if `DESK_W` or those anchors change they move
+/// together (X tracks `DESK_W`; `8` is the character sprite width).
+pub const DESK_WALK_X_OFF: u16 = (DESK_W - 8) / 2 + 4;
+pub const DESK_WALK_Y_OFF: u16 = 4;
+
+/// The cell an agent walks to/from for its home `desk` (top-left Point). The
+/// single source for what were ~10 scattered `desk + (6, 4)` literals across the
+/// entry / exit / wander / snap-back walks.
+pub fn desk_walk_anchor(desk: Point) -> Point {
+    Point {
+        x: desk.x + DESK_WALK_X_OFF,
+        y: desk.y + DESK_WALK_Y_OFF,
+    }
+}
+
 /// Which way a waypoint occupant faces. Drives sprite choice (back vs
 /// front view) and horizontal mirroring at render time. Most waypoints
 /// are `South` (facing the viewer / facing-neutral); meeting-room slots
@@ -397,5 +450,24 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn desk_is_a_furniture_def_with_desk_geometry() {
+        // The home desk is the SAME FurnitureDef type as visited furniture —
+        // no separate struct, no inheritance. Its footprint + approach live in
+        // the one model; occupies_pos=false because the agent's seat is north
+        // of the footprint (reached via desk_walk_anchor, not stand_point).
+        let d = desk_furniture_def();
+        assert_eq!(d.footprint, Some((DESK_W + 2, DESK_H)), "desk footprint");
+        assert!(
+            !d.occupies_pos,
+            "agent approaches the desk; its seat is north of the footprint"
+        );
+        assert_eq!(
+            d.approach, DESK_APPROACH,
+            "desk uses the editable DESK_APPROACH policy"
+        );
+        assert!(d.dwell.1 > 0, "seated dwell range must be positive");
     }
 }

@@ -4,7 +4,7 @@
 //! clearance band around each obstacle so walkers don't scrape along
 //! edges.
 
-use super::{PodDecor, Point, WallDecor, Waypoint, DESK_H, DESK_W, OBSTACLE_PAD_PX};
+use super::{PodDecor, Point, WallDecor, Waypoint, OBSTACLE_PAD_PX};
 use crate::walkable::WalkableMask;
 
 /// Walkable footprint (and render face height) of a horizontal (E-W) interior
@@ -80,7 +80,12 @@ pub(super) fn build_walkable_mask(
         // the desk paints in Pass 2 on top of both. Routes become much
         // shorter — walkers can cut diagonally between desk rows instead
         // of weaving around each one.
-        mask.mark_blocked(desk.x, desk.y, DESK_W + 2, DESK_H, OBSTACLE_PAD_PX);
+        // Desk footprint comes from the shared FurnitureDef (always Some for
+        // the desk); stamped TOP-LEFT at the desk Point (not centred like
+        // visited furniture).
+        if let Some((w, h)) = super::decor::desk_furniture_def().footprint {
+            mask.mark_blocked(desk.x, desk.y, w, h, OBSTACLE_PAD_PX);
+        }
     }
 
     for sofa in meeting_sofas {

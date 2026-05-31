@@ -17,8 +17,8 @@ mod mask;
 
 pub use approach::{stand_point, walk_target};
 pub use decor::{
-    furniture_def, ApproachSides, Facing, FurnitureDef, PlantKind, PodDecor, WallDecor,
-    WaypointKind, DESK_APPROACH,
+    desk_furniture_def, desk_walk_anchor, furniture_def, ApproachSides, Facing, FurnitureDef,
+    PlantKind, PodDecor, WallDecor, WaypointKind, DESK_APPROACH,
 };
 pub use mask::WALL_THICK_H;
 

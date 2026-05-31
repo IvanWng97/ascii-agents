@@ -812,7 +812,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         })
         .collect();
     for (i, &desk) in ctx.layout.home_desks.iter().enumerate() {
-        let is_last_col = desk.x + DESK_W + 2 + DESK_W
+        let desk_mask_w = crate::tui::layout::desk_furniture_def()
+            .footprint
+            .map_or(DESK_W, |(w, _)| w);
+        let is_last_col = desk.x + desk_mask_w + DESK_W
             >= ctx.layout.cubicle_band.x + ctx.layout.cubicle_band.width;
         let occupant = agents
             .iter()
@@ -1872,6 +1875,27 @@ mod tests {
                 / 2,
             2,
         );
+    }
+
+    #[test]
+    fn desk_walk_anchor_settles_exactly_on_the_seat() {
+        // The home desk's walk anchor (desk_furniture_def's geometry, pure
+        // algebraic) must land so the WALKING sprite anchor equals the SEATED
+        // sprite anchor — zero pop on arrival. This identity is the contract
+        // that lets desk_walk_anchor stay a pure fn instead of a side-probe; if
+        // seated_anchor or walking_anchor ever change, this fails loudly.
+        use crate::tui::layout::desk_walk_anchor;
+        for desk in [
+            Point { x: 40, y: 30 },
+            Point { x: 100, y: 60 },
+            Point { x: 7, y: 5 }, // near-origin: saturating_sub edge
+        ] {
+            assert_eq!(
+                walking_anchor(desk_walk_anchor(desk)),
+                seated_anchor(desk),
+                "walking_anchor(desk_walk_anchor({desk:?})) must equal seated_anchor",
+            );
+        }
     }
 
     #[test]
