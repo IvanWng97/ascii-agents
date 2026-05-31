@@ -1642,7 +1642,10 @@ fn long_delegation_keeps_parent_and_live_subagent_alive() {
 
     // Tick just past the parent's Active stale threshold measured from t0, but
     // well within it measured from the last suppressed child event (t0+9min).
-    r.tick(&mut scene, t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(1));
+    r.tick(
+        &mut scene,
+        t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(1),
+    );
 
     assert!(
         scene.agents.get(&parent).unwrap().exiting_at.is_none(),
