@@ -407,11 +407,15 @@ fn snap_back_derive_is_idempotent_within_a_frame() {
     let l = layout();
     let slot = active_slot(now0, now0 - Duration::from_secs(60));
     let desk = l.home_desks[0];
-    // Short-ish snap so walk_arrived fires within the 900ms window (exercises
-    // the clear -> re-arm path), but >= SNAP_BACK_MIN_DIST so it arms.
+    // Short snap (octile ~24): it arms (>= SNAP_BACK_MIN_DIST), and its physics
+    // profile is short enough (< SNAP_BACK_MS, so NO time-compression) that
+    // walk_arrived fires well inside the 900ms window — clearing snap_back, after
+    // which a same-`now` call re-arms it. That clear -> re-arm is the path most
+    // at risk of a within-frame split (the window-expiry else branch can't
+    // re-arm), so we steer the leg through it and assert below that we did.
     let prev0 = Point {
-        x: desk.x + 14,
-        y: desk.y + 10,
+        x: desk.x + 8,
+        y: desk.y + 5,
     };
     let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
     let mut router = StubRouter::straight();
@@ -419,6 +423,7 @@ fn snap_back_derive_is_idempotent_within_a_frame() {
     history.record(slot.agent_id, prev0, now0 - Duration::from_millis(50));
     let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
 
+    let mut arrived_frame: Option<u64> = None;
     for i in 0..30u64 {
         let t = now0 + Duration::from_millis(i * 33);
         let p0 = derive_with_routing(
@@ -431,6 +436,14 @@ fn snap_back_derive_is_idempotent_within_a_frame() {
             &mut motion,
         );
         let h0 = history.recent(slot.agent_id, 300, t);
+        if arrived_frame.is_none()
+            && matches!(
+                p0,
+                Some(Pose::SeatedTyping { .. } | Pose::SeatedIdle | Pose::SeatedThinking)
+            )
+        {
+            arrived_frame = Some(i);
+        }
         for k in 1..4 {
             let pk = derive_with_routing(
                 &slot,
@@ -452,6 +465,17 @@ fn snap_back_derive_is_idempotent_within_a_frame() {
             );
         }
     }
+    // Confirm the leg reached the desk via the walk_arrived clear BEFORE the
+    // 900ms window-expiry clear — i.e. the clear -> re-arm path really was
+    // exercised above (not just the window-expiry else branch, which can't
+    // re-arm). Else the comment would overstate what this test covers.
+    let arrived = arrived_frame.expect("snap-back should reach the desk within the run");
+    assert!(
+        arrived * 33 < SNAP_BACK_MS,
+        "snap-back should arrive via walk_arrived (< {SNAP_BACK_MS}ms), not window-expiry; \
+         arrived at frame {arrived} ({}ms)",
+        arrived * 33
+    );
 }
 
 #[test]
