@@ -212,7 +212,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
 
     // Plants
     for (kind, p) in &layout.plants {
-        let (w, h) = footprint(kind.furniture());
+        let (w, h) = visual(kind.furniture()); // hover the whole visible plant, not just its ground base
         if hit(p.x.saturating_sub(w / 2), p.y.saturating_sub(h / 2), w, h) {
             return Some(match kind {
                 PlantKind::Ficus => "Ficus",

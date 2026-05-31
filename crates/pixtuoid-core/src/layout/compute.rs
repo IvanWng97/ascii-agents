@@ -923,11 +923,11 @@ pub(super) fn compute_waypoints(
     }
     for (room_id, table) in meeting_tables.iter().enumerate() {
         // West stand faces East (toward the table centre); east stand faces West.
-        // The table obstacle (mask.rs) is `mark_blocked(t.x-6, w=12, pad=2)` →
-        // blocks x ∈ [t.x-8, t.x+7]. It is NOT centred on t.x (6 left, 5 right),
-        // so a symmetric ±8 puts the WEST point on the inclusive left edge (t.x-8 →
-        // non-walkable, router has to snap it). Offset the west stand one px further
-        // out (t.x-9) so both stands land on walkable cells. East (t.x+8) already clears.
+        // The table obstacle (mask.rs) is `mark_blocked(t.x-5, w=11, pad=2)` →
+        // blocks x ∈ [t.x-7, t.x+7] (symmetric, 7 px each side). West stand at
+        // t.x-9 clears by 2 px; east stand at t.x+8 clears by 1 px. (The -9 keeps
+        // margin for any future footprint bump — leave it even though -8 would
+        // also clear today.)
         for (dx, facing) in [(-9i16, Facing::East), (8, Facing::West)] {
             waypoints.push(Waypoint {
                 pos: Point {

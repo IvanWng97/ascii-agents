@@ -374,8 +374,11 @@ pub const fn furniture_def(kind: Furniture) -> FurnitureDef {
             visual: (6, 6),
             ..DECOR
         },
+        // Footprint matches the small 5×4 sprite — NOT the shared 6×6
+        // PLANT_FOOTPRINT, which would block more ground than the succulent
+        // draws (the lone footprint>visual inversion; invariant #6).
         Furniture::PlantSucculent => FurnitureDef {
-            footprint: Some(PLANT_FOOTPRINT),
+            footprint: Some((5, 4)),
             visual: (5, 4),
             ..DECOR
         },
@@ -733,18 +736,28 @@ mod tests {
                     "{f:?}: seat row must carry no footprint"
                 );
             }
-            // All plant rows share the one tight ground footprint.
+            // The three full-size plants share the one tight ground footprint;
+            // Succulent is smaller (its own 5×4 matching its sprite).
             if matches!(
                 f,
-                Furniture::PlantFicus
-                    | Furniture::PlantTall
-                    | Furniture::PlantFlower
-                    | Furniture::PlantSucculent
+                Furniture::PlantFicus | Furniture::PlantTall | Furniture::PlantFlower
             ) {
                 assert_eq!(
                     d.footprint,
                     Some(PLANT_FOOTPRINT),
                     "{f:?}: plant ground footprint"
+                );
+            }
+            // Footprint never exceeds the sprite — the mask blocks only the
+            // ground projection, never more than is drawn (invariant #6). The
+            // succulent inversion (6×6 footprint under a 5×4 sprite) is the bug
+            // this guards against recurring.
+            if let Some((fw, fh)) = d.footprint {
+                assert!(
+                    fw <= d.visual.0 && fh <= d.visual.1,
+                    "{f:?}: footprint {:?} exceeds visual {:?} (invariant #6)",
+                    d.footprint,
+                    d.visual
                 );
             }
         }

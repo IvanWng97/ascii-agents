@@ -940,7 +940,14 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     }
     for &table in &ctx.layout.meeting_tables {
         drawables.push(Drawable {
-            anchor_y: table.y + 2,
+            // z-key = sprite south row, derived from the table (== +2 for the
+            // 11×5 coffee-table sprite) so it can't drift from a visual edit.
+            anchor_y: table.y
+                + center_pin_south_offset(
+                    crate::tui::layout::furniture_def(crate::tui::layout::Furniture::MeetingTable)
+                        .visual
+                        .1,
+                ),
             kind: DrawableKind::MeetingTable { pos: table },
         });
     }

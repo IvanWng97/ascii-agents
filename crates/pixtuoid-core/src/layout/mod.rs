@@ -73,7 +73,7 @@ pub struct SceneLayout {
     /// point and marks it as an obstacle in the walkable mask.
     pub pod_decor: Vec<(PodDecor, Point)>,
     pub floor_lamp: Option<Point>,
-    /// Lounge side table (5×3 wood + magazine) placed next to the
+    /// Lounge side table (7×4 wood + magazine) placed next to the
     /// viewing couch on the side opposite the floor lamp.
     pub lounge_side_table: Option<Point>,
     pub door: Option<Point>,
