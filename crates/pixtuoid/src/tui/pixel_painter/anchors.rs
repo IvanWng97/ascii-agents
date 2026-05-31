@@ -139,9 +139,19 @@ pub(in crate::tui) fn character_anchor(
         Pose::StandingAtDesk => standing_at_desk_anchor(desk),
         Pose::AtWaypoint { wp, kind } => {
             let wp_obj = layout.waypoints.get(wp)?;
+            // Anchor off the resolved stand cell (same `desk` origin as the
+            // walk destination), so the label tracks where the agent actually
+            // stands instead of the blocked furniture center.
+            let stand = pixtuoid_core::layout::stand_point(
+                wp_obj.kind,
+                wp_obj.pos,
+                layout.pantry_counter_size,
+                &layout.walkable,
+                desk,
+            );
             match kind {
-                WaypointKind::Couch | WaypointKind::MeetingSofa => back_couch_anchor(wp_obj.pos),
-                _ => waypoint_anchor(wp_obj.pos),
+                WaypointKind::Couch | WaypointKind::MeetingSofa => back_couch_anchor(stand),
+                _ => waypoint_anchor(stand),
             }
         }
         Pose::AimlessAt { dest } => waypoint_anchor(dest),

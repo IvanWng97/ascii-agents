@@ -24,7 +24,8 @@ src/
 │                       mod.rs (SceneLayout struct, Bounds, Point, constants, accessors),
 │                       compute.rs (compute_with_seed + 4 private helpers),
 │                       decor.rs (WaypointKind [+MeetingSofa/MeetingStand], Facing, WallDecor, PlantKind, PodDecor),
-│                       mask.rs (build_walkable_mask — obstacle stamping for A*)
+│                       mask.rs (build_walkable_mask — obstacle stamping for A*),
+│                       approach.rs (stand_point — which walkable cell off a waypoint an agent stands at, by side nearest its desk)
 ├── physics.rs          pure walk-pace physics (no terminal/router deps): WalkIntent, WalkProfile,
 │                       walk_profile (trapezoidal/triangular kinematics), walk_progress (t_x1000),
 │                       walk_arrived, speed_mult, pause_ms_for; constants: V_CRUISE_COMMUTE=0.36,

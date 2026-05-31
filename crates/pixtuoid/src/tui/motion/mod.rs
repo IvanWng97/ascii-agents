@@ -260,16 +260,18 @@ pub fn advance_wander(
                         .unwrap_or(now);
                 } else {
                     // Trip: pick destination, snapshot walk-out profile.
-                    let (dest, dest_kind, wp_idx) = pick_wander_dest(id, ms.wander_cycle_n, layout);
+                    // Resolve the stand cell off the agent's home desk (the
+                    // origin must match core::idle_pose's `desk` so the
+                    // stateless/stateful destinations stay in lockstep).
+                    let desk_pt = layout.home_desks.get(slot.desk_index).copied();
+                    let origin = desk_pt.unwrap_or(Point { x: 0, y: 0 });
+                    let (dest, dest_kind, wp_idx) =
+                        pick_wander_dest(id, ms.wander_cycle_n, layout, origin);
                     ms.wander_dest = dest;
                     ms.wander_dest_kind = dest_kind;
                     ms.wander_dest_wp_idx = wp_idx;
 
-                    let desk = layout
-                        .home_desks
-                        .get(slot.desk_index)
-                        .copied()
-                        .unwrap_or(dest);
+                    let desk = desk_pt.unwrap_or(dest);
                     // Route from desk+(6,4) (the seated anchor) so the walk-out
                     // start matches where the seated sprite was — no stand-up
                     // jump. This intentionally differs from core::idle_pose's
@@ -418,11 +420,15 @@ pub fn advance_wander(
 /// logic as `core::pose::idle_pose` so `cycle_n` produces identical
 /// destination choices in both the stateless core path and the stateful tui path.
 ///
+/// `origin` is the agent's home desk — the stand-side tiebreaker, kept
+/// identical to `core::pose::idle_pose`'s `desk` so the paths can't drift.
+///
 /// Returns `(dest_point, waypoint_kind, waypoint_index)`.
 fn pick_wander_dest(
     id: AgentId,
     cycle_n: u64,
     layout: &Layout,
+    origin: Point,
 ) -> (Point, Option<WaypointKind>, Option<usize>) {
     if is_aimless_cycle(id, cycle_n) {
         // Shared seed helper so this can never drift from core::pose::idle_pose.
@@ -432,7 +438,17 @@ fn pick_wander_dest(
     } else {
         let wp_idx = waypoint_index_for_cycle(id, cycle_n, layout.waypoints.len());
         let wp = layout.waypoints[wp_idx];
-        (wp.pos, Some(wp.kind), Some(wp_idx))
+        // Stand off the furniture on the side nearest the desk — NOT the raw
+        // `wp.pos` (the blocked furniture center), which made A* detour around
+        // it and the sprite pop on arrival.
+        let dest = pixtuoid_core::layout::stand_point(
+            wp.kind,
+            wp.pos,
+            layout.pantry_counter_size,
+            &layout.walkable,
+            origin,
+        );
+        (dest, Some(wp.kind), Some(wp_idx))
     }
 }
 

@@ -432,8 +432,15 @@ fn idle_pose(slot: &AgentSlot, desk: Point, layout: &SceneLayout, elapsed_ms: u6
     } else {
         let wp_idx = waypoint_index_for_cycle(slot.agent_id, cycle_n, layout.waypoints.len());
         let wp = layout.waypoints[wp_idx];
-        (
+        let dest = crate::layout::stand_point(
+            wp.kind,
             wp.pos,
+            layout.pantry_counter_size,
+            &layout.walkable,
+            desk,
+        );
+        (
+            dest,
             Pose::AtWaypoint {
                 wp: wp_idx,
                 kind: wp.kind,
@@ -632,6 +639,47 @@ mod tests {
                 assert!((400..=600).contains(&t_x1000));
             }
             other => panic!("expected Walking, got {other:?}"),
+        }
+    }
+
+    /// Regression: an agent heading to the pantry must walk to a WALKABLE
+    /// stand cell, not the blocked counter center (which forced A* to detour
+    /// around/below the counter and the sprite to pop on arrival).
+    #[test]
+    fn pantry_walk_destination_is_walkable() {
+        let l = layout();
+        let pantry_idx = l
+            .waypoints
+            .iter()
+            .position(|w| w.kind == WaypointKind::Pantry)
+            .expect("standard floor has a pantry");
+        // Find an agent whose first non-aimless trip cycle lands on the pantry.
+        let (id, n) = (0..8000u64)
+            .find_map(|i| {
+                let id = AgentId::from_transcript_path(&format!("/p/pw{i}.jsonl"));
+                let n = (0..300u64).find(|n| {
+                    takes_trip(id, *n)
+                        && !is_aimless_cycle(id, *n)
+                        && waypoint_index_for_cycle(id, *n, l.waypoints.len()) == pantry_idx
+                })?;
+                Some((id, n))
+            })
+            .expect("some agent lands at the pantry");
+
+        let (seated_end, walk_out_end, _, cycle) = phases(id);
+        let midpoint = n * cycle + seated_end + (walk_out_end - seated_end) / 2;
+        let started = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let now = started + Duration::from_millis(midpoint);
+        let mut s = slot(ActivityState::Idle, 0).0;
+        s.agent_id = id; // desk_index 0 is valid for the 4-agent layout
+
+        match derive(&s, now, &l).expect("pose") {
+            Pose::Walking { to, .. } => assert!(
+                l.walkable.is_walkable(to.x, to.y),
+                "pantry walk dest {to:?} is not walkable (center={:?})",
+                l.waypoints[pantry_idx].pos
+            ),
+            other => panic!("expected Walking at walk-out midpoint, got {other:?}"),
         }
     }
 

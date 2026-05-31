@@ -10,10 +10,12 @@
 //!   * `decor` — the four furniture/decor enums (vocabulary).
 //!   * `mask`  — `build_walkable_mask`: stamps obstacles for routing.
 
+mod approach;
 mod compute;
 mod decor;
 mod mask;
 
+pub use approach::stand_point;
 pub use decor::{Facing, PlantKind, PodDecor, WallDecor, WaypointKind};
 
 use crate::walkable::WalkableMask;
