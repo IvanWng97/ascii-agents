@@ -15,7 +15,7 @@ pub(super) use lighting::{
     paint_neon_panel, paint_shadow,
 };
 pub(super) use time_of_day::{
-    atmo_attenuation, dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look,
+    dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look, weather_light,
     weather_state, TimeOfDayLook, WallSide, Weather,
 };
 
@@ -42,6 +42,86 @@ const SPILL_DEPTH: u16 = 12;
 /// can derive the skip range from `layout.door` without crossing modules.
 const DOOR_SPRITE_WIDTH: u16 = 16;
 
+/// Lightning strike cadence (Storm only): a flash fires every
+/// `LIGHTNING_PERIOD_MS` (~15 s — a 6 s cadence read as a hyperactive storm),
+/// lasting `LIGHTNING_FLASH_MS`. The flash shape is a two-pulse flicker
+/// (`lightning_envelope`) shared by the bright on-glass bolt
+/// (`paint_floor_to_ceiling_window`) and the softer room-wide ambient bounce
+/// (`paint_lightning_flash`), so both stay in lockstep.
+const LIGHTNING_PERIOD_MS: u64 = 15000;
+const LIGHTNING_FLASH_MS: u64 = 90;
+
+/// Intensity envelope (0..1) of a lightning flash given ms since the strike
+/// began. Primary strike → brief dim → after-flash, so the strike reads as a
+/// real flicker rather than a single on/off blink. Returns 0 outside the flash.
+fn lightning_envelope(since_strike_ms: u64) -> f32 {
+    match since_strike_ms {
+        0..=24 => 1.0,   // primary strike
+        25..=39 => 0.15, // dim between flickers
+        40..=69 => 0.55, // after-flash
+        _ => 0.0,
+    }
+}
+
+/// Per-bucket strike offset (ms into the bucket) so strikes don't fire on a
+/// fixed metronome. Each `LIGHTNING_PERIOD_MS`-long bucket hashes to its own
+/// offset in `[0, PERIOD - FLASH)` (keeping the whole flash inside the bucket),
+/// so inter-strike gaps wander over ~0..2·PERIOD while averaging one PERIOD.
+/// splitmix64 (same mixer as `weather_state`) for a well-distributed offset.
+fn strike_offset(bucket: u64) -> u64 {
+    let mut h = bucket.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    h % (LIGHTNING_PERIOD_MS - LIGHTNING_FLASH_MS)
+}
+
+/// `lightning_envelope` for the current clock, or 0 when not mid-strike.
+/// Shared by the window bolt and the room bounce so they fire together, and
+/// jittered per `strike_offset` so the cadence reads organic, not clockwork.
+fn lightning_flash_level(now: SystemTime) -> f32 {
+    let elapsed_ms = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let bucket = elapsed_ms / LIGHTNING_PERIOD_MS;
+    let phase = elapsed_ms % LIGHTNING_PERIOD_MS;
+    match phase.checked_sub(strike_offset(bucket)) {
+        Some(since) if since < LIGHTNING_FLASH_MS => lightning_envelope(since),
+        _ => 0.0,
+    }
+}
+
+/// Room-wide ambient bounce from a Storm lightning strike. Painted LAST in the
+/// pixel pass (after floor/walls/furniture/characters) so the whole interior
+/// briefly flares — the on-glass bolt alone (`paint_floor_to_ceiling_window`)
+/// lit only the window strip, which barely registered. Subtler than the bolt
+/// (this is bounced fill light, not the source). No-op unless mid-strike.
+pub(super) fn paint_lightning_flash(buf: &mut RgbBuffer, now: SystemTime, weather: Weather) {
+    if weather != Weather::Storm {
+        return;
+    }
+    let level = lightning_flash_level(now);
+    if level <= 0.0 {
+        return;
+    }
+    let alpha = 0.20 * level;
+    for y in 0..buf.height {
+        for x in 0..buf.width {
+            let cur = buf.get(x, y);
+            buf.put(
+                x,
+                y,
+                Rgb(
+                    blend(cur.0, 255, alpha),
+                    blend(cur.1, 255, alpha),
+                    blend(cur.2, 255, alpha),
+                ),
+            );
+        }
+    }
+}
+
 /// Multiplicative-ish tint applied to floor cells after the base palette,
 /// driven by current outdoor weather. Subtle (~15% blend); each variant
 /// shifts the indoor mood without overpowering the theme palette.
@@ -51,10 +131,28 @@ pub(super) fn weather_floor_tint(w: Weather) -> Rgb {
         Weather::Rain => Rgb(190, 200, 220),
         Weather::Storm => Rgb(140, 145, 165),
         Weather::Snow => Rgb(220, 230, 250),
-        Weather::Fog => Rgb(200, 200, 205),
+        // Fog is a luminous white-out — its floor tint must be brighter than
+        // overcast's, not darker (the old 200,200,205 read as dark mist).
+        Weather::Fog => Rgb(228, 229, 233),
         Weather::Overcast => Rgb(210, 210, 215),
         Weather::Windy => Rgb(248, 248, 245),
         Weather::Smog => Rgb(215, 200, 165),
+    }
+}
+
+/// Haze that obscures the city skyline behind the glass, by weather. Returns
+/// `(haze_color, blend_alpha)` or `None` when the skyline is crisp. Fog is a
+/// near-total white-out; storm/rain murk it; smog adds a brown-grey pall.
+/// Applied to the glass interior before the rain/snow/lightning effects so
+/// those still read on top of the murk.
+fn skyline_haze(w: Weather) -> Option<(Rgb, f32)> {
+    match w {
+        Weather::Fog => Some((Rgb(226, 228, 233), 0.55)),
+        Weather::Storm => Some((Rgb(120, 126, 142), 0.38)),
+        Weather::Rain => Some((Rgb(168, 178, 198), 0.20)),
+        Weather::Smog => Some((Rgb(150, 138, 110), 0.22)),
+        Weather::Overcast => Some((Rgb(196, 199, 206), 0.12)),
+        _ => None,
     }
 }
 
@@ -363,6 +461,30 @@ fn paint_floor_to_ceiling_window(
         }
     }
 
+    // Skyline haze: fog/rain/storm/smog obscure the city behind the glass.
+    // Blend the glass interior toward the weather haze BEFORE the streak/flash
+    // effects, so rain/snow/lightning still read on top of the murk.
+    if let Some((haze, alpha)) = skyline_haze(weather) {
+        for dy in 1..h.saturating_sub(1) {
+            for dx in 1..w.saturating_sub(1) {
+                let px = x + dx;
+                let py = y + dy;
+                if px < buf.width && py < buf.height {
+                    let cur = buf.get(px, py);
+                    buf.put(
+                        px,
+                        py,
+                        Rgb(
+                            blend(cur.0, haze.0, alpha),
+                            blend(cur.1, haze.1, alpha),
+                            blend(cur.2, haze.2, alpha),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     let elapsed_ms = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -429,8 +551,12 @@ fn paint_floor_to_ceiling_window(
                     }
                 }
             }
-            let flash_phase = elapsed_ms % 6000;
-            if flash_phase < 50 {
+            // The bright on-glass bolt — the strike's source. Uses the shared,
+            // jittered flash level so it fires in lockstep with the room-wide
+            // bounce (paint_lightning_flash).
+            let level = lightning_flash_level(now);
+            if level > 0.0 {
+                let alpha = 0.6 * level;
                 for dy in 1..h.saturating_sub(1) {
                     for dx in 1..w.saturating_sub(1) {
                         let px = x + dx;
@@ -441,9 +567,9 @@ fn paint_floor_to_ceiling_window(
                                 px,
                                 py,
                                 Rgb(
-                                    blend(cur.0, 255, 0.35),
-                                    blend(cur.1, 255, 0.35),
-                                    blend(cur.2, 255, 0.35),
+                                    blend(cur.0, 255, alpha),
+                                    blend(cur.1, 255, alpha),
+                                    blend(cur.2, 255, alpha),
                                 ),
                             );
                         }
@@ -586,7 +712,7 @@ fn paint_floor_to_ceiling_window(
     // clouds scatter the direct warm light away (Storm at sunset reaches
     // only ~25% of Clear's strength), Smog amplifies the warm cast by 1.4×
     // for the sodium-lit "Blade Runner" sunset.
-    let atmo = atmo_attenuation(weather);
+    let atmo = weather_light(weather);
     let smog_boost = if matches!(weather, Weather::Smog) {
         1.4
     } else {
@@ -648,5 +774,92 @@ mod tests {
             "clear should be a near-white slight-warm tint, got {:?}",
             clear
         );
+    }
+
+    #[test]
+    fn fog_floor_tint_is_brighter_than_overcast() {
+        // Regression for the "fog read as dark mist" bug — fog must be the
+        // brighter (luminous white-out) of the two.
+        let fog = weather_floor_tint(Weather::Fog);
+        let oc = weather_floor_tint(Weather::Overcast);
+        let lum = |c: Rgb| c.0 as u16 + c.1 as u16 + c.2 as u16;
+        assert!(
+            lum(fog) > lum(oc),
+            "fog {fog:?} should outshine overcast {oc:?}"
+        );
+    }
+
+    #[test]
+    fn skyline_haze_obscures_fog_and_storm_only_when_expected() {
+        // Fog is the heaviest veil; clear/windy/snow leave the skyline crisp.
+        let fog = skyline_haze(Weather::Fog).expect("fog hazes").1;
+        let storm = skyline_haze(Weather::Storm).expect("storm hazes").1;
+        assert!(fog > storm, "fog should obscure more than storm");
+        assert!(
+            skyline_haze(Weather::Clear).is_none(),
+            "clear skyline is crisp"
+        );
+        assert!(
+            skyline_haze(Weather::Snow).is_none(),
+            "snow skyline is crisp"
+        );
+    }
+
+    #[test]
+    fn lightning_envelope_is_a_two_pulse_then_dark() {
+        assert_eq!(lightning_envelope(0), 1.0, "primary strike");
+        assert!(
+            lightning_envelope(30) < lightning_envelope(0),
+            "dim between flickers"
+        );
+        assert!(
+            lightning_envelope(50) > lightning_envelope(30),
+            "after-flash rebrightens"
+        );
+        assert_eq!(lightning_envelope(LIGHTNING_FLASH_MS), 0.0, "flash is over");
+        assert_eq!(lightning_envelope(5000), 0.0, "dark between strikes");
+    }
+
+    #[test]
+    fn lightning_flash_storm_only_and_mid_strike_only() {
+        use std::time::{Duration, UNIX_EPOCH};
+        // Strikes are jittered per bucket, so the flash is at `strike_offset(bucket)`
+        // into the bucket, not phase 0. Pick a low-offset bucket so off+1000 (the
+        // quiet probe) stays inside the same bucket.
+        let bucket = (0u64..)
+            .find(|&b| strike_offset(b) < 500)
+            .expect("a low-offset bucket exists");
+        let off = strike_offset(bucket);
+        let at = |ms: u64| UNIX_EPOCH + Duration::from_millis(bucket * LIGHTNING_PERIOD_MS + ms);
+        let mk = || RgbBuffer::filled(8, 4, Rgb(10, 10, 12));
+
+        let mut b = mk();
+        paint_lightning_flash(&mut b, at(off), Weather::Storm);
+        assert!(b.get(0, 0).0 > 10, "storm strike should brighten the room");
+
+        let mut b = mk();
+        paint_lightning_flash(&mut b, at(off + 1000), Weather::Storm);
+        assert_eq!(b.get(0, 0), Rgb(10, 10, 12), "no flash between strikes");
+
+        let mut b = mk();
+        paint_lightning_flash(&mut b, at(off), Weather::Clear);
+        assert_eq!(b.get(0, 0), Rgb(10, 10, 12), "flash is storm-only");
+    }
+
+    #[test]
+    fn lightning_strikes_are_jittered_not_metronomic() {
+        let offsets: Vec<u64> = (0..24u64).map(strike_offset).collect();
+        let distinct = offsets
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(
+            distinct > 12,
+            "strike offsets should vary across buckets, got {offsets:?}"
+        );
+        // Every offset keeps the whole flash inside its own bucket.
+        assert!(offsets
+            .iter()
+            .all(|&o| o < LIGHTNING_PERIOD_MS - LIGHTNING_FLASH_MS));
     }
 }

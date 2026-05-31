@@ -11,7 +11,7 @@ use pixtuoid_core::sprite::{Rgb, RgbBuffer};
 
 use crate::tui::layout::Layout;
 use crate::tui::pixel_painter::background::{
-    atmo_attenuation, sun_on_wall, time_of_day_look, weather_state, window_spill_columns, WallSide,
+    sun_on_wall, time_of_day_look, weather_light, weather_state, window_spill_columns, WallSide,
 };
 use crate::tui::pixel_painter::palette::blend;
 use crate::tui::pixel_painter::PixelCtx;
@@ -187,15 +187,16 @@ pub(super) fn paint_dust_motes(
     if sun_on_wall(now).is_none() {
         return;
     }
-    // Dust motes scatter direct beam light; under any overcast there's no
-    // beam to scatter, so they vanish entirely. Otherwise alpha rides
-    // look.spill_strength (which already carries atmo attenuation) so they
-    // fade in/out with the daylight ramp.
-    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+    // Dust motes scatter the direct beam; their density rides `beam_strength`
+    // (full under clear sky, faint through thin cloud/haze/snow-glare, zero
+    // under thick overcast/rain/storm). `look.spill_strength` adds the daylight
+    // ramp so they also fade in/out with the hour.
+    let beam = weather_light(weather_state(now)).beam_strength;
+    if beam <= 0.0 {
         return;
     }
     let look = time_of_day_look(now, theme);
-    let visibility = look.spill_strength;
+    let visibility = look.spill_strength * beam;
     if visibility <= 0.0 {
         return;
     }
@@ -230,16 +231,17 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     if matches!(spot.wall, WallSide::South) {
         return;
     }
-    // The wall sunspot is a projected direct beam: clouds erase it
-    // entirely. Diffuse light under overcast/storm reaches the wall but
-    // never as a defined rectangle. look.spill_strength rides the daylight
-    // ramp (and already carries atmo attenuation) so the spot fades in/out
-    // smoothly instead of popping on at 06:00 sharp.
-    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+    // The wall sun-spot is the projected direct beam. Its strength rides
+    // `beam_strength`: a sharp rectangle under clear sky, a faint smudge through
+    // haze/thin-cloud/snow-glare, gone entirely under thick overcast/rain/storm
+    // (diffuse light reaches the wall but never as a defined rectangle).
+    // `look.spill_strength` adds the daylight ramp so it fades in/out smoothly.
+    let beam = weather_light(weather_state(now)).beam_strength;
+    if beam <= 0.0 {
         return;
     }
     let look = time_of_day_look(now, theme);
-    let effective_intensity = spot.intensity * look.spill_strength;
+    let effective_intensity = spot.intensity * look.spill_strength * beam;
     if effective_intensity <= 0.0 {
         return;
     }
@@ -404,5 +406,57 @@ mod tests {
             saw_partial,
             "expected at least one frame where a mote is in its fade band"
         );
+    }
+
+    // The F4 change: the wall sun-spot now SCALES by `beam_strength` instead of
+    // gating on a bool. A clear morning beams hard (brightest spot), a snowy
+    // morning throws a faint-but-real spot (beam 0.25), and rain has no beam at
+    // all (no spot). Verifies the multiply, the faint-beam path, and the early-out.
+    #[test]
+    fn sun_spot_scales_with_beam_strength() {
+        use crate::tui::pixel_painter::background::Weather;
+        use chrono::TimeZone;
+        let theme = &crate::tui::theme::NORMAL;
+        let layout = crate::tui::layout::Layout::compute(192, 80, 4).expect("layout fits");
+        // 07:00 → East-wall spot. Weather varies by day at a fixed hour, so
+        // search days for each weather (TZ-independent).
+        let morning = |day: u32| -> SystemTime {
+            chrono::Local
+                .with_ymd_and_hms(2026, 1, day, 7, 0, 0)
+                .single()
+                .unwrap()
+                .into()
+        };
+        let find = |want: Weather| (1..=60u32).map(morning).find(|t| weather_state(*t) == want);
+        let clear_t = find(Weather::Clear).expect("a clear morning");
+        let snow_t = find(Weather::Snow).expect("a snow morning");
+        let rain_t = find(Weather::Rain).expect("a rain morning");
+
+        let brightness = |now: SystemTime| -> u64 {
+            let mut buf = RgbBuffer::filled(192, 80, Rgb(20, 20, 24));
+            paint_sun_spot(&mut buf, theme, &layout, now);
+            let mut sum = 0u64;
+            for y in 0..buf.height {
+                for x in 0..buf.width {
+                    let p = buf.get(x, y);
+                    sum += p.0 as u64 + p.1 as u64 + p.2 as u64;
+                }
+            }
+            sum
+        };
+        let base = 192u64 * 80 * (20 + 20 + 24);
+        let clear = brightness(clear_t);
+        let snow = brightness(snow_t);
+        let rain = brightness(rain_t);
+
+        assert!(
+            clear > snow,
+            "clear beam brighter than snow ({clear} vs {snow})"
+        );
+        assert!(
+            snow > base,
+            "snow still throws a faint spot ({snow} vs {base})"
+        );
+        assert_eq!(rain, base, "rain has no direct beam → no sun spot");
     }
 }
