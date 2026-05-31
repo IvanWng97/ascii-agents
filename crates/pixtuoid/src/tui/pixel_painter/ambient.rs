@@ -187,15 +187,16 @@ pub(super) fn paint_dust_motes(
     if sun_on_wall(now).is_none() {
         return;
     }
-    // Dust motes scatter direct beam light; under any overcast there's no
-    // beam to scatter, so they vanish entirely. Otherwise alpha rides
-    // look.spill_strength (which already carries atmo attenuation) so they
-    // fade in/out with the daylight ramp.
-    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+    // Dust motes scatter the direct beam; their density rides `beam_strength`
+    // (full under clear sky, faint through thin cloud/haze/snow-glare, zero
+    // under thick overcast/rain/storm). `look.spill_strength` adds the daylight
+    // ramp so they also fade in/out with the hour.
+    let beam = atmo_attenuation(weather_state(now)).beam_strength;
+    if beam <= 0.0 {
         return;
     }
     let look = time_of_day_look(now, theme);
-    let visibility = look.spill_strength;
+    let visibility = look.spill_strength * beam;
     if visibility <= 0.0 {
         return;
     }
@@ -230,16 +231,17 @@ pub(super) fn paint_sun_spot(buf: &mut RgbBuffer, theme: &Theme, layout: &Layout
     if matches!(spot.wall, WallSide::South) {
         return;
     }
-    // The wall sunspot is a projected direct beam: clouds erase it
-    // entirely. Diffuse light under overcast/storm reaches the wall but
-    // never as a defined rectangle. look.spill_strength rides the daylight
-    // ramp (and already carries atmo attenuation) so the spot fades in/out
-    // smoothly instead of popping on at 06:00 sharp.
-    if !atmo_attenuation(weather_state(now)).has_direct_beam {
+    // The wall sun-spot is the projected direct beam. Its strength rides
+    // `beam_strength`: a sharp rectangle under clear sky, a faint smudge through
+    // haze/thin-cloud/snow-glare, gone entirely under thick overcast/rain/storm
+    // (diffuse light reaches the wall but never as a defined rectangle).
+    // `look.spill_strength` adds the daylight ramp so it fades in/out smoothly.
+    let beam = atmo_attenuation(weather_state(now)).beam_strength;
+    if beam <= 0.0 {
         return;
     }
     let look = time_of_day_look(now, theme);
-    let effective_intensity = spot.intensity * look.spill_strength;
+    let effective_intensity = spot.intensity * look.spill_strength * beam;
     if effective_intensity <= 0.0 {
         return;
     }

@@ -42,52 +42,54 @@ pub(in crate::tui::pixel_painter) fn weather_state(now: SystemTime) -> Weather {
     }
 }
 
-/// Atmospheric attenuation of outdoor sunlight reaching the interior.
-/// `intensity` is a 0..1 multiplier applied to every sun-driven effect
-/// (window spill warmth, sun spot on wall, dust motes, twilight glass
-/// tint). `has_direct_beam` gates direct-beam effects (sun spot, dust
-/// motes) — both require a clear line of sight from sun to glass; under
-/// any kind of overcast the beam scatters into diffuse light.
+/// Atmospheric attenuation of outdoor light reaching the interior, physically
+/// grounded per weather. Three independent channels:
+/// - `intensity` (0..1): DAYTIME diffuse sunlight — drives window spill, glass
+///   day-tint, and (via `darkness = 1 - day_eff`) the artificial-light balance.
+/// - `beam_strength` (0..1): the DIRECT sun beam that casts the wall sun-spot +
+///   dust motes. A clear sky beams hard (1.0); thin cloud / haze / snow-glare
+///   still throw a faint spot (small >0); thick overcast/rain/storm scatter it
+///   to nothing (0.0). Replaces the old all-or-nothing `has_direct_beam` bool.
+/// - `night_sky` (0..1): NIGHT-side luminance (moon / stars / snow-albedo glow /
+///   sodium haze) reaching the interior when the sun is down. Without it every
+///   weather rendered an identical pitch-black night; now a clear/snowy night
+///   reads brighter than a storm night.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(in crate::tui::pixel_painter) struct AtmoAttenuation {
     pub intensity: f32,
-    pub has_direct_beam: bool,
+    pub beam_strength: f32,
+    pub night_sky: f32,
 }
 
 pub(in crate::tui::pixel_painter) fn atmo_attenuation(w: Weather) -> AtmoAttenuation {
-    match w {
-        Weather::Clear => AtmoAttenuation {
-            intensity: 1.0,
-            has_direct_beam: true,
-        },
-        Weather::Windy => AtmoAttenuation {
-            intensity: 1.0,
-            has_direct_beam: true,
-        },
-        Weather::Snow => AtmoAttenuation {
-            intensity: 0.7,
-            has_direct_beam: false,
-        },
-        Weather::Overcast => AtmoAttenuation {
-            intensity: 0.45,
-            has_direct_beam: false,
-        },
-        Weather::Rain => AtmoAttenuation {
-            intensity: 0.4,
-            has_direct_beam: false,
-        },
-        Weather::Fog => AtmoAttenuation {
-            intensity: 0.3,
-            has_direct_beam: false,
-        },
-        Weather::Storm => AtmoAttenuation {
-            intensity: 0.25,
-            has_direct_beam: false,
-        },
-        Weather::Smog => AtmoAttenuation {
-            intensity: 0.55,
-            has_direct_beam: false,
-        },
+    // (intensity, beam_strength, night_sky)
+    let (intensity, beam_strength, night_sky) = match w {
+        // Full sun, hard beam, bright moonlit/starry night.
+        Weather::Clear => (1.0, 1.0, 0.55),
+        // Clear but blustery — near-full sun, beam softened slightly by haze/cloud scud.
+        Weather::Windy => (1.0, 0.9, 0.50),
+        // Bright grey glare (high snow albedo) + a faint beam through thin cloud;
+        // brightest night of all — city light bounces off the snow.
+        Weather::Snow => (0.75, 0.25, 0.60),
+        // Hazy: sun reduced to a dim disc (small beam), warm sodium-lit night.
+        Weather::Smog => (0.55, 0.30, 0.35),
+        // Luminous white-out: bright + near-shadowless (tiny beam), hazy dim night.
+        // (Was 0.30 — wrongly the 2nd-darkest; real fog is a bright veil.)
+        Weather::Fog => (0.55, 0.05, 0.30),
+        // Thick cloud: diffuse only, dull night.
+        Weather::Overcast => (0.45, 0.0, 0.22),
+        // Daytime storm lifted from 0.25 (read as dusk) to a gloomy-but-clearly-
+        // daytime 0.42, just under Overcast so it stays the heaviest sky. Fully
+        // diffuse (no beam); darkest night (no moon) — the lightning flash is
+        // the only punch.
+        Weather::Storm => (0.42, 0.0, 0.12),
+        // Steady rain: dark diffuse, dark night.
+        Weather::Rain => (0.40, 0.0, 0.18),
+    };
+    AtmoAttenuation {
+        intensity,
+        beam_strength,
+        night_sky,
     }
 }
 
@@ -150,6 +152,13 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     let atmo = atmo_attenuation(weather_state(now));
     let day_eff = day * atmo.intensity;
     let twilight_eff = twilight * atmo.intensity;
+    // Night-side exterior light (moon / stars / snow-albedo glow / sodium haze)
+    // fades in as the sun ramps out (`1 - day`). Without it every weather
+    // collapsed to an identical pitch-black night; now a clear/snowy night
+    // reads brighter than a storm night. `exterior` is the effective outdoor
+    // light the interior balances against — sun by day, sky-glow by night.
+    let night_glow = atmo.night_sky * (1.0 - day);
+    let exterior = day_eff.max(night_glow);
 
     let day_a = theme.lighting.day_sky_a;
     let day_b = theme.lighting.day_sky_b;
@@ -158,13 +167,19 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
     let twilight_a = theme.lighting.twilight_a;
     let twilight_b = theme.lighting.twilight_b;
 
+    // Lift the night-base glass a touch toward the day sky by night_glow so a
+    // clear/snowy night shows faintly lit (moonlit) glass while a storm night
+    // stays near-black. Subtle (≤ ~0.10 for the brightest skies).
+    let night_lift = night_glow * 0.18;
+    let glass_night_a = lerp_rgb(night_a, day_a, night_lift);
+    let glass_night_b = lerp_rgb(night_b, day_b, night_lift);
     let glass_a = lerp_rgb(
-        lerp_rgb(night_a, day_a, day_eff),
+        lerp_rgb(glass_night_a, day_a, day_eff),
         twilight_a,
         twilight_eff * 0.5,
     );
     let glass_b = lerp_rgb(
-        lerp_rgb(night_b, day_b, day_eff),
+        lerp_rgb(glass_night_b, day_b, day_eff),
         twilight_b,
         twilight_eff * 0.5,
     );
@@ -184,7 +199,10 @@ pub(in crate::tui::pixel_painter) fn time_of_day_look(
         glass_b,
         spill_strength: day_eff,
         spill_slant: slant,
-        darkness: 1.0 - day_eff,
+        // Artificial lights + floor-dim balance against the effective exterior
+        // light, so they ride weather at night too (dark storm night → more
+        // dim + brighter pools; bright clear night → less dim).
+        darkness: 1.0 - exterior,
     }
 }
 
@@ -327,26 +345,30 @@ mod tests {
     }
 
     #[test]
-    fn atmo_clear_has_direct_beam() {
+    fn atmo_clear_beams_hard() {
         let a = atmo_attenuation(Weather::Clear);
-        assert!(a.has_direct_beam);
+        assert_eq!(a.beam_strength, 1.0);
         assert_eq!(a.intensity, 1.0);
-        let w = atmo_attenuation(Weather::Windy);
-        assert!(w.has_direct_beam);
+        // Windy is clear-but-blustery: near-full beam.
+        assert!(atmo_attenuation(Weather::Windy).beam_strength > 0.5);
     }
 
     #[test]
-    fn atmo_cloudy_blocks_direct_beam() {
-        for w in [
-            Weather::Rain,
-            Weather::Storm,
-            Weather::Snow,
-            Weather::Fog,
-            Weather::Overcast,
-        ] {
+    fn atmo_thick_cloud_kills_the_beam() {
+        // Thick overcast / rain / storm scatter the beam to nothing.
+        for w in [Weather::Rain, Weather::Storm, Weather::Overcast] {
             let a = atmo_attenuation(w);
-            assert!(!a.has_direct_beam, "{w:?} should block direct beam");
+            assert_eq!(a.beam_strength, 0.0, "{w:?} should have no direct beam");
             assert!(a.intensity < 1.0, "{w:?} should dim diffuse light");
+        }
+    }
+
+    #[test]
+    fn atmo_haze_and_snow_keep_a_faint_beam() {
+        // Thin cloud / haze / snow-glare still throw a *faint* (not full) spot.
+        for w in [Weather::Snow, Weather::Fog, Weather::Smog] {
+            let b = atmo_attenuation(w).beam_strength;
+            assert!(b > 0.0 && b < 0.5, "{w:?} beam should be faint, got {b}");
         }
     }
 
@@ -359,10 +381,48 @@ mod tests {
     }
 
     #[test]
+    fn fog_is_a_luminous_whiteout_not_dark_mist() {
+        // Real fog is a bright veil — must be brighter than overcast, not the
+        // 2nd-darkest weather (the old 0.30 bug), yet still beam-faint.
+        let fog = atmo_attenuation(Weather::Fog);
+        assert!(fog.intensity >= atmo_attenuation(Weather::Overcast).intensity);
+        assert!(fog.beam_strength < 0.2);
+    }
+
+    #[test]
     fn smog_dims_diffusely() {
         let a = atmo_attenuation(Weather::Smog);
-        assert!(!a.has_direct_beam);
+        assert!(a.beam_strength > 0.0 && a.beam_strength < 0.5); // dim sun disc
         assert!(a.intensity > 0.4 && a.intensity < 0.7);
+    }
+
+    #[test]
+    fn night_sky_brightness_varies_by_weather() {
+        // Clear/snow nights (moon, stars, snow-albedo glow) are bright; a storm
+        // night is the darkest. Previously every weather rendered identical night.
+        let clear = atmo_attenuation(Weather::Clear).night_sky;
+        let snow = atmo_attenuation(Weather::Snow).night_sky;
+        let storm = atmo_attenuation(Weather::Storm).night_sky;
+        let overcast = atmo_attenuation(Weather::Overcast).night_sky;
+        assert!(clear > overcast, "clear night should beat overcast");
+        assert!(snow >= clear, "snow-glow night should be the brightest");
+        assert!(
+            storm < overcast && storm < clear,
+            "storm night should be the darkest"
+        );
+        // Every weather keeps SOME night-sky luminance (never pure black).
+        for w in [
+            Weather::Clear,
+            Weather::Windy,
+            Weather::Snow,
+            Weather::Smog,
+            Weather::Fog,
+            Weather::Overcast,
+            Weather::Rain,
+            Weather::Storm,
+        ] {
+            assert!(atmo_attenuation(w).night_sky > 0.0, "{w:?} night_sky > 0");
+        }
     }
 
     #[test]

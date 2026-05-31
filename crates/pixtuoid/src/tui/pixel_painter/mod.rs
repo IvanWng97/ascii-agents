@@ -1106,6 +1106,11 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         paint_drawable(d, ctx.buf, ctx.pack, ctx.cache, ctx.now, ctx.theme);
     }
 
+    // Room-wide lightning bounce — LAST, so a Storm strike briefly flares the
+    // whole interior (floor, walls, furniture, characters), not just the window
+    // strip. No-op outside a strike / non-storm weather.
+    background::paint_lightning_flash(ctx.buf, ctx.now, background::weather_state(ctx.now));
+
     let chitchat_bubbles = chitchat::update_and_collect(
         ctx.chitchat_state,
         ctx.floor.floor_idx,
