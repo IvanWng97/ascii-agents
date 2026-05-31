@@ -131,6 +131,19 @@ impl ActiveChitchat {
     }
 }
 
+/// The chitchat `wp_idx` a waypoint visitor groups under. The 3 lounge-couch
+/// seats collapse to ONE venue (the first couch's waypoint index) so they host
+/// a single group conversation like the meeting room — WITHOUT overloading the
+/// meeting-only `room_id` field (which indexes `meeting_tables`). Every other
+/// waypoint keys on its own index. `couch_group_idx` is the first `Couch`
+/// waypoint's index, or `None` if the layout has no couch.
+pub fn venue_wp_idx(kind: WaypointKind, wp_idx: usize, couch_group_idx: Option<usize>) -> usize {
+    match kind {
+        WaypointKind::Couch => couch_group_idx.unwrap_or(wp_idx),
+        _ => wp_idx,
+    }
+}
+
 /// Whether agents at this waypoint kind can start a chitchat.
 pub fn supports_chitchat(kind: WaypointKind) -> bool {
     matches!(
@@ -433,6 +446,23 @@ mod tests {
             start + Duration::from_millis(7_000),
         );
         assert_eq!(state.len(), 1);
+    }
+
+    #[test]
+    fn lounge_couch_seats_share_one_venue() {
+        // The 3 couch seats (distinct wp_idx) all collapse to the first
+        // couch's index → one VenueKey → one group conversation. Other
+        // waypoints keep their own index. This is what makes the lounge a
+        // group-chat venue without touching the meeting-only room_id.
+        let gi = Some(7);
+        assert_eq!(venue_wp_idx(WaypointKind::Couch, 7, gi), 7);
+        assert_eq!(venue_wp_idx(WaypointKind::Couch, 8, gi), 7);
+        assert_eq!(venue_wp_idx(WaypointKind::Couch, 9, gi), 7);
+        // Non-couch waypoints are unaffected.
+        assert_eq!(venue_wp_idx(WaypointKind::Pantry, 12, gi), 12);
+        assert_eq!(venue_wp_idx(WaypointKind::MeetingSofa, 3, gi), 3);
+        // No couch in the layout → falls back to the visitor's own index.
+        assert_eq!(venue_wp_idx(WaypointKind::Couch, 5, None), 5);
     }
 
     #[test]

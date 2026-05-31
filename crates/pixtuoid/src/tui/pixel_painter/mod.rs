@@ -673,42 +673,44 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         });
     }
 
-    // Waypoint furniture — couch (14×5) and pantry counter (20×8),
-    // both centered on the waypoint position. PhoneBooth and
-    // StandingDesk waypoints are visually rendered via the
-    // `pod_decor` drawables below (they ARE the decor); they don't
-    // get a duplicate Drawable here.
+    // Lounge couch furniture — emitted ONCE, centred on the sofa via
+    // `couch_sprite_center`. The couch is now 3 separate seat waypoints, so
+    // per-seat emission would triple-paint the sofa/rug/table. Decor → pushed
+    // before the character loop so the y-sort tie-break keeps the couch behind
+    // its sitters. The rug anchors BEHIND (north of) the couch so it spans the
+    // floor on the south side; y-sort anchor at the top so the couch sits on it.
+    if let Some(center) = ctx.layout.couch_sprite_center {
+        drawables.push(Drawable {
+            anchor_y: center.y.saturating_sub(2),
+            kind: DrawableKind::AreaRug {
+                pos: Point {
+                    x: center.x,
+                    y: center.y + 3,
+                },
+                width: 22,
+                height: 7,
+            },
+        });
+        drawables.push(Drawable {
+            anchor_y: center.y + 3,
+            kind: DrawableKind::WaypointCouch { pos: center },
+        });
+        if let Some(table) = ctx.layout.lounge_side_table {
+            drawables.push(Drawable {
+                anchor_y: table.y + 1,
+                kind: DrawableKind::LoungeSideTable { pos: table },
+            });
+        }
+    }
+
+    // Waypoint furniture — pantry counter, vending, printer — centered on the
+    // waypoint position. PhoneBooth/StandingDesk render via the `pod_decor`
+    // drawables below (they ARE the decor). The lounge couch is emitted once
+    // above (it spans 3 seat waypoints).
     for wp in &ctx.layout.waypoints {
         use crate::tui::layout::WaypointKind;
         match wp.kind {
-            WaypointKind::Couch => {
-                // Small area rug under the lounge couch — anchored
-                // BEHIND (north of) the couch so the rug spans the
-                // floor in front of it (south side) where someone
-                // standing/walking would step. y-sort anchor at the
-                // top so couch sits on top.
-                drawables.push(Drawable {
-                    anchor_y: wp.pos.y.saturating_sub(2),
-                    kind: DrawableKind::AreaRug {
-                        pos: Point {
-                            x: wp.pos.x,
-                            y: wp.pos.y + 3,
-                        },
-                        width: 18,
-                        height: 7,
-                    },
-                });
-                drawables.push(Drawable {
-                    anchor_y: wp.pos.y + 3,
-                    kind: DrawableKind::WaypointCouch { pos: wp.pos },
-                });
-                if let Some(table) = ctx.layout.lounge_side_table {
-                    drawables.push(Drawable {
-                        anchor_y: table.y + 1,
-                        kind: DrawableKind::LoungeSideTable { pos: table },
-                    });
-                }
-            }
+            WaypointKind::Couch => {}
             WaypointKind::Pantry => {
                 let (cw, ch) = ctx.layout.pantry_counter_size;
                 drawables.push(Drawable {
@@ -869,6 +871,15 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // BTreeMap iteration order.
     let mut wp_rank: HashMap<usize, usize> = HashMap::new();
     let mut waypoint_visitors: Vec<chitchat::Visitor> = Vec::new();
+    // All 3 lounge-couch seat waypoints collapse to ONE chitchat venue (keyed
+    // on the first couch's index) so the couch hosts a single group
+    // conversation like the meeting room — without overloading the
+    // meeting-only `room_id` field (which indexes `meeting_tables`).
+    let couch_group_idx = ctx
+        .layout
+        .waypoints
+        .iter()
+        .position(|w| w.kind == crate::tui::layout::WaypointKind::Couch);
     for agent in &agents {
         let Some(desk) = ctx.layout.home_desks.get(agent.desk_index).copied() else {
             continue;
@@ -1006,7 +1017,9 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     };
                     if chitchat::supports_chitchat(kind) {
                         waypoint_visitors.push(chitchat::Visitor {
-                            wp_idx: wp,
+                            // Couch seats share one venue (group chat); other
+                            // waypoints key on their own index.
+                            wp_idx: chitchat::venue_wp_idx(kind, wp, couch_group_idx),
                             agent_id: agent.agent_id,
                             anchor: anchor_no_breath,
                             room_id: wp_obj.room_id,
@@ -1014,7 +1027,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     }
                     let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                     drawables.push(Drawable {
-                        anchor_y: anchor.y + sprite_h,
+                        // Breath-independent sort key: a seated occupant must
+                        // y-sort identically every frame so the breath ±1px
+                        // never flips it under its sofa (the overlap bug). The
+                        // visual `anchor` below still breathes; only the z-order
+                        // is pinned. Insertion order (decor before characters)
+                        // then keeps the sitter on top of the couch.
+                        anchor_y: anchor_no_breath.y + sprite_h,
                         kind: DrawableKind::Character {
                             agent,
                             anim_name,

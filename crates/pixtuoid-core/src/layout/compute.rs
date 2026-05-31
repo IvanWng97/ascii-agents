@@ -225,7 +225,7 @@ pub(super) fn compute_with_seed(
     let couch_y = top_margin + 3;
     let couch_x = cubicle_band.x + pct(cubicle_band.width, 35);
 
-    let waypoints = compute_waypoints(
+    let (waypoints, couch_sprite_center) = compute_waypoints(
         &cubicle_band,
         top_margin,
         pantry_room,
@@ -464,6 +464,7 @@ pub(super) fn compute_with_seed(
         pantry_chairs,
         pantry_counter_size,
         corridor,
+        couch_sprite_center,
         walkable,
     })
 }
@@ -762,18 +763,26 @@ pub(super) fn compute_waypoints(
     right_w: u16,
     meeting_sofas: &[Point],
     meeting_tables: &[Point],
-) -> Vec<Waypoint> {
+) -> (Vec<Waypoint>, Option<Point>) {
     let couch_y = top_margin + 3;
     let couch_x = cubicle_band.x + pct(cubicle_band.width, 35);
-    let mut waypoints: Vec<Waypoint> = vec![Waypoint {
-        pos: Point {
-            x: couch_x,
-            y: couch_y,
-        },
-        kind: WaypointKind::Couch,
-        facing: Facing::South,
-        room_id: None,
-    }];
+    // Lounge couch: 3 seats across the 20px sofa (dx ∈ {-6, 0, +6}), matching
+    // the meeting sofa. room_id stays None — the lounge's group-chat grouping
+    // is keyed at the chitchat venue layer (all couch seats share one venue),
+    // NOT via the meeting-only room_id field. The sprite paints once, centred
+    // on couch_x (the middle seat); see `couch_sprite_center`.
+    let mut waypoints: Vec<Waypoint> = [-6i16, 0, 6]
+        .into_iter()
+        .map(|dx| Waypoint {
+            pos: Point {
+                x: couch_x.saturating_add_signed(dx),
+                y: couch_y,
+            },
+            kind: WaypointKind::Couch,
+            facing: Facing::South,
+            room_id: None,
+        })
+        .collect();
     if let Some(pr) = pantry_room {
         // Clamp x so the counter fits within pantry_room. Without this
         // the counter (32px or 20px wide) extends past the east wall
@@ -842,9 +851,9 @@ pub(super) fn compute_waypoints(
     }
 
     // Meeting-room slots. Sofas are stored north→south per room (2 per
-    // room, see `meeting_sofas` assembly); each seats up to 2 agents
-    // (offset along the 16px sofa) facing the table. Two standing slots
-    // flank each table. Every slot in a room shares its `room_id` so the
+    // room, see `meeting_sofas` assembly); each seats up to 3 agents
+    // (dx ∈ {-6, 0, +6} along the 20px sofa) facing the table. Two standing
+    // slots flank each table. Every slot in a room shares its `room_id` so the
     // group-chitchat venue keys on the room, not the individual seat.
     for (i, sofa) in meeting_sofas.iter().enumerate() {
         let room_id = i / 2;
@@ -867,7 +876,7 @@ pub(super) fn compute_waypoints(
         } else {
             Facing::North
         };
-        for dx in [-4i16, 4] {
+        for dx in [-6i16, 0, 6] {
             waypoints.push(Waypoint {
                 pos: Point {
                     x: sofa.x.saturating_add_signed(dx),
@@ -913,5 +922,11 @@ pub(super) fn compute_waypoints(
         "room_id must be Some exactly for meeting-slot waypoints"
     );
 
-    waypoints
+    (
+        waypoints,
+        Some(Point {
+            x: couch_x,
+            y: couch_y,
+        }),
+    )
 }

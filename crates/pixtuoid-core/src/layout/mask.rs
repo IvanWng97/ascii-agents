@@ -119,7 +119,11 @@ pub(super) fn build_walkable_mask(
 
     for wp in waypoints {
         let (w, h) = match wp.kind {
-            WaypointKind::Couch => (16, 7),
+            // The couch is 3 seat-waypoints (dx ∈ {-6,0,+6}). An 8px-wide
+            // footprint per seat overlaps its neighbours (8 > 6 spacing) so the
+            // union is the exact 20px sofa ground footprint (couch_x-10..+10) —
+            // ground footprint only, never the visual width over-blocked.
+            WaypointKind::Couch => (8, 7),
             WaypointKind::Pantry => pantry_counter_size,
             WaypointKind::PhoneBooth => (6, 12),
             WaypointKind::StandingDesk => (8, 8),

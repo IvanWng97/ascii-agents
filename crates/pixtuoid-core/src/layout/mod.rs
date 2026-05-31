@@ -87,6 +87,10 @@ pub struct SceneLayout {
     /// paint (`pantry` vs `pantry_small`).
     pub pantry_counter_size: (u16, u16),
     pub corridor: Option<Bounds>,
+    /// Centre point of the lounge couch sprite (the middle of its 3 seats).
+    /// The couch is 3 separate seat waypoints; the sprite + rug + side table
+    /// paint once, centred here. `None` when no couch fits.
+    pub couch_sprite_center: Option<Point>,
     pub walkable: WalkableMask,
 }
 
@@ -249,6 +253,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn sofas_seat_three_people() {
+        // Both venues seat 3: each meeting sofa (3 seats per sofa) and the
+        // lounge couch (was 1 seat → 3). Seats are dx ∈ {-6, 0, +6} on the
+        // 20px sprite. The lounge keeps room_id = None — its group-chat
+        // grouping happens at the chitchat venue-key layer, not via the
+        // meeting-only room_id field.
+        let l = SceneLayout::compute(96, 72, 4).expect("fits"); // seed 0 → has_meeting
+
+        let couch: Vec<_> = l
+            .waypoints
+            .iter()
+            .filter(|w| w.kind == WaypointKind::Couch)
+            .collect();
+        assert_eq!(couch.len(), 3, "lounge couch should seat 3");
+        assert!(
+            couch.iter().all(|w| w.room_id.is_none()),
+            "couch keeps room_id None (grouping is at the chitchat layer)"
+        );
+        let mut xs: Vec<u16> = couch.iter().map(|w| w.pos.x).collect();
+        xs.sort_unstable();
+        assert_eq!(xs[1] - xs[0], 6, "couch seats are 6px apart");
+        assert_eq!(xs[2] - xs[1], 6, "couch seats are 6px apart");
+        let center = l.couch_sprite_center.expect("couch sprite center recorded");
+        assert_eq!(center.x, xs[1], "sprite center sits on the middle seat");
+
+        // 1 meeting room → 2 sofas (meeting_sofas center-points) → 3 seats each.
+        assert!(!l.meeting_sofas.is_empty(), "expected a meeting room");
+        let sofa_seats = l
+            .waypoints
+            .iter()
+            .filter(|w| w.kind == WaypointKind::MeetingSofa)
+            .count();
+        assert_eq!(
+            sofa_seats,
+            3 * l.meeting_sofas.len(),
+            "each meeting sofa seats 3"
+        );
     }
 
     #[test]

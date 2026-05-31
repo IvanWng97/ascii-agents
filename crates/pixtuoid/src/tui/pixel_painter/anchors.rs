@@ -87,10 +87,10 @@ pub(super) fn back_couch_anchor(wp: Point) -> Point {
 }
 
 /// X-offset applied to a waypoint anchor when multiple agents land at the
-/// same destination in the same cycle. rank 0 = first arrival (no offset);
-/// later arrivals step aside. Couch is 14 wide so it can comfortably seat
-/// two; coffee + water cooler are single-use so the queue stands well off
-/// to the side.
+/// SAME waypoint in the same cycle. rank 0 = first arrival (no offset); later
+/// arrivals step aside. The lounge couch is now 3 distinct seat waypoints
+/// (20px sofa), so agents normally spread across seats at rank 0; the ±6
+/// offsets only fire as decollision when two pick the same seat.
 pub(super) fn waypoint_rank_offset_x(kind: WaypointKind, rank: usize) -> i16 {
     match (kind, rank) {
         (_, 0) => 0,

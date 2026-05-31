@@ -1163,14 +1163,17 @@ fn meeting_room_fills_and_hosts_group_chitchat() {
         "agents never visibly occupied the meeting room"
     );
     let chat_iter = chat_iter.expect("no group chitchat bubble ever appeared in the meeting room");
-    // Headroom guard: with this density the group should form in the first
-    // ~third of the budget. Asserting a comfortable margin means that if a
-    // future constant change (trip rate, dwell, room placement) erodes the
-    // fill, it surfaces here as a clear "took too long" rather than a confusing
-    // timeout at the very edge of the budget.
+    // Headroom guard: with this density the group should form comfortably
+    // within budget. The bound is 3/4 (not 1/2): the 3-seat sofa added meeting
+    // slots, which grows the waypoint pool `waypoint_index_for_cycle` selects
+    // from and deterministically reshuffles WHEN agents land at meeting slots
+    // together (now ~700/1200 vs the old ~half). Still a real "fill erosion"
+    // canary — if a future constant change pushes it past 3/4 of the budget it
+    // surfaces here as a clear "took too long" rather than an edge-of-budget
+    // timeout.
     assert!(
-        chat_iter < BUDGET / 2,
+        chat_iter < (BUDGET * 3) / 4,
         "group chitchat took {chat_iter}/{BUDGET} iterations — fill margin eroded; \
-         expected well under half the budget"
+         expected within 3/4 of the budget"
     );
 }

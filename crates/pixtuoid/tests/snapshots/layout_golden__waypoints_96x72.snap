@@ -1,11 +1,30 @@
 ---
 source: crates/pixtuoid/tests/layout_golden.rs
+assertion_line: 25
 expression: l.waypoints
 ---
 [
     Waypoint {
         pos: Point {
+            x: 45,
+            y: 24,
+        },
+        kind: Couch,
+        facing: South,
+        room_id: None,
+    },
+    Waypoint {
+        pos: Point {
             x: 51,
+            y: 24,
+        },
+        kind: Couch,
+        facing: South,
+        room_id: None,
+    },
+    Waypoint {
+        pos: Point {
+            x: 57,
             y: 24,
         },
         kind: Couch,
@@ -23,7 +42,7 @@ expression: l.waypoints
     },
     Waypoint {
         pos: Point {
-            x: 9,
+            x: 7,
             y: 28,
         },
         kind: MeetingSofa,
@@ -34,7 +53,7 @@ expression: l.waypoints
     },
     Waypoint {
         pos: Point {
-            x: 17,
+            x: 13,
             y: 28,
         },
         kind: MeetingSofa,
@@ -45,7 +64,18 @@ expression: l.waypoints
     },
     Waypoint {
         pos: Point {
-            x: 9,
+            x: 19,
+            y: 28,
+        },
+        kind: MeetingSofa,
+        facing: South,
+        room_id: Some(
+            0,
+        ),
+    },
+    Waypoint {
+        pos: Point {
+            x: 7,
             y: 39,
         },
         kind: MeetingSofa,
@@ -56,7 +86,18 @@ expression: l.waypoints
     },
     Waypoint {
         pos: Point {
-            x: 17,
+            x: 13,
+            y: 39,
+        },
+        kind: MeetingSofa,
+        facing: North,
+        room_id: Some(
+            0,
+        ),
+    },
+    Waypoint {
+        pos: Point {
+            x: 19,
             y: 39,
         },
         kind: MeetingSofa,

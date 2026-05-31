@@ -1,20 +1,22 @@
-# 16x7 top-down meeting sofa — readable as a 3-cushion sofa with arm
-# rests rather than a flat plank. Larger than the lounge couch sprite
-# (which stays 14x5) on purpose: meeting sofas get more pixels for
-# detail since they're the focal furniture of the room.
+# 20x7 top-down 3-seat sofa — shared by the meeting room AND the lounge
+# couch. Reads as a 3-cushion sofa with arm rests, 2-tone for depth: lit
+# upper surfaces use G (highlight), bodies use C. The three cushions are
+# centred at columns 4, 10, 16 so they line up with the three seat
+# waypoints (couch_x-6, couch_x, couch_x+6); the sprite is centred on
+# couch_x (left edge at couch_x-10).
 #
 #   row 0: back top ridge (rounded corners with outer dots)
-#   row 1: back upholstery raised
-#   row 2: back/seat seam (dark line)
-#   row 3: three seat cushions divided by dark seams
-#   row 4: seat cushions (lower half)
-#   row 5: armrest cradle — front edge has cushions tucked inside arms
+#   row 1: back upholstery — lit top (highlight)
+#   row 2: back upholstery — body (lower)
+#   row 3: back/seat seam (dark line)
+#   row 4: three seat cushions — lit tops, divided by dark seams
+#   row 5: seat cushions — body (lower half)
 #   row 6: front baseboard shadow
 @frame 0
-. n n n n n n n n n n n n n n .
-n n C C C C C C C C C C C C n n
-n C C C C C C C C C C C C C C n
-n n n n n n n n n n n n n n n n
-n C C n C C C n C C C n C C C n
-n C C C C C C C C C C C C C C n
-. n n C C C C C C C C C C n n .
+. n n n n n n n n n n n n n n n n n n .
+n n G G G G G G G G G G G G G G G G n n
+n C C C C C C C C C C C C C C C C C C n
+n n n n n n n n n n n n n n n n n n n n
+n n G G G G G n G G G G G n G G G G G n
+n C C C C C C C C C C C C C C C C C C n
+. n n C C C C C C C C C C C C C C n n .
