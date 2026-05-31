@@ -319,27 +319,29 @@ async fn first_sight_extracts_cwd_past_non_json_prefix() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    // First line: garbage. Second line: a system line carrying cwd. Third
-    // line: a tool_use. Watcher should still derive cwd = /real-repo on the
-    // SessionStart for first-sight.
-    let mut f = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&transcript)
-        .await
-        .unwrap();
-    f.write_all(b"not-json-prefix\n").await.unwrap();
+    // First line: garbage. Second line: a system line carrying cwd. Watcher
+    // should still derive cwd = /real-repo on the SessionStart for first-sight.
+    //
+    // The watcher emits SessionStart exactly ONCE per file, with cwd taken from
+    // whatever bytes are present at first read. Writing the lines incrementally
+    // (or even create-then-write) leaves a window where the 250ms poll observes
+    // a partial/empty file, latches cwd="" permanently, and fails this test
+    // (flaky under load / coverage instrumentation). Stage the complete content
+    // in a sibling `.partial` file — excluded by the watcher's `.jsonl`
+    // extension filter — then atomically rename it into place so first sight
+    // always reads the full content.
     let sys_line = serde_json::json!({
         "type": "system",
         "subtype": "session_start",
         "sessionId": "ses-cwd",
         "cwd": "/real-repo"
     });
-    f.write_all(format!("{sys_line}\n").as_bytes())
+    let content = format!("not-json-prefix\n{sys_line}\n");
+    let staging = project_dir.join("ses-cwd.jsonl.partial");
+    tokio::fs::write(&staging, content.as_bytes())
         .await
         .unwrap();
-    f.flush().await.unwrap();
-    drop(f);
+    tokio::fs::rename(&staging, &transcript).await.unwrap();
 
     let mut found_cwd = None;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
