@@ -1207,24 +1207,29 @@ fn meeting_glass_partition_connects_at_window_and_corner() {
             + (a.1 as i32 - b.1 as i32).abs()
             + (a.2 as i32 - b.2 as i32).abs()
     };
-    // The frame rail deep inside the wall (always wall, before and after the
-    // fix) and the floor just inside the room — both under the same lighting.
-    let frame_ref = buf.get(v_x, layout.top_margin + 2);
-    let carpet_ref = buf.get(v_x.saturating_sub(10), top_wall_h);
+    // The frosted glass is a translucent cool gradient with no single colour,
+    // so reference both its lit (left/dx0) and soft (right/dx2) edges — sampled
+    // high on the wall where it's unambiguously glass — plus a floor sample.
+    // Any glass pixel (lit / body / soft / seam) is nearer one of the two
+    // glass edges than the warm carpet. References share the global lighting.
+    let glass_lit = buf.get(v_x, layout.top_margin + 2);
+    let glass_soft = buf.get(v_x + 2, layout.top_margin + 2);
+    let floor_ref = buf.get(v_x.saturating_sub(8), top_wall_h + 6);
+    let is_glass = |p: pixtuoid_core::sprite::Rgb| {
+        dist(p, glass_lit).min(dist(p, glass_soft)) < dist(p, floor_ref)
+    };
 
-    // Top joint: the row flush with the window band must be wall, not floor.
-    let top_gap = buf.get(v_x, top_wall_h);
+    // Top joint: the row flush with the window band must be glass, not floor.
     assert!(
-        dist(top_gap, frame_ref) < dist(top_gap, carpet_ref),
+        is_glass(buf.get(v_x, top_wall_h + 1)),
         "vertical divider should connect up to the window band (no floor gap)"
     );
 
-    // Corner joint: the vertical's own right rail (which the horizontal run,
+    // Corner joint: the vertical's own soft edge (which the horizontal run,
     // ending at v_x, never covers) must extend down through the horizontal
     // wall band — that 2-px-wide strip was the L-notch left by the old code.
-    let corner = buf.get(v_x + 2, h_y + 2);
     assert!(
-        dist(corner, frame_ref) < dist(corner, carpet_ref),
+        is_glass(buf.get(v_x + 2, h_y + 2)),
         "vertical divider should fill the inside corner at the horizontal wall"
     );
 }

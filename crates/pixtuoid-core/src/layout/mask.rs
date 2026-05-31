@@ -40,13 +40,14 @@ pub(super) fn build_walkable_mask(
     mask.mark_blocked(0, baseboard_top, buf_w, 3, 0);
 
     // Interior walls. Stardew-style fake-3D perspective:
-    //   • horizontal walls (E-W) show their FACE — 4 px tall so the
-    //     wall reads as having mass when viewed from the north room.
+    //   • horizontal walls (E-W) show their FACE — 6 px tall so the
+    //     wall reads as having real mass/height when viewed from the
+    //     north room (clearly thicker than the edge-on vertical).
     //   • vertical walls (N-S) are seen EDGE-ON — 1 px thin partition.
     // Render thicknesses must stay in sync; see `WALL_THICK_*_PX` in
     // the renderer.
     const WALL_THICK_V: u16 = 1;
-    const WALL_THICK_H: u16 = 4;
+    const WALL_THICK_H: u16 = 6;
     for (start, end) in room_walls {
         if start.x == end.x {
             mask.mark_blocked(

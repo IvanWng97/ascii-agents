@@ -273,44 +273,43 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     if let Some(corridor) = ctx.layout.corridor {
         paint_corridor_runner(ctx.buf, corridor, ctx.theme);
     }
-    // Room dividers rendered as glass partitions — a modern conference-room
-    // look. Each wall is a dark frame rail on its two long edges, a frame
-    // mullion post every MULLION_STRIDE px, and a translucent pane between
-    // them that lets the floor read faintly through. The frame reuses the
-    // façade window frame colour so the interior glass reads as the same
-    // material as the building's floor-to-ceiling windows.
-    //   • horizontal walls (E-W): top + bottom rails frame, panes between.
-    //   • vertical walls (N-S, seen edge-on): left + right rails frame, a
-    //     1-px pane down the middle.
-    // Visual thickness is wider than the walkable mask (WALL_THICK_V=1 in
-    // mask.rs) because this renders the full frame, not the ground footprint.
+    // Room dividers rendered as frosted-glass partitions — a soft, frameless
+    // conference-room look (no hard outline). A cool luminous gradient runs
+    // across each wall's short axis: a bright specular edge, a tinted body,
+    // and a soft slate edge — all translucent over whatever's painted behind,
+    // so the floor glows faintly through. A subtle brighter seam every
+    // MULLION_STRIDE px marks the panel joints without any dark mullion.
+    //   • horizontal walls (E-W) show their FACE — 6 px tall, so the wall
+    //     reads as having height; lit top edge → body → soft bottom edge.
+    //   • vertical walls (N-S) are seen EDGE-ON — a thin 3 px partition;
+    //     lit left edge → body → soft right edge.
+    // The 2:1 thickness ratio sells the top-down fake-3D perspective. The
+    // vertical's 3 px is wider than its 1 px walkable footprint (mask.rs);
+    // the horizontal's 6 px is kept in sync with its mask footprint.
     const WALL_THICK_V_PX: u16 = 3;
-    const WALL_THICK_H_PX: u16 = 4;
-    const MULLION_STRIDE: u16 = 14;
-    let frame = ctx.theme.surface.window_frame;
-    // Cool pane tints derived from the lightest wall trim, so dark themes get
-    // a correspondingly dark pane rather than a fixed bluish wash. `sheen` is
-    // the bright specular edge of the glass; `tint` is the body. Translucent
-    // over whatever's already painted behind (floor/decor) so the room reads
-    // faintly through the pane.
+    const WALL_THICK_H_PX: u16 = 6;
+    const SEAM_STRIDE: u16 = 16;
+    // Three cool glass tones derived from the lightest wall trim, so dark
+    // themes get a correspondingly cool-but-dim pane rather than a fixed wash.
     let tl = ctx.theme.office.room_wall_trim_light;
-    let glass_tint = Rgb(
-        tl.0.saturating_add(34),
-        tl.1.saturating_add(64),
-        tl.2.saturating_add(92),
+    let glass_hi = Rgb(
+        tl.0.saturating_add(125),
+        tl.1.saturating_add(135),
+        tl.2.saturating_add(124),
     );
-    let glass_sheen = Rgb(
-        tl.0.saturating_add(96),
-        tl.1.saturating_add(120),
-        tl.2.saturating_add(135),
+    let glass_mid = Rgb(
+        tl.0.saturating_add(70),
+        tl.1.saturating_add(100),
+        tl.2.saturating_add(116),
     );
-    let pane = |buf: &RgbBuffer, x: u16, y: u16, specular: bool| {
+    let glass_lo = Rgb(
+        tl.0.saturating_add(18),
+        tl.1.saturating_add(52),
+        tl.2.saturating_add(86),
+    );
+    // Alpha-composite a glass tone over the already-painted pixel behind.
+    let over = |buf: &RgbBuffer, x: u16, y: u16, g: Rgb, a: f32| {
         let b = buf.get(x, y);
-        let (g, a) = if specular {
-            (glass_sheen, 0.7)
-        } else {
-            (glass_tint, 0.5)
-        };
         Rgb(blend(b.0, g.0, a), blend(b.1, g.1, a), blend(b.2, g.2, a))
     };
     // Rows where a horizontal wall runs — used to stitch the vertical
@@ -352,40 +351,45 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 end.y
             };
             for y in y_top..=y_bot.min(buf_h - 1) {
-                let into_pane = (y - y_top) % MULLION_STRIDE;
-                let mullion = into_pane == 0;
-                // Specular glint just below each mullion — top of the pane.
-                let specular = into_pane == 1;
+                let seam = (y - y_top) % SEAM_STRIDE == 0;
                 for dx in 0..WALL_THICK_V_PX {
                     let x = start.x + dx;
                     if x >= buf_w {
                         continue;
                     }
-                    let is_rail = dx == 0 || dx == WALL_THICK_V_PX - 1;
-                    let color = if mullion || is_rail {
-                        frame
+                    // lit left edge → body → soft right edge; seams glint.
+                    let (g, a) = if seam {
+                        (glass_hi, 0.6)
+                    } else if dx == 0 {
+                        (glass_hi, 0.85)
+                    } else if dx == WALL_THICK_V_PX - 1 {
+                        (glass_lo, 0.72)
                     } else {
-                        pane(ctx.buf, x, y, specular)
+                        (glass_mid, 0.6)
                     };
+                    let color = over(ctx.buf, x, y, g, a);
                     ctx.buf.put(x, y, color);
                 }
             }
         } else {
             for x in start.x..=end.x.min(buf_w - 1) {
-                let mullion = (x - start.x) % MULLION_STRIDE == 0;
+                let seam = (x - start.x) % SEAM_STRIDE == 0;
                 for dy in 0..WALL_THICK_H_PX {
                     let y = start.y + dy;
                     if y >= buf_h {
                         continue;
                     }
-                    let is_rail = dy == 0 || dy == WALL_THICK_H_PX - 1;
-                    // Upper pane row carries the sheen, lower row the body tint.
-                    let specular = dy == 1;
-                    let color = if mullion || is_rail {
-                        frame
+                    // lit top edge → body → soft bottom edge; seams glint.
+                    let (g, a) = if seam {
+                        (glass_hi, 0.55)
+                    } else if dy == 0 {
+                        (glass_hi, 0.82)
+                    } else if dy == WALL_THICK_H_PX - 1 {
+                        (glass_lo, 0.72)
                     } else {
-                        pane(ctx.buf, x, y, specular)
+                        (glass_mid, 0.58)
                     };
+                    let color = over(ctx.buf, x, y, g, a);
                     ctx.buf.put(x, y, color);
                 }
             }
