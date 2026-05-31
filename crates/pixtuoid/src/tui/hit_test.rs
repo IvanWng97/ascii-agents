@@ -146,7 +146,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
             WaypointKind::MeetingSofa | WaypointKind::MeetingStand => continue,
             // Footprint owned by furniture_def — same shape the mask + stand
             // point use, so the hover box can't drift from them.
-            other => match furniture_def(other).footprint {
+            other => match furniture_def(other.furniture()).footprint {
                 Some(fp) => fp,
                 None => continue,
             },
@@ -217,7 +217,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
 
     // Wall decor
     for (kind, pos) in &layout.wall_decor {
-        let (w, h) = kind.size();
+        let (w, h) = furniture_def(kind.furniture()).visual;
         if hit(pos.x, pos.y, w, h) {
             return Some(match kind {
                 WallDecor::Whiteboard => "Whiteboard",
@@ -231,7 +231,7 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
 
     // Pod decor (aisle items)
     for (kind, pos) in &layout.pod_decor {
-        let (w, h) = kind.size();
+        let (w, h) = furniture_def(kind.furniture()).visual;
         if hit(
             pos.x.saturating_sub(w / 2),
             pos.y.saturating_sub(h / 2),

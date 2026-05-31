@@ -41,7 +41,7 @@ pub(super) fn obstacle_footprint(
     if matches!(kind, WaypointKind::Pantry) {
         return Some(pantry_counter_size);
     }
-    furniture_def(kind).footprint
+    furniture_def(kind.furniture()).footprint
 }
 
 /// Footprint half-extents `(hx, hy)` for stand-cell resolution, or `None` for
@@ -50,7 +50,7 @@ pub(super) fn obstacle_footprint(
 /// no stand resolution. Gated on [`furniture_def`]`.occupies_pos`, a superset
 /// of `footprint.is_none()`: the couch HAS a footprint yet occupies its `pos`.
 fn half_extents(kind: WaypointKind, pantry_counter_size: (u16, u16)) -> Option<(u16, u16)> {
-    if furniture_def(kind).occupies_pos {
+    if furniture_def(kind.furniture()).occupies_pos {
         return None;
     }
     obstacle_footprint(kind, pantry_counter_size).map(|(w, h)| (w / 2, h / 2))
@@ -73,7 +73,7 @@ pub fn stand_point(
     let Some((hx, hy)) = half_extents(kind, pantry_counter_size) else {
         return pos;
     };
-    let approach = furniture_def(kind).approach;
+    let approach = furniture_def(kind.furniture()).approach;
 
     // N, S, W, E unit axes.
     const DIRS: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
@@ -129,7 +129,7 @@ pub fn walk_target(
     origin: Point,
     facing: Facing,
 ) -> Point {
-    let def = furniture_def(kind);
+    let def = furniture_def(kind.furniture());
     if !def.occupies_pos {
         return stand_point(kind, pos, pantry_counter_size, mask, origin, facing);
     }
@@ -245,31 +245,35 @@ mod tests {
                 WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand
             )
         };
-        for seed in 0..5u64 {
-            let l = SceneLayout::compute_with_seed(160, 120, 6, seed).unwrap();
-            let origin = l
-                .home_desks
-                .first()
-                .copied()
-                .unwrap_or(Point { x: 0, y: 0 });
-            for wp in &l.waypoints {
-                let s = super::stand_point(
-                    wp.kind,
-                    wp.pos,
-                    l.pantry_counter_size,
-                    &l.walkable,
-                    origin,
-                    wp.facing,
-                );
-                if seat(wp.kind) {
-                    assert_eq!(s, wp.pos, "seed {seed}: {:?} should pass through", wp.kind);
-                } else {
-                    assert!(
-                        l.walkable.is_walkable(s.x, s.y) && s != wp.pos,
-                        "seed {seed}: {:?} stand {s:?} not a walkable off-center cell (center {:?})",
+        // 160×120 (walkway 8 → no vending/printer) AND 160×150 (walkway ≥10 →
+        // vending + printer spawn) so the appliance stand cells are covered too.
+        for (bw, bh) in [(160u16, 120u16), (160, 150)] {
+            for seed in 0..5u64 {
+                let l = SceneLayout::compute_with_seed(bw, bh, 6, seed).unwrap();
+                let origin = l
+                    .home_desks
+                    .first()
+                    .copied()
+                    .unwrap_or(Point { x: 0, y: 0 });
+                for wp in &l.waypoints {
+                    let s = super::stand_point(
                         wp.kind,
-                        wp.pos
+                        wp.pos,
+                        l.pantry_counter_size,
+                        &l.walkable,
+                        origin,
+                        wp.facing,
                     );
+                    if seat(wp.kind) {
+                        assert_eq!(s, wp.pos, "seed {seed}: {:?} should pass through", wp.kind);
+                    } else {
+                        assert!(
+                            l.walkable.is_walkable(s.x, s.y) && s != wp.pos,
+                            "{bw}x{bh} seed {seed}: {:?} stand {s:?} not a walkable off-center cell (center {:?})",
+                            wp.kind,
+                            wp.pos
+                        );
+                    }
                 }
             }
         }
@@ -412,7 +416,7 @@ mod tests {
                 continue;
             }
             assert_eq!(
-                furniture_def(kind).footprint,
+                furniture_def(kind.furniture()).footprint,
                 obstacle_footprint(kind, dummy),
                 "{kind:?}: furniture_def.footprint must equal obstacle_footprint",
             );
@@ -427,7 +431,7 @@ mod tests {
                 WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand
             );
             assert_eq!(
-                furniture_def(kind).occupies_pos,
+                furniture_def(kind.furniture()).occupies_pos,
                 expected,
                 "{kind:?}: occupies_pos must be true iff the agent occupies pos directly",
             );
@@ -438,7 +442,7 @@ mod tests {
     fn approachable_obstacle_resolves_half_extents() {
         let dummy = (32u16, 10u16);
         for &kind in WaypointKind::ALL {
-            let def = furniture_def(kind);
+            let def = furniture_def(kind.furniture());
             let has_footprint = def.footprint.is_some() || kind == WaypointKind::Pantry;
             if has_footprint && !def.occupies_pos {
                 assert!(
@@ -455,23 +459,26 @@ mod tests {
         // collapse the jitter. Keep every row's range positive.
         for &kind in WaypointKind::ALL {
             assert!(
-                furniture_def(kind).dwell.1 > 0,
+                furniture_def(kind.furniture()).dwell.1 > 0,
                 "{kind:?}: dwell range must be > 0",
             );
         }
     }
 
     #[test]
-    fn pod_decor_size_matches_furniture_def_footprint() {
+    fn pod_and_waypoint_twins_resolve_to_one_furniture_row() {
+        // PhoneBooth/StandingDesk exist as BOTH a PodDecor and a WaypointKind;
+        // after the fold they must map to the SAME Furniture row, so geometry
+        // cannot drift between the two roles.
         use crate::layout::PodDecor;
         for (pod, wp) in [
             (PodDecor::PhoneBooth, WaypointKind::PhoneBooth),
             (PodDecor::StandingDesk, WaypointKind::StandingDesk),
         ] {
             assert_eq!(
-                Some(pod.size()),
-                furniture_def(wp).footprint,
-                "{pod:?}/{wp:?}: PodDecor::size must equal the furniture_def footprint",
+                pod.furniture(),
+                wp.furniture(),
+                "{pod:?}/{wp:?}: pod + waypoint twins must share one Furniture row",
             );
         }
     }

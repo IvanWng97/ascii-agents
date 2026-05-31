@@ -243,6 +243,17 @@ pub(super) const FURNITURE_BACK_PX: u16 = 5;
 /// overhang" form every other drawable's z-key uses (was a bare `desk.y + 8`).
 const DESK_FRONT_OVERHANG: u16 = 2;
 
+/// Z-sort offset from a center-pinned sprite's center to its SOUTH (front) row.
+/// A sprite of height `h` blitted at `py = center - h/2` occupies rows
+/// `[py, py + h - 1]`, so its south row is `center + (h - 1) / 2`. This works
+/// for BOTH parities: the naive `h/2 - 1` is one row short for ODD `h` (e.g. the
+/// 11px whiteboard would sort one row in front of its own base). The z-key must
+/// land ON the south row — one row past it lets the sprite paint over a
+/// character standing immediately in front.
+fn center_pin_south_offset(h: u16) -> u16 {
+    h.saturating_sub(1) / 2
+}
+
 /// Extrude `frame`'s top edge north of its blit origin `(sx, sy)` into an
 /// opaque back face (see [`FURNITURE_BACK_PX`]). Each column repeats its
 /// topmost opaque sprite color, darkened with distance so the band reads as the
@@ -480,7 +491,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         paint_floor_lamp_halo(
             ctx.buf,
             lamp.x,
-            lamp.y,
+            lamp.y + 4, // glow emanates from the lamp BASE (sprite south), not the pole
             look.darkness * 0.55 * indoor_scale,
             ctx.theme,
         );
@@ -715,8 +726,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             ctx.theme,
         );
     }
-    for (_, p) in &ctx.layout.plants {
-        paint_shadow(ctx.buf, p.x, p.y + 3, 3, 1, shadow_strength, ctx.theme);
+    for (kind, p) in &ctx.layout.plants {
+        // Shadow sits under the sprite's south row — same offset the z-anchor
+        // uses, off the same height (Succulent/Flower were floating at a fixed
+        // +3 that only suited the taller Ficus/Tall).
+        let cy = p.y
+            + center_pin_south_offset(crate::tui::layout::furniture_def(kind.furniture()).visual.1);
+        paint_shadow(ctx.buf, p.x, cy, 3, 1, shadow_strength, ctx.theme);
     }
     if let Some(lamp) = ctx.layout.floor_lamp {
         paint_shadow(
@@ -918,10 +934,11 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         });
     }
 
-    // Pantry bistro table (7×4 centered).
+    // Pantry bistro table (7×4 centered) — z-key = sprite south row (h=4 →
+    // center + h/2 - 1 = table.y + 1; was +2, one row past).
     if let Some(table) = ctx.layout.pantry_table {
         drawables.push(Drawable {
-            anchor_y: table.y + 2,
+            anchor_y: table.y + 1,
             kind: DrawableKind::PantryTable { pos: table },
         });
     }
@@ -969,20 +986,19 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // above (it spans 3 seat waypoints).
     for wp in &ctx.layout.waypoints {
         use crate::tui::layout::{furniture_def, WaypointKind};
-        // Depth (y-sort) baseline = the sprite's south row. These appliances
-        // are center-pinned at `pos`, so a sprite of height h occupies rows
-        // [pos.y - h/2, pos.y + h/2 - 1]; the z-key is `pos.y + h/2 - 1` (NOT
-        // +h/2, which overshoots by one and lets the sprite paint over a
-        // character standing immediately in front). h is the footprint height
-        // (= sprite height for these), from furniture_def — no drift.
-        let footprint_h = furniture_def(wp.kind).footprint.map_or(0, |(_, h)| h);
+        // Depth (y-sort) baseline = the sprite's south row, via
+        // `center_pin_south_offset` (these appliances are center-pinned at
+        // `pos`). h is the footprint height (= sprite height for these), from
+        // furniture_def — no drift.
+        let footprint_h = furniture_def(wp.kind.furniture())
+            .footprint
+            .map_or(0, |(_, h)| h);
         match wp.kind {
             WaypointKind::Couch => {}
             WaypointKind::Pantry => {
                 let (cw, ch) = ctx.layout.pantry_counter_size; // runtime-sized
                 drawables.push(Drawable {
-                    // center-pinned sprite of height h: south row = h/2 - 1
-                    anchor_y: wp.pos.y + (ch / 2).saturating_sub(1),
+                    anchor_y: wp.pos.y + center_pin_south_offset(ch),
                     kind: DrawableKind::WaypointPantry {
                         pos: wp.pos,
                         use_large: cw >= 32,
@@ -992,13 +1008,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             WaypointKind::PhoneBooth | WaypointKind::StandingDesk => {}
             WaypointKind::VendingMachine => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + (footprint_h / 2).saturating_sub(1),
+                    anchor_y: wp.pos.y + center_pin_south_offset(footprint_h),
                     kind: DrawableKind::VendingMachine { pos: wp.pos },
                 });
             }
             WaypointKind::Printer => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + (footprint_h / 2).saturating_sub(1),
+                    anchor_y: wp.pos.y + center_pin_south_offset(footprint_h),
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
@@ -1014,9 +1030,12 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // the sprite footprint so y-sort places them correctly against
     // walkers and characters in the aisles.
     for (kind, pos) in &ctx.layout.pod_decor {
-        let (_, h) = kind.size();
+        // Visual sprite height from the one furniture table (the mask reads the
+        // separate `footprint` off the same row — so a tall plant's canopy can
+        // sort correctly without blocking the aisle).
+        let (_, h) = crate::tui::layout::furniture_def(kind.furniture()).visual;
         drawables.push(Drawable {
-            anchor_y: pos.y + h / 2,
+            anchor_y: pos.y + center_pin_south_offset(h),
             kind: DrawableKind::PodDecorItem {
                 kind: *kind,
                 pos: *pos,
@@ -1024,18 +1043,17 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         });
     }
 
-    // Plants — height varies by sprite, anchor = pos.y + h/2 (center
-    // pos convention).
+    // Plants — center-pinned; z-key = sprite south row. Height is the single
+    // source `furniture_def(kind.furniture()).visual.1` (was a parallel fudged
+    // match that drifted: it over-shot Flower/Succulent by one and faked Tall
+    // via `9` instead of `(10-1)/2`). The drop-shadow uses the same offset off
+    // the same height, so the two can't diverge.
     for (kind, p) in &ctx.layout.plants {
-        use crate::tui::layout::PlantKind;
-        let h: u16 = match kind {
-            PlantKind::Ficus => 7,
-            PlantKind::Tall => 9,
-            PlantKind::Flower => 6,
-            PlantKind::Succulent => 4,
-        };
         drawables.push(Drawable {
-            anchor_y: p.y + h / 2,
+            anchor_y: p.y
+                + center_pin_south_offset(
+                    crate::tui::layout::furniture_def(kind.furniture()).visual.1,
+                ),
             kind: DrawableKind::Plant {
                 kind: *kind,
                 pos: *p,
@@ -1086,7 +1104,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
 
     // Wall decor — hung on walls (top-left anchored), bottom = pos.y + h.
     for (kind, pos) in &ctx.layout.wall_decor {
-        let (_, h) = kind.size();
+        let (_, h) = crate::tui::layout::furniture_def(kind.furniture()).visual;
         drawables.push(Drawable {
             anchor_y: pos.y + h,
             kind: DrawableKind::WallDecor {
@@ -1182,14 +1200,18 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         };
         match p {
             Pose::SeatedIdle => {
-                let anchor = with_breath(seated_anchor(desk), agent.agent_id, ctx.now);
+                let anchor_no_breath = seated_anchor(desk);
+                let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                 let sleep_variant = if agent.agent_id.raw() % 2 == 0 {
                     "seated_sleeping"
                 } else {
                     "seated_sleeping_alt"
                 };
                 drawables.push(Drawable {
-                    anchor_y: anchor.y + 12,
+                    // Breath-independent z-key (matches AtWaypoint/AimlessAt):
+                    // the ±1px breath must not flip sort order against nearby
+                    // desk decor frame-to-frame.
+                    anchor_y: anchor_no_breath.y + 12,
                     kind: DrawableKind::Character {
                         agent,
                         anim_name: sleep_variant,
@@ -1205,9 +1227,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 });
             }
             Pose::SeatedThinking => {
-                let anchor = with_breath(seated_anchor(desk), agent.agent_id, ctx.now);
+                let anchor_no_breath = seated_anchor(desk);
+                let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                 drawables.push(Drawable {
-                    anchor_y: anchor.y + 12,
+                    // Breath-independent z-key (matches AtWaypoint/AimlessAt):
+                    // the ±1px breath must not flip sort order against nearby
+                    // desk decor frame-to-frame.
+                    anchor_y: anchor_no_breath.y + 12,
                     kind: DrawableKind::Character {
                         agent,
                         anim_name: "seated",
@@ -1223,9 +1249,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 });
             }
             Pose::SeatedTyping { frame } => {
-                let anchor = with_breath(seated_anchor(desk), agent.agent_id, ctx.now);
+                let anchor_no_breath = seated_anchor(desk);
+                let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                 drawables.push(Drawable {
-                    anchor_y: anchor.y + 12,
+                    // Breath-independent z-key (matches AtWaypoint/AimlessAt):
+                    // the ±1px breath must not flip sort order against nearby
+                    // desk decor frame-to-frame.
+                    anchor_y: anchor_no_breath.y + 12,
                     kind: DrawableKind::Character {
                         agent,
                         anim_name: "typing",
@@ -1241,10 +1271,14 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 });
             }
             Pose::StandingAtDesk => {
-                let anchor = with_breath(standing_at_desk_anchor(desk), agent.agent_id, ctx.now);
+                let anchor_no_breath = standing_at_desk_anchor(desk);
+                let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                 let is_waiting = matches!(agent.state, ActivityState::Waiting { .. });
                 drawables.push(Drawable {
-                    anchor_y: anchor.y + 12,
+                    // Breath-independent z-key (matches AtWaypoint/AimlessAt):
+                    // the ±1px breath must not flip sort order against nearby
+                    // desk decor frame-to-frame.
+                    anchor_y: anchor_no_breath.y + 12,
                     kind: DrawableKind::Character {
                         agent,
                         anim_name: "standing",
@@ -1890,6 +1924,22 @@ mod tests {
     }
 
     #[test]
+    fn center_pin_south_offset_lands_on_the_sprite_south_row() {
+        // A center-pinned sprite of height h blits at py = center - h/2, so its
+        // south (front) ROW is `center + h - 1 - h/2`. The z-key must equal that
+        // for BOTH parities — the round-1 fix used `h/2 - 1`, which is one short
+        // for ODD h (the 11px whiteboard sorted in front of its own base).
+        for h in 1u16..=16 {
+            let expected_south = h - 1 - h / 2;
+            assert_eq!(
+                center_pin_south_offset(h),
+                expected_south,
+                "h={h}: z-key must land on the sprite south row, not one past it",
+            );
+        }
+    }
+
+    #[test]
     fn waypoint_depth_baseline_is_center_pinned_sprite_south() {
         use crate::tui::layout::{furniture_def, WaypointKind};
         // These appliances are center-pinned, so the z-sort key is the sprite's
@@ -1897,7 +1947,14 @@ mod tests {
         // one and lets the sprite paint over a character just in front). Lock
         // the corrected offsets (vending 6→2, printer 4→1), DERIVED from the
         // footprint so a shape edit surfaces here, not as a visual layering bug.
-        let south_off = |k| furniture_def(k).footprint.expect("has footprint").1 / 2 - 1;
+        let south_off = |k: WaypointKind| {
+            furniture_def(k.furniture())
+                .footprint
+                .expect("has footprint")
+                .1
+                / 2
+                - 1
+        };
         assert_eq!(south_off(WaypointKind::VendingMachine), 2);
         assert_eq!(south_off(WaypointKind::Printer), 1);
     }

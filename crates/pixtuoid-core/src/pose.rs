@@ -86,7 +86,7 @@ fn dwell_mix(agent_id: AgentId, tag: u64) -> u64 {
 /// is quick. The render authority (`tui::motion::advance_wander`) uses this
 /// for the AtWaypoint beat.
 pub fn dwell_ms(kind: WaypointKind, agent_id: AgentId) -> u64 {
-    let (base, range) = furniture_def(kind).dwell;
+    let (base, range) = furniture_def(kind.furniture()).dwell;
     base + dwell_mix(agent_id, 0xd1b5_4a32_d192_ed03) % range.max(1)
 }
 

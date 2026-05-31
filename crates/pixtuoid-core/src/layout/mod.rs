@@ -17,8 +17,8 @@ mod mask;
 
 pub use approach::{stand_point, walk_target};
 pub use decor::{
-    desk_furniture_def, desk_walk_anchor, furniture_def, ApproachSides, Facing, FurnitureDef,
-    PlantKind, PodDecor, WallDecor, WaypointKind, DESK_APPROACH,
+    desk_furniture_def, desk_walk_anchor, furniture_def, ApproachSides, Facing, Furniture,
+    FurnitureDef, PlantKind, PodDecor, WallDecor, WaypointKind, DESK_APPROACH,
 };
 pub use mask::{WALL_THICK_H, WALL_THICK_V};
 
@@ -201,7 +201,16 @@ mod tests {
         // error. NOT checked: wall-ADJACENT furniture (meeting sofa/table sit
         // against the glass partitions by design) — that overlap is intended +
         // physically correct, and the occlusion / z-sort system draws it right.
-        for &(w, h) in &[(96u16, 72u16), (120, 80), (160, 120), (192, 160)] {
+        // Includes the minimum-width sizes (34 = MIN_W, 48) where the lounge
+        // side table sits closest to the vertical room wall.
+        for &(w, h) in &[
+            (96u16, 72u16),
+            (120, 80),
+            (160, 120),
+            (192, 160),
+            (34, 60),
+            (48, 60),
+        ] {
             for seed in 0..6u64 {
                 let Some(l) = SceneLayout::compute_with_seed(w, h, 8, seed) else {
                     continue;
@@ -603,46 +612,50 @@ mod tests {
     fn walkable_mask_connected_across_floor_seeds() {
         use std::collections::VecDeque;
 
-        let (buf_w, buf_h, num_agents) = (160u16, 100u16, 12usize);
-        for seed in 0..5u64 {
-            let l = SceneLayout::compute_with_seed(buf_w, buf_h, num_agents, seed)
-                .expect("layout fits");
-            let w = l.buf_w as usize;
-            let h = l.buf_h as usize;
-            let start = l.door_threshold.expect("door_threshold");
-            assert!(l.is_walkable(start.x, start.y));
+        // Sweep the two SMALLEST sizes across all floor seeds too: the dense
+        // floor variant (seed 2) stacks two meeting rooms and is the riskiest
+        // for connectivity at narrow widths — the size-only test runs seed 0.
+        for (buf_w, buf_h, num_agents) in [(160u16, 100u16, 12usize), (96, 70, 7), (128, 80, 10)] {
+            for seed in 0..5u64 {
+                let l = SceneLayout::compute_with_seed(buf_w, buf_h, num_agents, seed)
+                    .expect("layout fits");
+                let w = l.buf_w as usize;
+                let h = l.buf_h as usize;
+                let start = l.door_threshold.expect("door_threshold");
+                assert!(l.is_walkable(start.x, start.y));
 
-            let mut visited = vec![false; w * h];
-            visited[(start.y as usize) * w + (start.x as usize)] = true;
-            let mut queue = VecDeque::new();
-            queue.push_back((start.x, start.y));
-            let mut reachable = 1usize;
-            while let Some((cx, cy)) = queue.pop_front() {
-                for (dx, dy) in [(-1i32, 0), (1, 0), (0, -1), (0, 1)] {
-                    let nx = cx as i32 + dx;
-                    let ny = cy as i32 + dy;
-                    if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
-                        continue;
-                    }
-                    let (nx, ny) = (nx as u16, ny as u16);
-                    let idx = (ny as usize) * w + (nx as usize);
-                    if !visited[idx] && l.is_walkable(nx, ny) {
-                        visited[idx] = true;
-                        reachable += 1;
-                        queue.push_back((nx, ny));
+                let mut visited = vec![false; w * h];
+                visited[(start.y as usize) * w + (start.x as usize)] = true;
+                let mut queue = VecDeque::new();
+                queue.push_back((start.x, start.y));
+                let mut reachable = 1usize;
+                while let Some((cx, cy)) = queue.pop_front() {
+                    for (dx, dy) in [(-1i32, 0), (1, 0), (0, -1), (0, 1)] {
+                        let nx = cx as i32 + dx;
+                        let ny = cy as i32 + dy;
+                        if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                            continue;
+                        }
+                        let (nx, ny) = (nx as u16, ny as u16);
+                        let idx = (ny as usize) * w + (nx as usize);
+                        if !visited[idx] && l.is_walkable(nx, ny) {
+                            visited[idx] = true;
+                            reachable += 1;
+                            queue.push_back((nx, ny));
+                        }
                     }
                 }
+                let walkable_total = (0..h)
+                    .flat_map(|y| (0..w).map(move |x| (x, y)))
+                    .filter(|&(x, y)| l.is_walkable(x as u16, y as u16))
+                    .count();
+                assert_eq!(
+                    reachable,
+                    walkable_total,
+                    "seed={seed}: {buf_w}x{buf_h}: {} disconnected pixels",
+                    walkable_total - reachable
+                );
             }
-            let walkable_total = (0..h)
-                .flat_map(|y| (0..w).map(move |x| (x, y)))
-                .filter(|&(x, y)| l.is_walkable(x as u16, y as u16))
-                .count();
-            assert_eq!(
-                reachable,
-                walkable_total,
-                "seed={seed}: {buf_w}x{buf_h}: {} disconnected pixels",
-                walkable_total - reachable
-            );
         }
     }
 }

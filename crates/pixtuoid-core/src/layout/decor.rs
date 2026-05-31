@@ -33,9 +33,9 @@ pub enum WaypointKind {
 }
 
 /// Footprints for the two kinds that appear in BOTH `WaypointKind` (wander
-/// destination) and `PodDecor` (aisle decor). Declared once so the mask
-/// stamp and the wander-approach geometry read the same number and can't
-/// drift apart. Referenced by both [`furniture_def`] and [`PodDecor::size`].
+/// destination) and `PodDecor` (aisle decor). Declared once and used as the
+/// `footprint`==`visual` values in their single [`Furniture`] rows, so the
+/// wander-approach geometry and the aisle mask stamp can't drift apart.
 pub(crate) const PHONE_BOOTH_FOOTPRINT: (u16, u16) = (6, 12);
 pub(crate) const STANDING_DESK_FOOTPRINT: (u16, u16) = (8, 8);
 
@@ -52,15 +52,17 @@ pub const MEETING_SOFA_FOOTPRINT: (u16, u16) = (16, 7);
 /// Meeting coffee-table footprint, centred on the table Point.
 pub const MEETING_TABLE_FOOTPRINT: (u16, u16) = (12, 6);
 /// Pantry bistro-table footprint, centred on the table Point.
-pub const PANTRY_TABLE_FOOTPRINT: (u16, u16) = (8, 5);
+pub const PANTRY_TABLE_FOOTPRINT: (u16, u16) = (7, 4);
 /// Pantry stool footprint (left-biased stamp; see `mask.rs`).
 pub const PANTRY_CHAIR_FOOTPRINT: (u16, u16) = (3, 3);
-/// Lounge floor-lamp footprint, centred on the lamp Point.
-pub const FLOOR_LAMP_FOOTPRINT: (u16, u16) = (4, 6);
+/// Lounge floor-lamp footprint, centred on the lamp Point. Height 7 (not 6) so
+/// the padded stamp reaches the base disc at `lamp.y+4` (the 4×10 sprite's
+/// south) — at 6 an agent's feet routed through the lamp's ground contact.
+pub const FLOOR_LAMP_FOOTPRINT: (u16, u16) = (4, 7);
 /// Lounge side-table footprint, centred on the table Point.
 pub const LOUNGE_SIDE_TABLE_FOOTPRINT: (u16, u16) = (7, 4);
-/// Plant GROUND footprint, centred on the pot. Deliberately distinct from
-/// [`PlantKind::size`] (the taller VISUAL sprite) — top-down rule: the leaves
+/// Plant GROUND footprint, centred on the pot. Deliberately distinct from the
+/// taller VISUAL sprite (`furniture_def(_).visual`) — top-down rule: the leaves
 /// overhang the pot's ground base, so the blocked footprint stays a tight 6×6.
 pub const PLANT_FOOTPRINT: (u16, u16) = (6, 6);
 
@@ -157,6 +159,15 @@ pub struct FurnitureDef {
     /// runtime-sized (`pantry_counter_size`); `obstacle_footprint`
     /// special-cases it — the one kind whose shape isn't a static literal.
     pub footprint: Option<(u16, u16)>,
+    /// Visual sprite size `(w, h)` in buffer px — the SECOND geometry axis,
+    /// kept distinct from `footprint` (the top-down ground rule, invariant #6):
+    /// a sprite legitimately overhangs its ground base (a tall plant's leaves, a
+    /// floor lamp's shade). Render centering + the z-sort south row derive from
+    /// this; the mask derives from `footprint`. Conflating the two is exactly the
+    /// canopy-over-aisle bug this split prevents. For furniture rendered
+    /// procedurally with its own anchors (couch / pantry counter / meeting sofa)
+    /// this is unused — set to the footprint or `(0, 0)`.
+    pub visual: (u16, u16),
     /// The agent occupies `pos` DIRECTLY (sprite renders ON the furniture),
     /// so `stand_point` passes `pos` through unchanged instead of resolving a
     /// walkable cell beside the furniture (A* then snaps the walk adjacent).
@@ -198,61 +209,178 @@ impl WaypointKind {
         WaypointKind::MeetingSofa,
         WaypointKind::MeetingStand,
     ];
+
+    /// This waypoint's geometry kind in the unified [`Furniture`] table. The
+    /// waypoint enum carries ROLE (a wander destination); geometry lives in the
+    /// one table so it can't drift from the decor/render side.
+    pub const fn furniture(self) -> Furniture {
+        match self {
+            WaypointKind::Couch => Furniture::Couch,
+            WaypointKind::Pantry => Furniture::Pantry,
+            WaypointKind::PhoneBooth => Furniture::PhoneBooth,
+            WaypointKind::StandingDesk => Furniture::StandingDesk,
+            WaypointKind::VendingMachine => Furniture::VendingMachine,
+            WaypointKind::Printer => Furniture::Printer,
+            WaypointKind::MeetingSofa => Furniture::MeetingSofa,
+            WaypointKind::MeetingStand => Furniture::MeetingStand,
+        }
+    }
 }
 
-/// THE furniture table — one row per kind, the single source of truth for
-/// ground shape + occupancy + dwell. Every geometric dependent (mask,
-/// stand-point half-extents, hit-test size, render depth baseline) derives
-/// from `footprint`; do not re-type these numbers anywhere else.
-pub const fn furniture_def(kind: WaypointKind) -> FurnitureDef {
+/// Every geometry-bearing furniture/decor KIND. This is the unification axis:
+/// the role enums ([`WaypointKind`] = wander destination, [`PodDecor`] = aisle
+/// filler, [`PlantKind`], [`WallDecor`]) each `.furniture()`-map onto these, so
+/// overlapping items collapse to ONE row — a phone booth, a rolling whiteboard,
+/// or a tall plant has its shape defined exactly once no matter how many roles
+/// reference it. (The home desk is per-agent, not a fixed kind, so it keeps the
+/// [`desk_furniture_def`] accessor.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Furniture {
+    Couch,
+    Pantry,
+    PhoneBooth,
+    StandingDesk,
+    VendingMachine,
+    Printer,
+    MeetingSofa,
+    MeetingStand,
+    PlantFicus,
+    PlantTall,
+    PlantFlower,
+    PlantSucculent,
+    Whiteboard,
+    Tv,
+    Bookshelf,
+    BulletinBoard,
+    ExitSign,
+    MeetingScreen,
+}
+
+/// THE furniture table — one row per [`Furniture`] kind, the **single** source
+/// of truth for ground shape (`footprint`) AND sprite size (`visual`) plus
+/// occupancy / dwell / approach. Every geometric dependent (walkable mask,
+/// stand-point half-extents, hit-test box, render centering + depth baseline)
+/// derives from this row; do not re-type these numbers anywhere else. `dwell`
+/// with `range == 0` marks a kind that is NOT a wander destination (pure decor).
+pub const fn furniture_def(kind: Furniture) -> FurnitureDef {
+    // Decor that isn't a wander destination: no dwell, approachable from
+    // anywhere (unused — decor never runs stand_point). Spelled once.
+    const DECOR: FurnitureDef = FurnitureDef {
+        footprint: None,
+        visual: (0, 0),
+        occupies_pos: false,
+        dwell: (0, 0),
+        approach: ApproachSides::ALL,
+    };
     match kind {
-        WaypointKind::Couch => FurnitureDef {
+        Furniture::Couch => FurnitureDef {
             footprint: Some((8, 7)),
+            visual: (8, 7), // procedural render; visual unused
             occupies_pos: true,
             dwell: (20_000, 20_000),
             approach: SEAT_APPROACH,
         },
-        WaypointKind::Pantry => FurnitureDef {
+        Furniture::Pantry => FurnitureDef {
             footprint: None, // runtime-sized — see obstacle_footprint
+            visual: (0, 0),  // runtime-sized; procedural render
             occupies_pos: false,
             dwell: (10_000, 8_000),
             approach: ApproachSides::ALL,
         },
-        WaypointKind::PhoneBooth => FurnitureDef {
+        Furniture::PhoneBooth => FurnitureDef {
             footprint: Some(PHONE_BOOTH_FOOTPRINT),
+            visual: PHONE_BOOTH_FOOTPRINT,
             occupies_pos: false,
             dwell: (8_000, 22_000),
             approach: ApproachSides::ALL,
         },
-        WaypointKind::StandingDesk => FurnitureDef {
+        Furniture::StandingDesk => FurnitureDef {
             footprint: Some(STANDING_DESK_FOOTPRINT),
+            visual: STANDING_DESK_FOOTPRINT,
             occupies_pos: false,
             dwell: (8_000, 22_000),
             approach: ApproachSides::ALL,
         },
-        WaypointKind::VendingMachine => FurnitureDef {
+        Furniture::VendingMachine => FurnitureDef {
             footprint: Some((4, 6)),
+            visual: (4, 6),
             occupies_pos: false,
             dwell: (4_000, 4_000),
             approach: ApproachSides::ALL,
         },
-        WaypointKind::Printer => FurnitureDef {
+        Furniture::Printer => FurnitureDef {
             footprint: Some((5, 4)),
+            visual: (5, 4),
             occupies_pos: false,
             dwell: (4_000, 4_000),
             approach: ApproachSides::ALL,
         },
-        WaypointKind::MeetingSofa => FurnitureDef {
+        Furniture::MeetingSofa => FurnitureDef {
             footprint: None,
+            visual: (0, 0), // procedural render
             occupies_pos: true,
             dwell: (20_000, 20_000),
             approach: SEAT_APPROACH,
         },
-        WaypointKind::MeetingStand => FurnitureDef {
+        Furniture::MeetingStand => FurnitureDef {
             footprint: None,
+            visual: (0, 0), // procedural render
             occupies_pos: true,
             dwell: (20_000, 20_000),
             approach: SEAT_APPROACH,
+        },
+        // Plants: all share the tight PLANT_FOOTPRINT ground (leaves overhang,
+        // invariant #6) but each has a distinct sprite height.
+        Furniture::PlantFicus => FurnitureDef {
+            footprint: Some(PLANT_FOOTPRINT),
+            visual: (6, 7),
+            ..DECOR
+        },
+        Furniture::PlantTall => FurnitureDef {
+            footprint: Some(PLANT_FOOTPRINT),
+            visual: (6, 10),
+            ..DECOR
+        },
+        Furniture::PlantFlower => FurnitureDef {
+            footprint: Some(PLANT_FOOTPRINT),
+            visual: (6, 6),
+            ..DECOR
+        },
+        Furniture::PlantSucculent => FurnitureDef {
+            footprint: Some(PLANT_FOOTPRINT),
+            visual: (5, 4),
+            ..DECOR
+        },
+        // Whiteboard/TV: as POD-aisle decor they ARE ground obstacles (footprint
+        // == sprite, intentional aisle blocking); as WALL decor (whiteboard)
+        // only `.visual` is read (wall-mounted, not stamped).
+        Furniture::Whiteboard => FurnitureDef {
+            footprint: Some((14, 11)),
+            visual: (14, 11),
+            ..DECOR
+        },
+        Furniture::Tv => FurnitureDef {
+            footprint: Some((10, 10)),
+            visual: (10, 10),
+            ..DECOR
+        },
+        // Wall-mounted decor — hung in the wall band, never stamped into the
+        // mask, so footprint stays None and only `.visual` matters.
+        Furniture::Bookshelf => FurnitureDef {
+            visual: (8, 12),
+            ..DECOR
+        },
+        Furniture::BulletinBoard => FurnitureDef {
+            visual: (10, 6),
+            ..DECOR
+        },
+        Furniture::ExitSign => FurnitureDef {
+            visual: (5, 3),
+            ..DECOR
+        },
+        Furniture::MeetingScreen => FurnitureDef {
+            visual: (14, 12),
+            ..DECOR
         },
     }
 }
@@ -282,6 +410,7 @@ pub const fn furniture_def(kind: WaypointKind) -> FurnitureDef {
 pub const fn desk_furniture_def() -> FurnitureDef {
     FurnitureDef {
         footprint: Some((DESK_W + 2, DESK_H)),
+        visual: (DESK_W + 2, DESK_H), // desk z-sort is footprint-front-derived; visual unused
         occupies_pos: false,
         dwell: (15_000, 15_000),
         approach: DESK_APPROACH,
@@ -335,13 +464,15 @@ pub enum WallDecor {
 }
 
 impl WallDecor {
-    pub fn size(self) -> (u16, u16) {
+    /// Geometry kind in the unified [`Furniture`] table (sprite size via
+    /// `furniture_def(self.furniture()).visual`; wall decor isn't mask-stamped).
+    pub const fn furniture(self) -> Furniture {
         match self {
-            WallDecor::Whiteboard => (14, 11),
-            WallDecor::Bookshelf => (8, 12),
-            WallDecor::BulletinBoard => (10, 6),
-            WallDecor::ExitSign => (5, 3),
-            WallDecor::MeetingScreen => (14, 12),
+            WallDecor::Whiteboard => Furniture::Whiteboard,
+            WallDecor::Bookshelf => Furniture::Bookshelf,
+            WallDecor::BulletinBoard => Furniture::BulletinBoard,
+            WallDecor::ExitSign => Furniture::ExitSign,
+            WallDecor::MeetingScreen => Furniture::MeetingScreen,
         }
     }
 }
@@ -357,12 +488,15 @@ pub enum PlantKind {
 }
 
 impl PlantKind {
-    pub fn size(self) -> (u16, u16) {
+    /// Geometry kind in the unified [`Furniture`] table. Sprite size via
+    /// `furniture_def(self.furniture()).visual`; all plants share the tight
+    /// `PLANT_FOOTPRINT` ground (leaves overhang it, invariant #6).
+    pub const fn furniture(self) -> Furniture {
         match self {
-            PlantKind::Ficus => (6, 7),
-            PlantKind::Tall => (6, 10),
-            PlantKind::Flower => (6, 6),
-            PlantKind::Succulent => (5, 4),
+            PlantKind::Ficus => Furniture::PlantFicus,
+            PlantKind::Tall => Furniture::PlantTall,
+            PlantKind::Flower => Furniture::PlantFlower,
+            PlantKind::Succulent => Furniture::PlantSucculent,
         }
     }
 }
@@ -392,19 +526,19 @@ impl PodDecor {
         PodDecor::StandingDesk,
     ];
 
-    /// Width / height in buffer pixels — used for both rendering offset
-    /// (centred placement) and walkable-mask obstacle dimensions. Sprite
-    /// sizes are fixed: PlantTall=6×10, Whiteboard=14×11, Tv=10×10,
-    /// PhoneBooth=6×12, StandingDesk=8×8.
-    pub fn size(self) -> (u16, u16) {
+    /// Geometry kind in the unified [`Furniture`] table — the single source for
+    /// this decor's ground footprint (mask) AND sprite size (render). PlantTall
+    /// resolves to the SAME row as the free-standing `PlantKind::Tall`, and
+    /// PhoneBooth/StandingDesk to the same rows as their `WaypointKind` twins, so
+    /// nothing drifts. (PlantTall's mask footprint is the tight 6×6 ground while
+    /// its sprite is 6×10 — the fix that motivated this fold.)
+    pub const fn furniture(self) -> Furniture {
         match self {
-            PodDecor::PlantTall => (6, 10),
-            PodDecor::Whiteboard => (14, 11),
-            PodDecor::Tv => (10, 10),
-            // Shared with the WaypointKind footprint (these two are ALSO wander
-            // destinations) so the mask stamp can't drift between the two enums.
-            PodDecor::PhoneBooth => PHONE_BOOTH_FOOTPRINT,
-            PodDecor::StandingDesk => STANDING_DESK_FOOTPRINT,
+            PodDecor::PlantTall => Furniture::PlantTall,
+            PodDecor::Whiteboard => Furniture::Whiteboard,
+            PodDecor::Tv => Furniture::Tv,
+            PodDecor::PhoneBooth => Furniture::PhoneBooth,
+            PodDecor::StandingDesk => Furniture::StandingDesk,
         }
     }
 }
