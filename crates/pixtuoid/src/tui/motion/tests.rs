@@ -937,15 +937,16 @@ fn wander_dest_for_pantry_is_the_home_desk_stand_point() {
     let ms = motion.get(&slot.agent_id).expect("state");
     assert_eq!(ms.wander_dest_kind, Some(WaypointKind::Pantry));
     let desk = l.home_desks[0];
-    let expected = pixtuoid_core::layout::stand_point(
+    let expected = pixtuoid_core::layout::walk_target(
         WaypointKind::Pantry,
         l.waypoints[pantry_idx].pos,
         l.pantry_counter_size,
         &l.walkable,
         desk,
+        l.waypoints[pantry_idx].facing,
     );
     assert_eq!(
         ms.wander_dest, expected,
-        "motion dest must equal the home-desk stand_point (core↔tui mirror)"
+        "motion dest must equal the home-desk walk_target (core↔tui mirror)"
     );
 }

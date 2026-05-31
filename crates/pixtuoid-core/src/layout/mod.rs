@@ -15,7 +15,7 @@ mod compute;
 mod decor;
 mod mask;
 
-pub use approach::stand_point;
+pub use approach::{stand_point, walk_target};
 pub use decor::{
     furniture_def, ApproachSides, Facing, FurnitureDef, PlantKind, PodDecor, WallDecor,
     WaypointKind, DESK_APPROACH,

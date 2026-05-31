@@ -438,15 +438,17 @@ fn pick_wander_dest(
     } else {
         let wp_idx = waypoint_index_for_cycle(id, cycle_n, layout.waypoints.len());
         let wp = layout.waypoints[wp_idx];
-        // Stand off the furniture on the side nearest the desk — NOT the raw
-        // `wp.pos` (the blocked furniture center), which made A* detour around
-        // it and the sprite pop on arrival.
-        let dest = pixtuoid_core::layout::stand_point(
+        // Walk destination on the side nearest the desk — NOT the raw `wp.pos`
+        // (the blocked furniture center), which made A* detour around it and
+        // the sprite pop on arrival. For seats this is an allowed-side approach
+        // cell (never through the back); the sprite still renders on `wp.pos`.
+        let dest = pixtuoid_core::layout::walk_target(
             wp.kind,
             wp.pos,
             layout.pantry_counter_size,
             &layout.walkable,
             origin,
+            wp.facing,
         );
         (dest, Some(wp.kind), Some(wp_idx))
     }

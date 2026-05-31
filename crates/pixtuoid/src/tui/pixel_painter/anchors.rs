@@ -148,6 +148,7 @@ pub(in crate::tui) fn character_anchor(
                 layout.pantry_counter_size,
                 &layout.walkable,
                 desk,
+                wp_obj.facing,
             );
             match kind {
                 WaypointKind::Couch | WaypointKind::MeetingSofa => back_couch_anchor(stand),

@@ -774,6 +774,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     ctx.layout.pantry_counter_size,
                     &ctx.layout.walkable,
                     origin,
+                    w.facing,
                 );
                 ctx.overlay
                     .add(stand.x.saturating_sub(4), stand.y.saturating_sub(6), 8, 12);
@@ -1237,16 +1238,17 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     wp_rank.insert(wp, rank + 1);
                     let dx = waypoint_rank_offset_x(kind, rank);
                     use crate::tui::layout::WaypointKind;
-                    // Stand cell off the furniture, on the side nearest this
-                    // agent's desk — identical resolution to character_anchor /
-                    // the walk destination, so the sprite lands where it walked
-                    // (no arrival pop) instead of the blocked furniture center.
+                    // Render anchor: the cell the agent occupies. For obstacles
+                    // this is the side stand cell (side-aware); for seats it is
+                    // `wp.pos` (the sprite sits ON the furniture) — the walk-in
+                    // approach cell is resolved separately by `walk_target`.
                     let stand = pixtuoid_core::layout::stand_point(
                         wp_obj.kind,
                         wp_obj.pos,
                         ctx.layout.pantry_counter_size,
                         &ctx.layout.walkable,
                         desk,
+                        wp_obj.facing,
                     );
                     let (anim_name, anchor_base, sprite_h, flip_x) = match kind {
                         WaypointKind::Couch => {
