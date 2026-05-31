@@ -110,8 +110,14 @@ fn missing_socket_exits_zero_without_blocking() {
         status.success(),
         "must exit 0 even with no listener; got {status:?}"
     );
+    // A missing socket makes `connect()` return ConnectionRefused in microseconds
+    // — it never reaches the 200ms WRITE_TIMEOUT (that guards the write AFTER a
+    // successful connect). So this bound isn't testing the 200ms invariant; it
+    // guards against a regression that added a blocking retry/backoff on connect
+    // failure. 1s is tight enough to catch a real hang while leaving generous
+    // headroom for process-spawn jitter on a loaded CI runner.
     assert!(
-        start.elapsed() < Duration::from_secs(5),
+        start.elapsed() < Duration::from_secs(1),
         "shim must not block when the socket is absent"
     );
 }
