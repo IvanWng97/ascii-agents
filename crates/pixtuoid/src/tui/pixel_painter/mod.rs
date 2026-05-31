@@ -60,10 +60,163 @@ use background::{
     paint_floor_and_walls, paint_floor_lamp_halo, paint_neon_panel, paint_shadow, time_of_day_look,
 };
 use drawable::{paint_drawable, pet_position, Drawable, DrawableKind};
-use palette::{agent_palette, recolor_frame};
+use palette::{agent_palette, blend, recolor_frame};
 
 const COFFEE_STEAM_WINDOW_SECS: u64 = 120;
 const DOOR_SPRITE_WIDTH: u16 = 16;
+
+// Room-divider frosted-glass partitions. The E-W (horizontal) wall shows its
+// face — 6 px tall, kept in sync with `mask.rs` WALL_THICK_H — while the N-S
+// (vertical) wall is seen edge-on at 3 px (wider than its 1 px footprint). The
+// 2:1 ratio sells the top-down fake-3D. Each strip is a cool gradient (bright
+// specular edge → tinted body → soft slate edge, all alpha-composited over
+// what's behind so the room glows through) with a brighter seam every
+// `GLASS_SEAM_STRIDE` px. The horizontal wall paints in the y-sorted drawable
+// pass (so it composites over — frostily occluding — a walker standing behind
+// it); the vertical paints in the background.
+pub(super) const WALL_THICK_V_PX: u16 = 3; // visual; footprint is 1 px (mask.rs)
+                                           // Derived from the core mask const so the visible glass face and the blocked
+                                           // ground footprint share a single source of truth (can't drift apart).
+pub(super) const WALL_THICK_H_PX: u16 = pixtuoid_core::layout::WALL_THICK_H;
+const GLASS_SEAM_STRIDE: u16 = 16;
+// The horizontal wall's frosted glass rises this many px NORTH of its walkable
+// footprint — a "back cap" giving the wall height. Because the strip is
+// y-sorted at its south (front) base, a character standing just north of the
+// wall has their feet/legs composited behind this translucent cap (occluded
+// behind the glass). The cap is over floor (visual only), not the mask.
+const GLASS_CAP_PX: u16 = 3;
+
+fn glass_tones(theme: &crate::tui::theme::Theme) -> (Rgb, Rgb, Rgb) {
+    let tl = theme.office.room_wall_trim_light;
+    (
+        Rgb(
+            tl.0.saturating_add(125),
+            tl.1.saturating_add(135),
+            tl.2.saturating_add(124),
+        ),
+        Rgb(
+            tl.0.saturating_add(70),
+            tl.1.saturating_add(100),
+            tl.2.saturating_add(116),
+        ),
+        Rgb(
+            tl.0.saturating_add(18),
+            tl.1.saturating_add(52),
+            tl.2.saturating_add(86),
+        ),
+    )
+}
+
+/// Stitch a vertical (N-S) wall segment's `[y_top, y_bot]` to its joints — the
+/// terminal-agnostic layout emits raw geometry; the render thicknesses/offsets
+/// that open the gaps live here:
+///   • Top: a segment starting at `top_margin` abuts the north wall band, which
+///     ends 4 px higher at `top_wall_h` — raise it so no floor shows between
+///     window and wall. A segment sitting just below a horizontal wall (the
+///     dual-meeting layout offsets its lower segment ~6 px to clear the cross
+///     wall — see `compute_room_walls`) is bridged up to meet it.
+///   • Bottom: where the vertical meets a horizontal wall, extend it down by
+///     the horizontal's thickness to fill the inside corner (else its right
+///     columns leave an L-notch beside the horizontal run).
+fn stitch_vertical_wall(
+    start_y: u16,
+    end_y: u16,
+    top_margin: u16,
+    top_wall_h: u16,
+    h_rows: &[u16],
+) -> (u16, u16) {
+    let y_top = if start_y == top_margin {
+        top_wall_h
+    } else if let Some(&hr) = h_rows
+        .iter()
+        .find(|&&hr| hr < start_y && start_y - hr <= WALL_THICK_H_PX + 2)
+    {
+        hr
+    } else {
+        start_y
+    };
+    let y_bot = if h_rows.contains(&end_y) {
+        end_y + (WALL_THICK_H_PX - 1)
+    } else {
+        end_y
+    };
+    (y_top, y_bot)
+}
+
+fn glass_over(buf: &RgbBuffer, x: u16, y: u16, g: Rgb, a: f32) -> Rgb {
+    let b = buf.get(x, y);
+    Rgb(blend(b.0, g.0, a), blend(b.1, g.1, a), blend(b.2, g.2, a))
+}
+
+/// Paint a horizontal (E-W) frosted-glass wall strip: lit top edge → body →
+/// soft bottom edge, seam glints every `GLASS_SEAM_STRIDE` px.
+pub(super) fn paint_glass_wall_h(
+    buf: &mut RgbBuffer,
+    theme: &crate::tui::theme::Theme,
+    x0: u16,
+    x1: u16,
+    y_top: u16,
+) {
+    let (hi, mid, lo) = glass_tones(theme);
+    let (bw, bh) = (buf.width, buf.height);
+    // The strip spans the back cap (rising north of the footprint) + the
+    // 6 px face. Row 0 = lit far/top edge (north), last row = soft front base.
+    let cap_top = y_top.saturating_sub(GLASS_CAP_PX);
+    let rows = GLASS_CAP_PX + WALL_THICK_H_PX;
+    for x in x0..=x1.min(bw.saturating_sub(1)) {
+        let seam = (x - x0) % GLASS_SEAM_STRIDE == 0;
+        for i in 0..rows {
+            let y = cap_top + i;
+            if y >= bh {
+                continue;
+            }
+            let (g, a) = if seam {
+                (hi, 0.55)
+            } else if i == 0 {
+                (hi, 0.82)
+            } else if i == rows - 1 {
+                (lo, 0.72)
+            } else {
+                (mid, 0.58)
+            };
+            let color = glass_over(buf, x, y, g, a);
+            buf.put(x, y, color);
+        }
+    }
+}
+
+/// Paint a vertical (N-S) frosted-glass wall strip: lit left edge → body →
+/// soft right edge, seam glints every `GLASS_SEAM_STRIDE` px.
+fn paint_glass_wall_v(
+    buf: &mut RgbBuffer,
+    theme: &crate::tui::theme::Theme,
+    x_left: u16,
+    y_top: u16,
+    y_bot: u16,
+) {
+    let (hi, mid, lo) = glass_tones(theme);
+    let (bw, bh) = (buf.width, buf.height);
+    for y in y_top..=y_bot.min(bh.saturating_sub(1)) {
+        let seam = (y - y_top) % GLASS_SEAM_STRIDE == 0;
+        for dx in 0..WALL_THICK_V_PX {
+            let x = x_left + dx;
+            if x >= bw {
+                continue;
+            }
+            let (g, a) = if seam {
+                (hi, 0.6)
+            } else if dx == 0 {
+                (hi, 0.85)
+            } else if dx == WALL_THICK_V_PX - 1 {
+                (lo, 0.72)
+            } else {
+                (mid, 0.6)
+            };
+            let color = glass_over(buf, x, y, g, a);
+            buf.put(x, y, color);
+        }
+    }
+}
 
 /// Bundled input for the pixel-painting pass. Constructed from `DrawCtx`
 /// fields + per-frame inputs at the `draw_scene` call site.
@@ -273,53 +426,34 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     if let Some(corridor) = ctx.layout.corridor {
         paint_corridor_runner(ctx.buf, corridor, ctx.theme);
     }
-    // Room dividers. Stardew-style fake-3D perspective:
-    //   • horizontal walls (E-W) show the wall face — 4 px tall with
-    //     a light top trim (lit cap) and dark bottom trim (shadow).
-    //   • vertical walls (N-S) are seen edge-on — drawn as a single
-    //     1-px partition line.
-    // Visual thickness is wider than the walkable mask (WALL_THICK_V=1 in
-    // mask.rs) because this renders the full wall trim, not the ground footprint.
-    const WALL_THICK_V_PX: u16 = 3;
-    const WALL_THICK_H_PX: u16 = 4;
-    let wall_body = ctx.theme.office.room_wall_body;
-    let wall_trim_light = ctx.theme.office.room_wall_trim_light;
-    let wall_trim_dark = ctx.theme.office.room_wall_trim_dark;
+    // Room dividers — frosted-glass partitions (see the module-level glass
+    // helpers + WALL_THICK_*_PX). The VERTICAL (N-S, edge-on) wall paints here
+    // in the background; the HORIZONTAL (E-W, face-on) wall is emitted into the
+    // y-sorted drawable pass below so it composites over a walker standing
+    // behind it. Stitch the vertical's joints (the layout emits geometry only;
+    // the render thicknesses/offsets that open the gaps live here):
+    //   • Top: a segment starting at top_margin abuts the north wall band,
+    //     which ends 4 px higher at top_wall_h — raise it so no floor shows
+    //     between window and wall. A segment just below a horizontal wall (the
+    //     dual-meeting layout offsets it ~6 px to clear the cross wall) is
+    //     bridged up to meet it.
+    //   • Bottom: where the vertical meets a horizontal wall, extend it down by
+    //     the horizontal's thickness to fill the inside corner (else its right
+    //     columns leave an L-notch beside the horizontal run).
+    let h_rows: Vec<u16> = ctx
+        .layout
+        .room_walls
+        .iter()
+        .filter(|(s, e)| s.y == e.y)
+        .map(|(s, _)| s.y)
+        .collect();
     for (start, end) in &ctx.layout.room_walls {
-        if start.x == end.x {
-            for y in start.y..=end.y.min(buf_h - 1) {
-                for dx in 0..WALL_THICK_V_PX {
-                    let x = start.x + dx;
-                    if x < buf_w {
-                        let color = if dx == 0 {
-                            wall_trim_light
-                        } else if dx == WALL_THICK_V_PX - 1 {
-                            wall_trim_dark
-                        } else {
-                            wall_body
-                        };
-                        ctx.buf.put(x, y, color);
-                    }
-                }
-            }
-        } else {
-            for x in start.x..=end.x.min(buf_w - 1) {
-                for dy in 0..WALL_THICK_H_PX {
-                    let y = start.y + dy;
-                    if y >= buf_h {
-                        continue;
-                    }
-                    let color = if dy == 0 {
-                        wall_trim_light
-                    } else if dy == WALL_THICK_H_PX - 1 {
-                        wall_trim_dark
-                    } else {
-                        wall_body
-                    };
-                    ctx.buf.put(x, y, color);
-                }
-            }
+        if start.x != end.x {
+            continue; // horizontal walls paint in the drawable pass
         }
+        let (y_top, y_bot) =
+            stitch_vertical_wall(start.y, end.y, ctx.layout.top_margin, top_wall_h, &h_rows);
+        paint_glass_wall_v(ctx.buf, ctx.theme, start.x, y_top, y_bot.min(buf_h - 1));
     }
 
     // Meeting sofas + table, pantry table + chairs are all painted by
@@ -1131,6 +1265,23 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         }
     }
 
+    // Horizontal (E-W) room dividers join the y-sort, anchored at their south
+    // (front) edge, so a character standing behind (north of) the wall is
+    // composited over by the frosted glass instead of painting on top of it.
+    // The vertical (edge-on) dividers already painted in the background pass.
+    for (start, end) in &ctx.layout.room_walls {
+        if start.y == end.y {
+            drawables.push(Drawable {
+                anchor_y: start.y + (WALL_THICK_H_PX - 1),
+                kind: DrawableKind::RoomWallH {
+                    x0: start.x.min(end.x),
+                    x1: start.x.max(end.x),
+                    y_top: start.y,
+                },
+            });
+        }
+    }
+
     // Stable sort (Rust's `sort_by_key` is stable) — ties preserve
     // insertion order. Insertion order above: decor first, characters
     // last, so a character tied with a piece of furniture paints
@@ -1166,6 +1317,75 @@ mod tests {
     use pixtuoid_core::sprite::{Frame, Palette};
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn stitch_vertical_wall_connects_each_joint() {
+        let top_margin = 48u16;
+        let top_wall_h = top_margin - 4; // 44
+        let h_y = 90u16; // a horizontal divider row
+        let h_rows = [h_y];
+
+        // Top joint: a segment starting at top_margin rises to the window band.
+        let (yt, _) = stitch_vertical_wall(top_margin, 70, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            yt, top_wall_h,
+            "top segment should connect up to the window band"
+        );
+
+        // Corner joint: a segment ending on the horizontal row extends down by
+        // the horizontal's thickness to fill the inside corner.
+        let (_, yb) = stitch_vertical_wall(60, h_y, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            yb,
+            h_y + (WALL_THICK_H_PX - 1),
+            "bottom should fill the corner"
+        );
+
+        // Bridge-up joint (the dual-meeting case): a segment starting ~6 px
+        // below the cross wall is bridged up to meet it. This branch only fires
+        // on variant-2 floors, so it has no end-to-end render guard.
+        let (yt2, _) = stitch_vertical_wall(h_y + 6, 120, top_margin, top_wall_h, &h_rows);
+        assert_eq!(yt2, h_y, "lower segment should bridge up to the cross wall");
+
+        // No false bridge: a segment well below the tolerance stays put, and a
+        // segment with no joints is returned unchanged.
+        let (yt3, yb3) = stitch_vertical_wall(h_y + 20, 130, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            (yt3, yb3),
+            (h_y + 20, 130),
+            "distant segment must not bridge"
+        );
+        let (yt4, yb4) = stitch_vertical_wall(60, 80, top_margin, top_wall_h, &[]);
+        assert_eq!((yt4, yb4), (60, 80), "no joints → unchanged");
+    }
+
+    #[test]
+    fn glass_wall_h_back_cap_composites_over_a_character_behind_it() {
+        // Occlusion: the horizontal wall's frosted glass rises GLASS_CAP_PX
+        // north of its footprint, y-sorted at the south base — so a character
+        // standing just NORTH of the wall (drawn earlier) is composited over
+        // by the translucent glass. Stand in for that character with a vivid
+        // warm pixel inside the cap band; the glass must shift it toward the
+        // cool tone (red drops, blue rises) rather than leave it untouched.
+        let theme = crate::tui::theme::theme_by_name("normal").expect("theme");
+        let y_top = 20u16;
+        // A mid cap row (not the bright lit top edge, not a seam column) where
+        // the cool body tone dominates the composite — clearly north of the
+        // footprint, so it's the back cap painting over the character.
+        let cap_row = y_top - 2;
+        let character = Rgb(220, 40, 40);
+        let mut buf = RgbBuffer::filled(48, 48, Rgb(150, 110, 72)); // carpet
+        for x in 4..20 {
+            buf.put(x, cap_row, character);
+        }
+        paint_glass_wall_h(&mut buf, theme, 0, 47, y_top);
+        let after = buf.get(8, cap_row);
+        assert_ne!(after, character, "glass must composite over the character");
+        assert!(
+            after.0 < character.0 && after.2 > character.2,
+            "frosted glass should cool the occluded pixel (red↓ blue↑): {after:?}"
+        );
+    }
 
     #[test]
     fn meeting_sprite_maps_facing_to_sprite_and_flip() {

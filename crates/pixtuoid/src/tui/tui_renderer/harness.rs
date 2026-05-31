@@ -1177,3 +1177,62 @@ fn meeting_room_fills_and_hosts_group_chitchat() {
          expected within 3/4 of the budget"
     );
 }
+
+#[test]
+fn meeting_glass_partition_connects_at_window_and_corner() {
+    // Regression: the vertical meeting-room divider used to start 4 px below
+    // the north wall band (a floating strip) and stop short of the horizontal
+    // wall, leaving an L-notch at the inside corner. The glass partition now
+    // stitches both joints. Asserted relative to same-row references so the
+    // check is immune to time-of-day dim / weather tint applied globally.
+    let mut r = build(192, 80, vec![]);
+    let scene = scene_with(vec![idle("/h/glass.jsonl", 0, t0())], 16);
+    r.render(&scene, &pack(), t0()).expect("render");
+
+    let layout = r.cached_layout().expect("layout").clone();
+    let v_x = layout
+        .room_walls
+        .iter()
+        .find(|(s, e)| s.x == e.x)
+        .map(|(s, _)| s.x)
+        .expect("standard floor has a vertical divider");
+    let h_y = layout
+        .room_walls
+        .iter()
+        .find(|(s, e)| s.y == e.y)
+        .map(|(s, _)| s.y)
+        .expect("standard floor has a horizontal divider");
+    let top_wall_h = layout.top_margin - 4;
+
+    let buf = r.buf();
+    let dist = |a: pixtuoid_core::sprite::Rgb, b: pixtuoid_core::sprite::Rgb| {
+        (a.0 as i32 - b.0 as i32).abs()
+            + (a.1 as i32 - b.1 as i32).abs()
+            + (a.2 as i32 - b.2 as i32).abs()
+    };
+    // The frosted glass is a translucent cool gradient with no single colour,
+    // so reference both its lit (left/dx0) and soft (right/dx2) edges — sampled
+    // high on the wall where it's unambiguously glass — plus a floor sample.
+    // Any glass pixel (lit / body / soft / seam) is nearer one of the two
+    // glass edges than the warm carpet. References share the global lighting.
+    let glass_lit = buf.get(v_x, layout.top_margin + 2);
+    let glass_soft = buf.get(v_x + 2, layout.top_margin + 2);
+    let floor_ref = buf.get(v_x.saturating_sub(8), top_wall_h + 6);
+    let is_glass = |p: pixtuoid_core::sprite::Rgb| {
+        dist(p, glass_lit).min(dist(p, glass_soft)) < dist(p, floor_ref)
+    };
+
+    // Top joint: the row flush with the window band must be glass, not floor.
+    assert!(
+        is_glass(buf.get(v_x, top_wall_h + 1)),
+        "vertical divider should connect up to the window band (no floor gap)"
+    );
+
+    // Corner joint: the vertical's own soft edge (which the horizontal run,
+    // ending at v_x, never covers) must extend down through the horizontal
+    // wall band — that 2-px-wide strip was the L-notch left by the old code.
+    assert!(
+        is_glass(buf.get(v_x + 2, h_y + 2)),
+        "vertical divider should fill the inside corner at the horizontal wall"
+    );
+}

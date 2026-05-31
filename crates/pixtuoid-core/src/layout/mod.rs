@@ -15,6 +15,7 @@ mod decor;
 mod mask;
 
 pub use decor::{Facing, PlantKind, PodDecor, WallDecor, WaypointKind};
+pub use mask::WALL_THICK_H;
 
 use crate::walkable::WalkableMask;
 

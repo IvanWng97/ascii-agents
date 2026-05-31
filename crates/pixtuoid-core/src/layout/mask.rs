@@ -7,6 +7,11 @@
 use super::{PodDecor, Point, WallDecor, Waypoint, WaypointKind, DESK_H, DESK_W, OBSTACLE_PAD_PX};
 use crate::walkable::WalkableMask;
 
+/// Walkable footprint (and render face height) of a horizontal (E-W) interior
+/// wall, in px. The renderer derives `WALL_THICK_H_PX` from this so the visible
+/// glass face and the blocked ground footprint can never drift apart.
+pub const WALL_THICK_H: u16 = 6;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_walkable_mask(
     buf_w: u16,
@@ -40,13 +45,13 @@ pub(super) fn build_walkable_mask(
     mask.mark_blocked(0, baseboard_top, buf_w, 3, 0);
 
     // Interior walls. Stardew-style fake-3D perspective:
-    //   • horizontal walls (E-W) show their FACE — 4 px tall so the
-    //     wall reads as having mass when viewed from the north room.
-    //   • vertical walls (N-S) are seen EDGE-ON — 1 px thin partition.
-    // Render thicknesses must stay in sync; see `WALL_THICK_*_PX` in
-    // the renderer.
+    //   • horizontal walls (E-W) show their FACE — WALL_THICK_H px tall so the
+    //     wall reads as having real mass/height when viewed from the north
+    //     room (clearly thicker than the edge-on vertical).
+    //   • vertical walls (N-S) are seen EDGE-ON — 1 px thin footprint (the
+    //     renderer draws it 3 px wide; visual-wider-than-footprint per the
+    //     top-down ground-projection rule).
     const WALL_THICK_V: u16 = 1;
-    const WALL_THICK_H: u16 = 4;
     for (start, end) in room_walls {
         if start.x == end.x {
             mask.mark_blocked(
