@@ -79,6 +79,14 @@ pub(super) fn build_walkable_mask(
     }
 
     for sofa in meeting_sofas {
+        // The sofa sprite is 20px wide. The width arg is 16 ON PURPOSE, not a
+        // stale 16px sprite size: `16 + 2·OBSTACLE_PAD = 20` reproduces the
+        // exact 20px X footprint while the pad provides the 7→11px VERTICAL
+        // approach clearance (sit access between sofa and table). The narrowest
+        // meeting room (~26px wide) can't fit horizontal clearance — a literal
+        // `20, pad` block is 24px wide and disconnects the room (the
+        // walkable_mask_is_fully_connected test catches it). Top-down rule:
+        // characters walk right up to the sofa's sides, clear above/below.
         mask.mark_blocked(
             sofa.x.saturating_sub(8),
             sofa.y.saturating_sub(3),
