@@ -1,0 +1,82 @@
+name: 🐛 Bug report
+description: Something rendered wrong, crashed, or didn't behave as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! pixtuoid is a terminal renderer, so a **screenshot or GIF**
+        is worth a thousand words — please attach one if the bug is visual.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see, and what did you expect instead?
+      placeholder: The sprite walked through the wall when the office had only one desk…
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command(s) you ran, and what you did in the TUI.
+      placeholder: |
+        1. pixtuoid run --theme dracula --max-desks 4
+        2. Started two Claude Code sessions
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: visual
+    attributes:
+      label: Screenshot / GIF
+      description: Drag-and-drop an image here if the bug is visual. A cropped snapshot (`scripts/crop-snapshot.py`) is ideal.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: pixtuoid version
+      description: Output of `pixtuoid --version` (or the release tag / commit you built from).
+      placeholder: 0.x.y
+    validations:
+      required: true
+  - type: dropdown
+    id: agent-cli
+    attributes:
+      label: Which agent CLI were you visualizing?
+      multiple: true
+      options:
+        - Claude Code
+        - Codex CLI
+        - Antigravity CLI
+        - Other (note it below)
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Pre-built binary (release)
+        - Cargo (crates.io)
+        - From source (cargo build --release)
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS + terminal
+      description: e.g. "macOS 15.6, iTerm2" / "Ubuntu 24.04, kitty / tmux". Terminal & multiplexer matter for rendering bugs.
+      placeholder: macOS 15.6, Ghostty
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Anything printed to stderr, or output from `pixtuoid run --headless`. Will be formatted as code.
+      render: shell
+    validations:
+      required: false
