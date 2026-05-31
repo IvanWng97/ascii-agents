@@ -14,7 +14,7 @@ use std::time::SystemTime;
 
 use pixtuoid_core::sprite::blit::blit_frame;
 use pixtuoid_core::sprite::format::Pack;
-use pixtuoid_core::sprite::{Rgb, RgbBuffer};
+use pixtuoid_core::sprite::{Frame, Rgb, RgbBuffer};
 use pixtuoid_core::state::ActivityState;
 use pixtuoid_core::walkable::OccupancyOverlay;
 use pixtuoid_core::{AgentSlot, SceneState};
@@ -222,6 +222,72 @@ fn paint_glass_wall_v(
             buf.put(x, y, color);
         }
     }
+}
+
+/// Rows the opaque "back face" of a tall free-standing object (phone booth,
+/// standing desk, pantry counter) rises NORTH of its sprite. These objects are
+/// reachable from any open side incl. the north (`approach::stand_point` — a
+/// desk to the north yields a north stand cell), and a feet-anchored character
+/// extends UP/north, so a walker standing behind one would otherwise float
+/// above it with a gap and never be occluded. Extruding the sprite's top edge
+/// north by this many px gives the object ¾-view depth and composites over the
+/// walker's feet + lower legs (the object's drawable is y-sorted at its south
+/// base, so the band paints after — on top of — anyone standing behind it).
+/// Same rationale as the glass wall's `GLASS_CAP_PX`; 5 ≈ pad(1) + 1 feet row +
+/// ~3 leg rows for the northmost reachable stand cell.
+pub(super) const FURNITURE_BACK_PX: u16 = 5;
+
+/// Extrude `frame`'s top edge north of its blit origin `(sx, sy)` into an
+/// opaque back face (see [`FURNITURE_BACK_PX`]). Each column repeats its
+/// topmost opaque sprite color, darkened with distance so the band reads as the
+/// object's top/back receding into shadow; transparent-top columns are skipped,
+/// preserving the silhouette. Render-only — emit inside the object's drawable
+/// so y-sort composites it over a character standing behind (north of) it.
+pub(super) fn paint_furniture_back(buf: &mut RgbBuffer, frame: &Frame, sx: u16, sy: u16) {
+    if sy == 0 {
+        return;
+    }
+    let rows = FURNITURE_BACK_PX.min(sy);
+    let w = frame.width as usize;
+    let denom = (rows.max(2) - 1) as f32;
+    for fx in 0..frame.width {
+        let Some(top) =
+            (0..frame.height).find_map(|fy| frame.pixels[(fy as usize) * w + fx as usize])
+        else {
+            continue; // column is fully transparent — keep the silhouette
+        };
+        let x = sx.saturating_add(fx);
+        if x >= buf.width {
+            continue;
+        }
+        for i in 0..rows {
+            // i = 0 is the northmost (most-receded → darkest) row; the last row
+            // sits flush against the sprite top and keeps the full color.
+            let y = sy - rows + i;
+            let f = 0.55 + 0.45 * (i as f32 / denom);
+            buf.put(
+                x,
+                y,
+                Rgb(
+                    (top.0 as f32 * f) as u8,
+                    (top.1 as f32 * f) as u8,
+                    (top.2 as f32 * f) as u8,
+                ),
+            );
+        }
+    }
+}
+
+/// Render policy: does this aisle pod get a north back-cap ([`paint_furniture_back`])?
+/// True only for tall, narrow, free-standing pods an agent can approach from
+/// the north (phone booth, standing desk) — so a walker standing behind reads
+/// as occluded. Plant / TV / whiteboard are wall-flanking decor (left flat).
+/// Wide multi-material counters (pantry) and wall-flush appliances
+/// (vending/printer) are intentionally excluded — see `paint_furniture_back`.
+/// One place to decide back-cap-ness per pod kind.
+pub(super) fn back_cap(kind: crate::tui::layout::PodDecor) -> bool {
+    use crate::tui::layout::PodDecor;
+    matches!(kind, PodDecor::PhoneBooth | PodDecor::StandingDesk)
 }
 
 /// Bundled input for the pixel-painting pass. Constructed from `DrawCtx`
@@ -899,7 +965,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         match wp.kind {
             WaypointKind::Couch => {}
             WaypointKind::Pantry => {
-                let (cw, ch) = ctx.layout.pantry_counter_size;
+                let (cw, ch) = ctx.layout.pantry_counter_size; // runtime-sized
                 drawables.push(Drawable {
                     anchor_y: wp.pos.y + ch / 2,
                     kind: DrawableKind::WaypointPantry {
@@ -1435,6 +1501,64 @@ mod tests {
         assert!(
             after.0 < character.0 && after.2 > character.2,
             "frosted glass should cool the occluded pixel (red↓ blue↑): {after:?}"
+        );
+    }
+
+    /// Tiny solid frame for back-face tests: `w`×`h`, every pixel opaque `c`.
+    fn solid_frame(w: u16, h: u16, c: Rgb) -> Frame {
+        Frame {
+            width: w,
+            height: h,
+            pixels: vec![Some(c); (w as usize) * (h as usize)],
+        }
+    }
+
+    #[test]
+    fn furniture_back_occludes_a_character_behind_it() {
+        // A tall pod's back face rises FURNITURE_BACK_PX rows north of its
+        // sprite top, in a darkened shade of the column's top color — so a
+        // character standing just north (drawn earlier) is painted over.
+        let blue = Rgb(40, 60, 200);
+        let frame = solid_frame(6, 8, blue);
+        let (sx, sy) = (10u16, 20u16);
+        let character = Rgb(220, 40, 40);
+        let mut buf = RgbBuffer::filled(48, 48, Rgb(150, 110, 72));
+        // Stand-in pixel one row north of the sprite top — inside the band.
+        let row = sy - 1;
+        buf.put(sx + 2, row, character);
+        paint_furniture_back(&mut buf, &frame, sx, sy);
+        let after = buf.get(sx + 2, row);
+        assert_ne!(after, character, "back face must paint over the character");
+        // Shade of the (blue) sprite top, not the warm character/floor: blue
+        // channel dominates and red is gone.
+        assert!(
+            after.2 > after.0 && after.0 < character.0,
+            "occluded pixel should take the pod's cool shade: {after:?}"
+        );
+    }
+
+    #[test]
+    fn furniture_back_skips_transparent_columns() {
+        // A fully-transparent column must NOT extrude (preserve silhouette /
+        // avoid smearing floor north of the object's clipped corners).
+        let c = Rgb(80, 80, 90);
+        let mut frame = solid_frame(4, 6, c);
+        for fy in 0..frame.height {
+            frame.pixels[(fy as usize) * 4] = None; // column 0 transparent
+        }
+        let floor = Rgb(150, 110, 72);
+        let (sx, sy) = (10u16, 20u16);
+        let mut buf = RgbBuffer::filled(48, 48, floor);
+        paint_furniture_back(&mut buf, &frame, sx, sy);
+        assert_eq!(
+            buf.get(sx, sy - 1),
+            floor,
+            "transparent column must leave floor untouched"
+        );
+        assert_ne!(
+            buf.get(sx + 1, sy - 1),
+            floor,
+            "opaque column must paint its back face"
         );
     }
 

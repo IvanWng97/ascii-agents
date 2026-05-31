@@ -397,6 +397,13 @@ pub(super) fn paint_drawable(
             if let Some(f) = pack.animation(anim_name).and_then(|a| a.frames.first()) {
                 let cx = pos.x.saturating_sub(f.width / 2);
                 let cy = pos.y.saturating_sub(f.height / 2);
+                // NB: no `paint_furniture_back` here. The counter is a wide
+                // (32px) multi-material bank; extruding each column's top pixel
+                // north smears its decorative elements (steam wand, chip-bag,
+                // dividers) into the floor as color streaks. The short counter
+                // also stands ~2px clear below a north-approaching agent, so a
+                // back cap buys almost no real occlusion. Back caps are for
+                // tall, narrow, single-silhouette objects (pods / glass wall).
                 blit_frame(f, cx, cy, buf);
             }
             // Large sprite: coffee machine at sprite cols 11-18 of
@@ -471,6 +478,11 @@ pub(super) fn paint_drawable(
             if let Some(f) = pack.animation(anim_name).and_then(|a| a.frames.first()) {
                 let px = pos.x.saturating_sub(f.width / 2);
                 let py = pos.y.saturating_sub(f.height / 2);
+                // Back-cap policy (which pods occlude a north-stander) lives in
+                // one place: super::back_cap. See paint_furniture_back.
+                if super::back_cap(*kind) {
+                    super::paint_furniture_back(buf, f, px, py);
+                }
                 blit_frame(f, px, py, buf);
             }
         }
