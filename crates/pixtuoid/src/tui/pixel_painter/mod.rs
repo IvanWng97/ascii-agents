@@ -74,8 +74,10 @@ const DOOR_SPRITE_WIDTH: u16 = 16;
 // `GLASS_SEAM_STRIDE` px. The horizontal wall paints in the y-sorted drawable
 // pass (so it composites over — frostily occluding — a walker standing behind
 // it); the vertical paints in the background.
-pub(super) const WALL_THICK_V_PX: u16 = 3;
-pub(super) const WALL_THICK_H_PX: u16 = 6;
+pub(super) const WALL_THICK_V_PX: u16 = 3; // visual; footprint is 1 px (mask.rs)
+                                           // Derived from the core mask const so the visible glass face and the blocked
+                                           // ground footprint share a single source of truth (can't drift apart).
+pub(super) const WALL_THICK_H_PX: u16 = pixtuoid_core::layout::WALL_THICK_H;
 const GLASS_SEAM_STRIDE: u16 = 16;
 // The horizontal wall's frosted glass rises this many px NORTH of its walkable
 // footprint — a "back cap" giving the wall height. Because the strip is
@@ -103,6 +105,42 @@ fn glass_tones(theme: &crate::tui::theme::Theme) -> (Rgb, Rgb, Rgb) {
             tl.2.saturating_add(86),
         ),
     )
+}
+
+/// Stitch a vertical (N-S) wall segment's `[y_top, y_bot]` to its joints — the
+/// terminal-agnostic layout emits raw geometry; the render thicknesses/offsets
+/// that open the gaps live here:
+///   • Top: a segment starting at `top_margin` abuts the north wall band, which
+///     ends 4 px higher at `top_wall_h` — raise it so no floor shows between
+///     window and wall. A segment sitting just below a horizontal wall (the
+///     dual-meeting layout offsets its lower segment ~6 px to clear the cross
+///     wall — see `compute_room_walls`) is bridged up to meet it.
+///   • Bottom: where the vertical meets a horizontal wall, extend it down by
+///     the horizontal's thickness to fill the inside corner (else its right
+///     columns leave an L-notch beside the horizontal run).
+fn stitch_vertical_wall(
+    start_y: u16,
+    end_y: u16,
+    top_margin: u16,
+    top_wall_h: u16,
+    h_rows: &[u16],
+) -> (u16, u16) {
+    let y_top = if start_y == top_margin {
+        top_wall_h
+    } else if let Some(&hr) = h_rows
+        .iter()
+        .find(|&&hr| hr < start_y && start_y - hr <= WALL_THICK_H_PX + 2)
+    {
+        hr
+    } else {
+        start_y
+    };
+    let y_bot = if h_rows.contains(&end_y) {
+        end_y + (WALL_THICK_H_PX - 1)
+    } else {
+        end_y
+    };
+    (y_top, y_bot)
 }
 
 fn glass_over(buf: &RgbBuffer, x: u16, y: u16, g: Rgb, a: f32) -> Rgb {
@@ -413,21 +451,8 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         if start.x != end.x {
             continue; // horizontal walls paint in the drawable pass
         }
-        let y_top = if start.y == ctx.layout.top_margin {
-            top_wall_h
-        } else if let Some(&hr) = h_rows
-            .iter()
-            .find(|&&hr| hr < start.y && start.y - hr <= WALL_THICK_H_PX + 2)
-        {
-            hr
-        } else {
-            start.y
-        };
-        let y_bot = if h_rows.contains(&end.y) {
-            end.y + (WALL_THICK_H_PX - 1)
-        } else {
-            end.y
-        };
+        let (y_top, y_bot) =
+            stitch_vertical_wall(start.y, end.y, ctx.layout.top_margin, top_wall_h, &h_rows);
         paint_glass_wall_v(ctx.buf, ctx.theme, start.x, y_top, y_bot.min(buf_h - 1));
     }
 
@@ -1257,6 +1282,47 @@ mod tests {
     use pixtuoid_core::sprite::{Frame, Palette};
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn stitch_vertical_wall_connects_each_joint() {
+        let top_margin = 48u16;
+        let top_wall_h = top_margin - 4; // 44
+        let h_y = 90u16; // a horizontal divider row
+        let h_rows = [h_y];
+
+        // Top joint: a segment starting at top_margin rises to the window band.
+        let (yt, _) = stitch_vertical_wall(top_margin, 70, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            yt, top_wall_h,
+            "top segment should connect up to the window band"
+        );
+
+        // Corner joint: a segment ending on the horizontal row extends down by
+        // the horizontal's thickness to fill the inside corner.
+        let (_, yb) = stitch_vertical_wall(60, h_y, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            yb,
+            h_y + (WALL_THICK_H_PX - 1),
+            "bottom should fill the corner"
+        );
+
+        // Bridge-up joint (the dual-meeting case): a segment starting ~6 px
+        // below the cross wall is bridged up to meet it. This branch only fires
+        // on variant-2 floors, so it has no end-to-end render guard.
+        let (yt2, _) = stitch_vertical_wall(h_y + 6, 120, top_margin, top_wall_h, &h_rows);
+        assert_eq!(yt2, h_y, "lower segment should bridge up to the cross wall");
+
+        // No false bridge: a segment well below the tolerance stays put, and a
+        // segment with no joints is returned unchanged.
+        let (yt3, yb3) = stitch_vertical_wall(h_y + 20, 130, top_margin, top_wall_h, &h_rows);
+        assert_eq!(
+            (yt3, yb3),
+            (h_y + 20, 130),
+            "distant segment must not bridge"
+        );
+        let (yt4, yb4) = stitch_vertical_wall(60, 80, top_margin, top_wall_h, &[]);
+        assert_eq!((yt4, yb4), (60, 80), "no joints → unchanged");
+    }
 
     #[test]
     fn glass_wall_h_back_cap_composites_over_a_character_behind_it() {
