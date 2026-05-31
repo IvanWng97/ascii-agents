@@ -15,7 +15,7 @@ pub(super) use lighting::{
     paint_neon_panel, paint_shadow,
 };
 pub(super) use time_of_day::{
-    atmo_attenuation, dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look,
+    dim_floor_overlay, sun_on_wall, sunset_strength, time_of_day_look, weather_light,
     weather_state, TimeOfDayLook, WallSide, Weather,
 };
 
@@ -63,18 +63,32 @@ fn lightning_envelope(since_strike_ms: u64) -> f32 {
     }
 }
 
+/// Per-bucket strike offset (ms into the bucket) so strikes don't fire on a
+/// fixed metronome. Each `LIGHTNING_PERIOD_MS`-long bucket hashes to its own
+/// offset in `[0, PERIOD - FLASH)` (keeping the whole flash inside the bucket),
+/// so inter-strike gaps wander over ~0..2·PERIOD while averaging one PERIOD.
+/// splitmix64 (same mixer as `weather_state`) for a well-distributed offset.
+fn strike_offset(bucket: u64) -> u64 {
+    let mut h = bucket.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    h % (LIGHTNING_PERIOD_MS - LIGHTNING_FLASH_MS)
+}
+
 /// `lightning_envelope` for the current clock, or 0 when not mid-strike.
-/// Shared by the window bolt and the room bounce so they fire together.
+/// Shared by the window bolt and the room bounce so they fire together, and
+/// jittered per `strike_offset` so the cadence reads organic, not clockwork.
 fn lightning_flash_level(now: SystemTime) -> f32 {
     let elapsed_ms = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    let bucket = elapsed_ms / LIGHTNING_PERIOD_MS;
     let phase = elapsed_ms % LIGHTNING_PERIOD_MS;
-    if phase < LIGHTNING_FLASH_MS {
-        lightning_envelope(phase)
-    } else {
-        0.0
+    match phase.checked_sub(strike_offset(bucket)) {
+        Some(since) if since < LIGHTNING_FLASH_MS => lightning_envelope(since),
+        _ => 0.0,
     }
 }
 
@@ -537,12 +551,12 @@ fn paint_floor_to_ceiling_window(
                     }
                 }
             }
-            // The bright on-glass bolt — the strike's source. Shares the
-            // two-pulse flicker envelope + cadence with the room-wide bounce
-            // (paint_lightning_flash) so they fire in lockstep.
-            let flash_phase = elapsed_ms % LIGHTNING_PERIOD_MS;
-            if flash_phase < LIGHTNING_FLASH_MS {
-                let alpha = 0.6 * lightning_envelope(flash_phase);
+            // The bright on-glass bolt — the strike's source. Uses the shared,
+            // jittered flash level so it fires in lockstep with the room-wide
+            // bounce (paint_lightning_flash).
+            let level = lightning_flash_level(now);
+            if level > 0.0 {
+                let alpha = 0.6 * level;
                 for dy in 1..h.saturating_sub(1) {
                     for dx in 1..w.saturating_sub(1) {
                         let px = x + dx;
@@ -698,7 +712,7 @@ fn paint_floor_to_ceiling_window(
     // clouds scatter the direct warm light away (Storm at sunset reaches
     // only ~25% of Clear's strength), Smog amplifies the warm cast by 1.4×
     // for the sodium-lit "Blade Runner" sunset.
-    let atmo = atmo_attenuation(weather);
+    let atmo = weather_light(weather);
     let smog_boost = if matches!(weather, Weather::Smog) {
         1.4
     } else {
@@ -809,21 +823,43 @@ mod tests {
     #[test]
     fn lightning_flash_storm_only_and_mid_strike_only() {
         use std::time::{Duration, UNIX_EPOCH};
-        // phase 0 (strike) vs phase 3000ms (dark gap between strikes).
-        let strike = UNIX_EPOCH + Duration::from_millis(LIGHTNING_PERIOD_MS * 100);
-        let quiet = UNIX_EPOCH + Duration::from_millis(LIGHTNING_PERIOD_MS * 100 + 3000);
+        // Strikes are jittered per bucket, so the flash is at `strike_offset(bucket)`
+        // into the bucket, not phase 0. Pick a low-offset bucket so off+1000 (the
+        // quiet probe) stays inside the same bucket.
+        let bucket = (0u64..)
+            .find(|&b| strike_offset(b) < 500)
+            .expect("a low-offset bucket exists");
+        let off = strike_offset(bucket);
+        let at = |ms: u64| UNIX_EPOCH + Duration::from_millis(bucket * LIGHTNING_PERIOD_MS + ms);
         let mk = || RgbBuffer::filled(8, 4, Rgb(10, 10, 12));
 
         let mut b = mk();
-        paint_lightning_flash(&mut b, strike, Weather::Storm);
+        paint_lightning_flash(&mut b, at(off), Weather::Storm);
         assert!(b.get(0, 0).0 > 10, "storm strike should brighten the room");
 
         let mut b = mk();
-        paint_lightning_flash(&mut b, quiet, Weather::Storm);
+        paint_lightning_flash(&mut b, at(off + 1000), Weather::Storm);
         assert_eq!(b.get(0, 0), Rgb(10, 10, 12), "no flash between strikes");
 
         let mut b = mk();
-        paint_lightning_flash(&mut b, strike, Weather::Clear);
+        paint_lightning_flash(&mut b, at(off), Weather::Clear);
         assert_eq!(b.get(0, 0), Rgb(10, 10, 12), "flash is storm-only");
+    }
+
+    #[test]
+    fn lightning_strikes_are_jittered_not_metronomic() {
+        let offsets: Vec<u64> = (0..24u64).map(strike_offset).collect();
+        let distinct = offsets
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(
+            distinct > 12,
+            "strike offsets should vary across buckets, got {offsets:?}"
+        );
+        // Every offset keeps the whole flash inside its own bucket.
+        assert!(offsets
+            .iter()
+            .all(|&o| o < LIGHTNING_PERIOD_MS - LIGHTNING_FLASH_MS));
     }
 }
