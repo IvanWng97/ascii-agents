@@ -15,7 +15,7 @@
 //! destinations stay in lockstep with the render anchor (all three call
 //! this with the same `origin = home desk`).
 
-use super::decor::WaypointKind;
+use super::decor::{furniture_def, WaypointKind};
 use super::Point;
 use crate::walkable::WalkableMask;
 
@@ -29,36 +29,28 @@ const STAND_SCAN: i32 = 4;
 
 /// Ground-footprint `(w, h)` the walkable mask stamps for a waypoint, or
 /// `None` for slots that add no obstacle (meeting sofa/stand sit on the
-/// sofa/table furniture, already stamped elsewhere). **Single source of
-/// truth** — `mask::build_walkable_mask` and [`stand_point`] both read it,
-/// so the footprint can't drift between the two.
+/// sofa/table furniture, already stamped elsewhere). Reads [`furniture_def`]
+/// — the single source of truth for furniture shape — and special-cases the
+/// one runtime-sized kind (`Pantry`, whose counter scales with terminal width
+/// and so isn't a static table row). Consumed by `mask::build_walkable_mask`
+/// and [`stand_point`], so the footprint can't drift between them.
 pub(super) fn obstacle_footprint(
     kind: WaypointKind,
     pantry_counter_size: (u16, u16),
 ) -> Option<(u16, u16)> {
-    Some(match kind {
-        // 3 seat-waypoints (dx ∈ {-6,0,+6}); 8px each overlaps to the exact
-        // 20px sofa ground footprint. Ground footprint only (top-down rule).
-        WaypointKind::Couch => (8, 7),
-        WaypointKind::Pantry => pantry_counter_size,
-        WaypointKind::PhoneBooth => (6, 12),
-        WaypointKind::StandingDesk => (8, 8),
-        WaypointKind::VendingMachine => (4, 6),
-        WaypointKind::Printer => (5, 4),
-        WaypointKind::MeetingSofa | WaypointKind::MeetingStand => return None,
-    })
+    if matches!(kind, WaypointKind::Pantry) {
+        return Some(pantry_counter_size);
+    }
+    furniture_def(kind).footprint
 }
 
 /// Footprint half-extents `(hx, hy)` for stand-cell resolution, or `None` for
-/// seat furniture (couch and meeting slots) whose `pos` is the seat cell the
-/// sprite sits ON — those pass through `pos` unchanged, no stand resolution.
-/// This `None` set is a superset of `obstacle_footprint`'s: the couch HAS an
-/// obstacle footprint yet is still treated as a seat here.
+/// `occupies_pos` furniture (couch and meeting slots) whose `pos` is the cell
+/// the agent occupies ON the furniture — those pass through `pos` unchanged,
+/// no stand resolution. Gated on [`furniture_def`]`.occupies_pos`, a superset
+/// of `footprint.is_none()`: the couch HAS a footprint yet occupies its `pos`.
 fn half_extents(kind: WaypointKind, pantry_counter_size: (u16, u16)) -> Option<(u16, u16)> {
-    if matches!(
-        kind,
-        WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand
-    ) {
+    if furniture_def(kind).occupies_pos {
         return None;
     }
     obstacle_footprint(kind, pantry_counter_size).map(|(w, h)| (w / 2, h / 2))
@@ -269,5 +261,101 @@ mod tests {
         );
         assert!(m.is_walkable(s.x, s.y));
         assert!(s.y > pos.y, "only south is open, got {s:?}");
+    }
+
+    // ── furniture_def single-source-of-truth invariants ────────────────────
+    // These iterate `WaypointKind::ALL` so re-introducing a hardcoded shape
+    // number or breaking a derivation fails here, not as a silent visual bug.
+
+    #[test]
+    fn def_footprint_matches_obstacle_footprint() {
+        // furniture_def is the SoT; obstacle_footprint must agree for every
+        // non-Pantry kind (Pantry is runtime-sized → special-cased).
+        let dummy = (32u16, 10u16);
+        for &kind in WaypointKind::ALL {
+            if kind == WaypointKind::Pantry {
+                continue;
+            }
+            assert_eq!(
+                furniture_def(kind).footprint,
+                obstacle_footprint(kind, dummy),
+                "{kind:?}: furniture_def.footprint must equal obstacle_footprint",
+            );
+        }
+    }
+
+    #[test]
+    fn occupies_pos_is_exactly_the_seat_kinds() {
+        for &kind in WaypointKind::ALL {
+            let expected = matches!(
+                kind,
+                WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand
+            );
+            assert_eq!(
+                furniture_def(kind).occupies_pos,
+                expected,
+                "{kind:?}: occupies_pos must be true iff the agent occupies pos directly",
+            );
+        }
+    }
+
+    #[test]
+    fn approachable_obstacle_resolves_half_extents() {
+        let dummy = (32u16, 10u16);
+        for &kind in WaypointKind::ALL {
+            let def = furniture_def(kind);
+            let has_footprint = def.footprint.is_some() || kind == WaypointKind::Pantry;
+            if has_footprint && !def.occupies_pos {
+                assert!(
+                    half_extents(kind, dummy).is_some(),
+                    "{kind:?}: an approachable obstacle must resolve half-extents",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dwell_range_is_nonzero() {
+        // pose::dwell_ms does `% range.max(1)`; a zero range would silently
+        // collapse the jitter. Keep every row's range positive.
+        for &kind in WaypointKind::ALL {
+            assert!(
+                furniture_def(kind).dwell.1 > 0,
+                "{kind:?}: dwell range must be > 0",
+            );
+        }
+    }
+
+    #[test]
+    fn pod_decor_size_matches_furniture_def_footprint() {
+        use crate::layout::PodDecor;
+        for (pod, wp) in [
+            (PodDecor::PhoneBooth, WaypointKind::PhoneBooth),
+            (PodDecor::StandingDesk, WaypointKind::StandingDesk),
+        ] {
+            assert_eq!(
+                Some(pod.size()),
+                furniture_def(wp).footprint,
+                "{pod:?}/{wp:?}: PodDecor::size must equal the furniture_def footprint",
+            );
+        }
+    }
+
+    #[test]
+    fn waypoint_kind_all_is_unique_and_complete() {
+        use std::collections::HashSet;
+        let set: HashSet<_> = WaypointKind::ALL.iter().copied().collect();
+        assert_eq!(
+            set.len(),
+            WaypointKind::ALL.len(),
+            "ALL contains duplicates"
+        );
+        // furniture_def's match is compiler-forced exhaustive; this count
+        // catches a new variant that was added there but not to ALL.
+        assert_eq!(
+            WaypointKind::ALL.len(),
+            8,
+            "a WaypointKind variant was added/removed — update ALL",
+        );
     }
 }

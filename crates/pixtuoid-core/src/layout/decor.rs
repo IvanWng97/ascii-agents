@@ -30,6 +30,107 @@ pub enum WaypointKind {
     MeetingStand,
 }
 
+/// Footprints for the two kinds that appear in BOTH `WaypointKind` (wander
+/// destination) and `PodDecor` (aisle decor). Declared once so the mask
+/// stamp and the wander-approach geometry read the same number and can't
+/// drift apart. Referenced by both [`furniture_def`] and [`PodDecor::size`].
+pub(crate) const PHONE_BOOTH_FOOTPRINT: (u16, u16) = (6, 12);
+pub(crate) const STANDING_DESK_FOOTPRINT: (u16, u16) = (8, 8);
+
+/// Definition record for a waypoint-addressable furniture kind — the single
+/// source of truth for its ground shape, occupancy semantics, and dwell.
+/// Reshaping a piece of furniture is editing ONE row of [`furniture_def`];
+/// the walkable mask, stand-point, hit-test hitbox, and the render depth
+/// baseline all DERIVE from these fields, so they cannot drift. Render-only
+/// choices (sprite name, back-cap policy) deliberately stay in the tui crate
+/// — `pixtuoid-core` has no terminal deps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FurnitureDef {
+    /// Ground footprint `(w, h)` the walkable mask stamps (top-down z=0
+    /// rect), or `None` for slots that add no obstacle of their own
+    /// (MeetingSofa/MeetingStand sit on sofa/table furniture stamped
+    /// elsewhere). NB: `Pantry` is also `None` here because its footprint is
+    /// runtime-sized (`pantry_counter_size`); `obstacle_footprint`
+    /// special-cases it — the one kind whose shape isn't a static literal.
+    pub footprint: Option<(u16, u16)>,
+    /// The agent occupies `pos` DIRECTLY (sprite renders ON the furniture),
+    /// so `stand_point` passes `pos` through unchanged instead of resolving a
+    /// walkable cell beside the furniture (A* then snaps the walk adjacent).
+    /// NOT "a human can sit here": `MeetingStand` is *standing* yet sets this
+    /// true (the agent still occupies its `pos`). Opposite case (Pantry/
+    /// vending/printer/phone-booth/standing-desk): `pos` = blocked obstacle
+    /// CENTER, approached from a side. True set: {Couch, MeetingSofa,
+    /// MeetingStand}. (Desks are NOT rows here — home workstation is separate.)
+    pub occupies_pos: bool,
+    /// Per-spot idle dwell window `(base_ms, range_ms)`. Invariant: range > 0
+    /// (a zero range would divide-by-zero in `pose::dwell_ms`).
+    pub dwell: (u64, u64),
+}
+
+impl WaypointKind {
+    /// Every variant, for exhaustive invariant tests (mirrors
+    /// [`PodDecor::ALL`]). Iteration-only — order is not load-bearing.
+    pub const ALL: &'static [WaypointKind] = &[
+        WaypointKind::Couch,
+        WaypointKind::Pantry,
+        WaypointKind::PhoneBooth,
+        WaypointKind::StandingDesk,
+        WaypointKind::VendingMachine,
+        WaypointKind::Printer,
+        WaypointKind::MeetingSofa,
+        WaypointKind::MeetingStand,
+    ];
+}
+
+/// THE furniture table — one row per kind, the single source of truth for
+/// ground shape + occupancy + dwell. Every geometric dependent (mask,
+/// stand-point half-extents, hit-test size, render depth baseline) derives
+/// from `footprint`; do not re-type these numbers anywhere else.
+pub const fn furniture_def(kind: WaypointKind) -> FurnitureDef {
+    match kind {
+        WaypointKind::Couch => FurnitureDef {
+            footprint: Some((8, 7)),
+            occupies_pos: true,
+            dwell: (20_000, 20_000),
+        },
+        WaypointKind::Pantry => FurnitureDef {
+            footprint: None, // runtime-sized — see obstacle_footprint
+            occupies_pos: false,
+            dwell: (10_000, 8_000),
+        },
+        WaypointKind::PhoneBooth => FurnitureDef {
+            footprint: Some(PHONE_BOOTH_FOOTPRINT),
+            occupies_pos: false,
+            dwell: (8_000, 22_000),
+        },
+        WaypointKind::StandingDesk => FurnitureDef {
+            footprint: Some(STANDING_DESK_FOOTPRINT),
+            occupies_pos: false,
+            dwell: (8_000, 22_000),
+        },
+        WaypointKind::VendingMachine => FurnitureDef {
+            footprint: Some((4, 6)),
+            occupies_pos: false,
+            dwell: (4_000, 4_000),
+        },
+        WaypointKind::Printer => FurnitureDef {
+            footprint: Some((5, 4)),
+            occupies_pos: false,
+            dwell: (4_000, 4_000),
+        },
+        WaypointKind::MeetingSofa => FurnitureDef {
+            footprint: None,
+            occupies_pos: true,
+            dwell: (20_000, 20_000),
+        },
+        WaypointKind::MeetingStand => FurnitureDef {
+            footprint: None,
+            occupies_pos: true,
+            dwell: (20_000, 20_000),
+        },
+    }
+}
+
 /// Which way a waypoint occupant faces. Drives sprite choice (back vs
 /// front view) and horizontal mirroring at render time. Most waypoints
 /// are `South` (facing the viewer / facing-neutral); meeting-room slots
@@ -123,8 +224,10 @@ impl PodDecor {
             PodDecor::PlantTall => (6, 10),
             PodDecor::Whiteboard => (14, 11),
             PodDecor::Tv => (10, 10),
-            PodDecor::PhoneBooth => (6, 12),
-            PodDecor::StandingDesk => (8, 8),
+            // Shared with the WaypointKind footprint (these two are ALSO wander
+            // destinations) so the mask stamp can't drift between the two enums.
+            PodDecor::PhoneBooth => PHONE_BOOTH_FOOTPRINT,
+            PodDecor::StandingDesk => STANDING_DESK_FOOTPRINT,
         }
     }
 }

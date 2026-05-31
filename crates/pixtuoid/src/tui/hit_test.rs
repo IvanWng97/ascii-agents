@@ -110,7 +110,9 @@ pub fn hit_test_coffee_machine(layout: &Layout, mx: u16, my: u16) -> bool {
 /// The coffee machine is handled separately for its click-to-open
 /// behavior — this function covers the remaining decorations.
 pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static str> {
-    use crate::tui::layout::{PlantKind, PodDecor, WallDecor, WaypointKind, DESK_H, DESK_W};
+    use crate::tui::layout::{
+        furniture_def, PlantKind, PodDecor, WallDecor, WaypointKind, DESK_H, DESK_W,
+    };
     let px = mx;
     let py = my * 2;
 
@@ -140,12 +142,14 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
             // Couch hovers via the one-time region above (3 seat waypoints).
             WaypointKind::Couch => continue,
             WaypointKind::Pantry => layout.pantry_counter_size,
-            WaypointKind::PhoneBooth => (6, 12),
-            WaypointKind::StandingDesk => (8, 8),
-            WaypointKind::VendingMachine => (4, 6),
-            WaypointKind::Printer => (5, 4),
             // Meeting slots hover via the dedicated meeting_sofas loop below.
             WaypointKind::MeetingSofa | WaypointKind::MeetingStand => continue,
+            // Footprint owned by furniture_def — same shape the mask + stand
+            // point use, so the hover box can't drift from them.
+            other => match furniture_def(other).footprint {
+                Some(fp) => fp,
+                None => continue,
+            },
         };
         let wx = wp.pos.x.saturating_sub(w / 2);
         let wy = wp.pos.y.saturating_sub(h / 2);

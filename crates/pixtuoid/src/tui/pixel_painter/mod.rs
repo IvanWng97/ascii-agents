@@ -961,7 +961,11 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // drawables below (they ARE the decor). The lounge couch is emitted once
     // above (it spans 3 seat waypoints).
     for wp in &ctx.layout.waypoints {
-        use crate::tui::layout::WaypointKind;
+        use crate::tui::layout::{furniture_def, WaypointKind};
+        // Depth (y-sort) baseline = the footprint's south/front edge =
+        // pos.y + footprint.h/2. Derived from furniture_def so it can't drift
+        // from the mask/stand-point footprint (was hand-typed +3 / +2 / +ch/2).
+        let footprint_h = furniture_def(wp.kind).footprint.map_or(0, |(_, h)| h);
         match wp.kind {
             WaypointKind::Couch => {}
             WaypointKind::Pantry => {
@@ -977,13 +981,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             WaypointKind::PhoneBooth | WaypointKind::StandingDesk => {}
             WaypointKind::VendingMachine => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + 3,
+                    anchor_y: wp.pos.y + footprint_h / 2,
                     kind: DrawableKind::VendingMachine { pos: wp.pos },
                 });
             }
             WaypointKind::Printer => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + 2,
+                    anchor_y: wp.pos.y + footprint_h / 2,
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
@@ -1839,6 +1843,32 @@ mod tests {
             front_sofa_anchor_y <= sitter_anchor_y,
             "front-view sofa must not sort after its sitter: \
              sofa={front_sofa_anchor_y}, sitter={sitter_anchor_y}"
+        );
+    }
+
+    #[test]
+    fn waypoint_depth_baseline_derives_from_footprint() {
+        use crate::tui::layout::{furniture_def, WaypointKind};
+        // The waypoint z-sort key is pos.y + footprint.h/2 (the ground front
+        // edge), now DERIVED from furniture_def rather than hand-typed. These
+        // were the historical literals (+3 vending, +2 printer); assert the
+        // derivation still yields them, so a footprint edit that would shift
+        // z-order surfaces here instead of as a visual layering bug.
+        assert_eq!(
+            furniture_def(WaypointKind::VendingMachine)
+                .footprint
+                .expect("vending has a footprint")
+                .1
+                / 2,
+            3,
+        );
+        assert_eq!(
+            furniture_def(WaypointKind::Printer)
+                .footprint
+                .expect("printer has a footprint")
+                .1
+                / 2,
+            2,
         );
     }
 
