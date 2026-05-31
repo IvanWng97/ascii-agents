@@ -81,9 +81,11 @@ pub(in crate::tui::pixel_painter) fn weather_light(w: Weather) -> WeatherLight {
         // Thick cloud: diffuse only, dull night.
         Weather::Overcast => (0.45, 0.0, 0.22),
         // Daytime storm lifted from 0.25 (read as dusk) to a gloomy-but-clearly-
-        // daytime 0.42, just under Overcast so it stays the heaviest sky. Fully
-        // diffuse (no beam); darkest night (no moon) — the lightning flash is
-        // the only punch.
+        // daytime 0.42 (just under Overcast). Deliberately a hair ABOVE plain
+        // Rain (0.40): the lightning flash repeatedly lifts a storm's perceived
+        // average brightness above uniformly-gloomy steady rain. Fully diffuse
+        // (no beam); darkest night of all (no moon) — lightning is the only punch.
+        // The Storm>Rain ordering is guarded by `atmo_storm_brighter_than_rain_by_design`.
         Weather::Storm => (0.42, 0.0, 0.12),
         // Steady rain: dark diffuse, dark night.
         Weather::Rain => (0.40, 0.0, 0.18),
@@ -448,6 +450,18 @@ mod tests {
     fn atmo_storm_dimmer_than_overcast() {
         assert!(
             weather_light(Weather::Storm).intensity < weather_light(Weather::Overcast).intensity
+        );
+    }
+
+    #[test]
+    fn atmo_storm_brighter_than_rain_by_design() {
+        // Counterintuitive but intentional: Storm (0.42) sits a hair ABOVE plain
+        // Rain (0.40) because the lightning flash repeatedly lifts a storm's
+        // perceived average brightness above uniformly-gloomy steady rain. Guard
+        // it so a future intensity tune doesn't silently re-invert the ordering.
+        assert!(
+            weather_light(Weather::Storm).intensity > weather_light(Weather::Rain).intensity,
+            "storm.intensity must exceed rain.intensity (lightning raises the average)"
         );
     }
 
