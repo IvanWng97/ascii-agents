@@ -95,10 +95,15 @@ async fn run_async(
     }
 
     let (tx, rx) = mpsc::channel::<(Transport, AgentEvent)>(256);
-    let boot_caps: [usize; MAX_FLOORS] = match desk_cap {
-        Some(cap) => [cap; MAX_FLOORS],
-        None if headless => [FALLBACK_DESKS; MAX_FLOORS],
-        None => compute_boot_capacities(),
+    let boot_caps: [usize; MAX_FLOORS] = match (desk_cap, headless) {
+        // Headless: no terminal to measure. Honor the cap as-is, else the fallback.
+        (Some(cap), true) => [cap; MAX_FLOORS],
+        (None, true) => [FALLBACK_DESKS; MAX_FLOORS],
+        // Interactive: measure the real per-floor layout capacity FIRST, then clamp
+        // to the optional cap. Clamping (not `[cap; _]`) keeps the boot atomics from
+        // being seeded above the layout's real capacity — `fetch_max` only grows, so
+        // an over-seed strands agents on non-existent desks until the terminal grows.
+        (cap, false) => cap_boot_capacities(compute_boot_capacities(), cap),
     };
     let (scene_tx, scene_rx) = watch::channel(Arc::new(SceneState::new(boot_caps)));
 
@@ -213,6 +218,17 @@ pub(crate) fn boot_capacities_for(cols: u16, rows: u16) -> [usize; MAX_FLOORS] {
             cap
         }
     })
+}
+
+/// Clamp each per-floor boot capacity to an optional `--max-desks` cap. Returns
+/// `min(layout_capacity, cap)` per floor so the boot atomics are never seeded
+/// above the real layout capacity (`fetch_max` only grows; an over-seed strands
+/// agents on non-existent desks until the terminal grows). `None` is a no-op.
+fn cap_boot_capacities(base: [usize; MAX_FLOORS], cap: Option<usize>) -> [usize; MAX_FLOORS] {
+    match cap {
+        Some(c) => base.map(|x| x.min(c)),
+        None => base,
+    }
 }
 
 pub(crate) fn capacity_for_terminal(cols: u16, rows: u16, floor_seed: u64) -> usize {
@@ -338,5 +354,25 @@ mod tests {
     fn boot_capacities_falls_back_to_default_on_tiny_terminal() {
         let caps = boot_capacities_for(10, 10);
         assert_eq!(caps, [FALLBACK_DESKS; MAX_FLOORS]);
+    }
+
+    // Regression: an explicit --max-desks must CLAMP each floor to the real
+    // layout capacity, never seed a floor ABOVE it. The boot atomics grow via
+    // fetch_max only, so an over-seed (the old `[cap; MAX_FLOORS]` path) strands
+    // agents on non-existent desks on small terminals until the terminal grows.
+    #[test]
+    fn explicit_cap_clamps_to_layout_capacity_not_above() {
+        let base = boot_capacities_for(192, 48);
+        let layout_max = *base.iter().max().unwrap();
+        // A cap far above the layout must NOT inflate any floor.
+        assert_eq!(
+            cap_boot_capacities(base, Some(layout_max + 100)),
+            base,
+            "cap above layout capacity must clamp down to the layout, not inflate"
+        );
+        // A cap of 1 clamps every floor to at most 1.
+        assert!(cap_boot_capacities(base, Some(1)).iter().all(|&c| c <= 1));
+        // No cap leaves the base untouched.
+        assert_eq!(cap_boot_capacities(base, None), base);
     }
 }

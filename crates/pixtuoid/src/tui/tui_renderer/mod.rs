@@ -423,6 +423,12 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
             };
 
             if scene_rect.width < 20 || scene_rect.height < 12 {
+                // Too small to render this frame: clear the interaction state the
+                // mouse handler reads, so a click doesn't hit-test against a stale
+                // layout / pet / popup left over from a larger prior frame.
+                self.cached_layout = None;
+                self.last_pet_pos = None;
+                self.last_popup_scale = 0.0;
                 return Ok(());
             }
 
@@ -587,6 +593,10 @@ impl<B: Backend<Error: Send + Sync + 'static>> Renderer for TuiRenderer<B> {
 
             self.last_popup_scale = popup_scale;
             self.cached_layout = None;
+            // The pet isn't rendered to a single interactable position mid-slide;
+            // clear the stale position so the mouse handler can't "pet" a ghost at
+            // last frame's location during the transition.
+            self.last_pet_pos = None;
             return Ok(());
         }
 

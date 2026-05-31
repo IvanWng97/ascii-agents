@@ -153,6 +153,22 @@ mod tests {
         assert!(SceneLayout::compute(20, 20, 4).is_none());
     }
 
+    // Regression: the percentage math (`buf_h * 30`, `buf_w * 35`, …) used bare
+    // u16 multiplies that overflow once a dimension exceeds ~1872–2184. On an
+    // absurdly large terminal a debug build PANICKED (overflow check) and release
+    // silently WRAPPED to a garbage layout. pct() now computes in u32.
+    #[test]
+    fn compute_does_not_overflow_on_huge_terminal() {
+        for &seed in &[0u64, 1, 2, 3, 4] {
+            // 4000×4000 px buffer → buf_h*30 = 120_000, well past u16::MAX.
+            let l = SceneLayout::compute_with_seed(4000, 4000, MAX_VISIBLE_DESKS, seed);
+            assert!(
+                l.is_some(),
+                "huge terminal (seed {seed}) must lay out, not overflow"
+            );
+        }
+    }
+
     #[test]
     fn compute_returns_none_at_exact_boundary() {
         let min_w = DESK_W + DESK_GAP_X * 2; // 34
@@ -335,6 +351,28 @@ mod tests {
                         );
                     }
                     _ => {}
+                }
+            }
+        }
+    }
+
+    // Regression: the WEST MeetingStand point used to land on the table's padded
+    // obstacle (blocked x ∈ [t.x-8, t.x+7]; the symmetric -8 hit the inclusive
+    // left edge), so the router had to snap it off-target. Both stands must be on
+    // walkable cells across seeds/sizes.
+    #[test]
+    fn meeting_stand_points_are_walkable() {
+        for seed in 0..40u64 {
+            for (w, h) in [(160u16, 120u16), (200, 100), (240, 140)] {
+                let l = SceneLayout::compute_with_seed(w, h, 8, seed).expect("fits");
+                for wp in &l.waypoints {
+                    if wp.kind == WaypointKind::MeetingStand {
+                        assert!(
+                            l.is_walkable(wp.pos.x, wp.pos.y),
+                            "seed {seed} @ {w}x{h}: MeetingStand {:?} is non-walkable",
+                            wp.pos
+                        );
+                    }
                 }
             }
         }

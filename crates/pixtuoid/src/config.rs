@@ -29,19 +29,23 @@ pub struct AppConfig {
 
 pub fn resolve_pack_dir(config: &AppConfig, cli_pack_dir: Option<PathBuf>) -> Option<PathBuf> {
     cli_pack_dir.or_else(|| {
-        config.pack_dir.as_ref().map(|p| {
-            let expanded = if p.starts_with('~') {
-                if let Ok(home) = std::env::var("HOME") {
-                    p.replacen('~', &home, 1)
-                } else {
-                    p.clone()
-                }
-            } else {
-                p.clone()
-            };
-            PathBuf::from(expanded)
-        })
+        config
+            .pack_dir
+            .as_ref()
+            .map(|p| PathBuf::from(expand_tilde(p, std::env::var("HOME").ok().as_deref())))
     })
+}
+
+/// Expand a leading `~` (current user's home) in a path string. Only `~` alone
+/// and a `~/`-prefixed path are expanded — `~user/...` is left untouched (we
+/// don't resolve other users' homes) and a non-leading `~` is never replaced.
+/// With no `home`, the input is returned unchanged.
+fn expand_tilde(p: &str, home: Option<&str>) -> String {
+    match home {
+        Some(h) if p == "~" => h.to_string(),
+        Some(h) if p.starts_with("~/") => format!("{h}{}", &p[1..]),
+        _ => p.to_string(),
+    }
 }
 
 pub fn config_path() -> PathBuf {
@@ -164,6 +168,22 @@ mod tests {
     fn load_missing_returns_defaults() {
         let cfg = load(Path::new("/nonexistent/path/config.toml"));
         assert!(cfg.theme.is_none());
+    }
+
+    #[test]
+    fn expand_tilde_only_expands_leading_current_user_home() {
+        let home = Some("/Users/x");
+        // ~ alone and ~/ prefix expand.
+        assert_eq!(expand_tilde("~", home), "/Users/x");
+        assert_eq!(expand_tilde("~/packs/robot", home), "/Users/x/packs/robot");
+        // ~user/ is another user's home — leave it alone (don't produce /Users/xuser/).
+        assert_eq!(expand_tilde("~user/p", home), "~user/p");
+        // A non-leading ~ must never be replaced.
+        assert_eq!(expand_tilde("rel/~/x", home), "rel/~/x");
+        // Absolute / relative paths pass through untouched.
+        assert_eq!(expand_tilde("/abs/p", home), "/abs/p");
+        // No HOME → input returned unchanged.
+        assert_eq!(expand_tilde("~/p", None), "~/p");
     }
 
     #[test]

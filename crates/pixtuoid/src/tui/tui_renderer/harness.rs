@@ -444,6 +444,37 @@ fn too_small_terminal_returns_no_layout_no_panic() {
     );
 }
 
+// Regression: an in-flight floor transition used to leave `last_pet_pos` stale
+// from the previous normal frame, so the mouse handler could "pet" a ghost at
+// last frame's location mid-slide. The transition path must clear it.
+#[test]
+fn floor_transition_clears_stale_pet_position() {
+    let cap = 16;
+    let mut scene = SceneState::uniform(cap);
+    let a = AgentId::from_transcript_path("/pettrans/f0.jsonl");
+    let b = AgentId::from_transcript_path("/pettrans/f1.jsonl");
+    scene.agents.insert(a, slot(a, 0, 0, t0()));
+    scene.agents.insert(b, slot(b, 1, cap, t0())); // floor 1 ⇒ navigate_floor(1) valid
+
+    let mut r = build(100, 40, vec![PetKind::Cat]);
+    let mut now = t0();
+    for _ in 0..3 {
+        r.render(&scene, &pack(), now).expect("render");
+        now += Duration::from_millis(33);
+    }
+    assert!(
+        r.cached_pet_pos().is_some(),
+        "a pet should be drawn on the normal floor-0 frame"
+    );
+
+    r.navigate_floor(1, now);
+    r.render(&scene, &pack(), now).expect("render"); // single in-flight transition frame
+    assert!(
+        r.cached_pet_pos().is_none(),
+        "an in-flight floor transition must clear the stale pet position"
+    );
+}
+
 // ===================================================================
 // Coffee state
 // ===================================================================

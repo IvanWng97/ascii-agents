@@ -315,9 +315,30 @@ fn run_each(
     Ok(())
 }
 
+/// Resolve the hook binary for a target. An explicit `--hook-path` always wins.
+/// Otherwise `locate` tries to find `pixtuoid-hook`; if that fails we only hard-error
+/// for targets that EMBED the path (`needs_resolved_binary`, e.g. Codex). Targets
+/// that write the bare name and rely on PATH (Claude) fall back to the bare name so
+/// a fresh-machine install still succeeds — the PATH warning in `run_install` covers
+/// the not-yet-on-PATH case.
+fn resolve_hook_binary(
+    t: &Target,
+    hook_path: Option<PathBuf>,
+    locate: impl FnOnce() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(p) = hook_path {
+        return Ok(p);
+    }
+    match locate() {
+        Ok(p) => Ok(p),
+        Err(e) if t.needs_resolved_binary => Err(e),
+        Err(_) => Ok(PathBuf::from("pixtuoid-hook")),
+    }
+}
+
 fn run_install(t: &Target, config: Option<PathBuf>, hook_path: Option<PathBuf>) -> Result<()> {
     let path = config.unwrap_or_else(|| (t.default_config_path)());
-    let binary = hook_path.map(Ok).unwrap_or_else(io::default_hook_binary)?;
+    let binary = resolve_hook_binary(t, hook_path, io::default_hook_binary)?;
     let hook_cmd = (t.hook_command)(&binary)?;
     let content = io::read_config(&path)?;
     let outcome = (t.merge_install)(&content, &hook_cmd)
@@ -392,7 +413,7 @@ fn run_uninstall(t: &Target, config: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::install::target::{MergeOutcome, Target, CLAUDE};
+    use crate::install::target::{MergeOutcome, Target, CLAUDE, CODEX};
 
     // A second fake target for "both present" rows (avoids depending on Phase 2's CODEX).
     static FAKE: Target = Target {
@@ -414,11 +435,39 @@ mod tests {
             })
         },
         needs_path_warning: false,
+        needs_resolved_binary: false,
         post_install_note: None,
     };
 
     fn present(claude: bool, fake: bool) -> Vec<(&'static Target, bool)> {
         vec![(&CLAUDE, claude), (&FAKE, fake)]
+    }
+
+    #[test]
+    fn resolve_hook_binary_explicit_path_wins() {
+        // --hook-path always short-circuits resolution (locate is never called).
+        let got = resolve_hook_binary(&CLAUDE, Some(PathBuf::from("/x/hook")), || {
+            panic!("locate must not be called when --hook-path is given")
+        });
+        assert_eq!(got.unwrap(), PathBuf::from("/x/hook"));
+    }
+
+    #[test]
+    fn resolve_hook_binary_claude_falls_back_to_bare_name_when_unresolvable() {
+        // Regression: a fresh-machine `install-hooks` hard-failed when pixtuoid-hook
+        // wasn't yet on PATH. Claude writes the bare name and relies on PATH, so an
+        // unresolvable binary must fall back to the bare name (the PATH warning covers
+        // the not-found case), NOT abort the install.
+        let got = resolve_hook_binary(&CLAUDE, None, || Err(anyhow::anyhow!("could not locate")));
+        assert_eq!(got.unwrap(), PathBuf::from("pixtuoid-hook"));
+    }
+
+    #[test]
+    fn resolve_hook_binary_codex_errors_when_unresolvable() {
+        // Codex embeds the absolute path in the command, so an unresolvable binary
+        // is genuinely fatal for that target.
+        let got = resolve_hook_binary(&CODEX, None, || Err(anyhow::anyhow!("could not locate")));
+        assert!(got.is_err());
     }
 
     #[test]

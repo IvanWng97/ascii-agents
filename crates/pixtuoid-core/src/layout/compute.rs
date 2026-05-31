@@ -5,6 +5,15 @@
 use super::mask;
 use super::*;
 
+/// `n`% of a dimension, computed in u32 to avoid u16 overflow on very large
+/// terminals — a bare `buf_h * 30` overflows u16 once `buf_h > 2184` (and the
+/// derived sub-region multiplies overflow at the same extreme sizes). Truncating
+/// division, matching the original `v * n / 100`.
+#[inline]
+fn pct(v: u16, n: u16) -> u16 {
+    ((v as u32 * n as u32) / 100) as u16
+}
+
 pub(super) fn compute_with_seed(
     buf_w: u16,
     buf_h: u16,
@@ -17,7 +26,7 @@ pub(super) fn compute_with_seed(
         return None;
     }
 
-    let top_margin = (buf_h * 30 / 100).max(MIN_TOP_MARGIN);
+    let top_margin = pct(buf_h, 30).max(MIN_TOP_MARGIN);
     let usable_h = buf_h - top_margin;
 
     // Per-floor layout variant: floor_seed encodes floor_idx via
@@ -36,11 +45,11 @@ pub(super) fn compute_with_seed(
     // F4(3): Senior — larger meeting + pantry (like Standard but wider).
     // F5(4): Lounge — pantry only, no vertical wall (open break area).
     let (mid_x, has_meeting, has_pantry) = match floor_variant {
-        0 => (buf_w * 28 / 100, true, true),
-        1 => (buf_w * 18 / 100, false, true),
-        2 => (buf_w * 22 / 100, true, false),
-        3 => (buf_w * 35 / 100, true, true),
-        _ => (buf_w * 22 / 100, false, true),
+        0 => (pct(buf_w, 28), true, true),
+        1 => (pct(buf_w, 18), false, true),
+        2 => (pct(buf_w, 22), true, false),
+        3 => (pct(buf_w, 35), true, true),
+        _ => (pct(buf_w, 22), false, true),
     };
     // Open-plan floors (1, 4) have no vertical wall — the pantry
     // counter/furniture visually defines the zone boundary.
@@ -159,11 +168,11 @@ pub(super) fn compute_with_seed(
     const SOFA_H: u16 = 7;
     let mut meeting_sofas = if let Some(mr) = meeting_room {
         let cx = mr.x + mr.width / 2;
-        let south_y = (mr.y + mr.height * 80 / 100).min(mr.y + mr.height.saturating_sub(SOFA_H));
+        let south_y = (mr.y + pct(mr.height, 80)).min(mr.y + mr.height.saturating_sub(SOFA_H));
         vec![
             Point {
                 x: cx,
-                y: mr.y + mr.height * 30 / 100,
+                y: mr.y + pct(mr.height, 30),
             },
             Point { x: cx, y: south_y },
         ]
@@ -180,10 +189,10 @@ pub(super) fn compute_with_seed(
     // Second meeting room furniture (dense layout).
     if let Some(mr2) = meeting_room_2 {
         let cx2 = mr2.x + mr2.width / 2;
-        let south2 = (mr2.y + mr2.height * 80 / 100).min(mr2.y + mr2.height.saturating_sub(SOFA_H));
+        let south2 = (mr2.y + pct(mr2.height, 80)).min(mr2.y + mr2.height.saturating_sub(SOFA_H));
         meeting_sofas.push(Point {
             x: cx2,
-            y: mr2.y + mr2.height * 30 / 100,
+            y: mr2.y + pct(mr2.height, 30),
         });
         meeting_sofas.push(Point { x: cx2, y: south2 });
         meeting_table_vec.push(Point {
@@ -214,7 +223,7 @@ pub(super) fn compute_with_seed(
     };
 
     let couch_y = top_margin + 3;
-    let couch_x = cubicle_band.x + cubicle_band.width * 35 / 100;
+    let couch_x = cubicle_band.x + pct(cubicle_band.width, 35);
 
     let waypoints = compute_waypoints(
         &cubicle_band,
@@ -351,7 +360,7 @@ pub(super) fn compute_with_seed(
         (
             WallDecor::Bookshelf,
             Point {
-                x: buf_w * 18 / 100,
+                x: pct(buf_w, 18),
                 y: top_margin.saturating_sub(12),
             },
         ),
@@ -383,8 +392,8 @@ pub(super) fn compute_with_seed(
     }
 
     let (pantry_table, pantry_chairs) = if let Some(pr) = pantry_room {
-        let tx = pr.x + pr.width * 25 / 100;
-        let ty = pr.y + pr.height * 25 / 100;
+        let tx = pr.x + pct(pr.width, 25);
+        let ty = pr.y + pct(pr.height, 25);
         (
             Some(Point { x: tx, y: ty }),
             vec![
@@ -717,7 +726,7 @@ pub(super) fn compute_room_walls(
     }
     // Horizontal wall: separates meeting from pantry, or two meetings.
     let h_y = mid_y_split;
-    let h_door_center = mid_x * 60 / 100;
+    let h_door_center = pct(mid_x, 60);
     let h_door_left = h_door_center.saturating_sub(DOOR_GAP_H / 2);
     let h_door_right = (h_door_center + DOOR_GAP_H / 2).min(mid_x);
     if (has_meeting && has_pantry) || has_dual_meeting {
@@ -755,7 +764,7 @@ pub(super) fn compute_waypoints(
     meeting_tables: &[Point],
 ) -> Vec<Waypoint> {
     let couch_y = top_margin + 3;
-    let couch_x = cubicle_band.x + cubicle_band.width * 35 / 100;
+    let couch_x = cubicle_band.x + pct(cubicle_band.width, 35);
     let mut waypoints: Vec<Waypoint> = vec![Waypoint {
         pos: Point {
             x: couch_x,
@@ -772,14 +781,11 @@ pub(super) fn compute_waypoints(
         let half_cw = pantry_counter_size.0 / 2;
         let max_cx = pr.x + pr.width.saturating_sub(half_cw + 1);
         let (wx, wy) = if pantry_counter_size.0 >= 32 {
-            (
-                (pr.x + pr.width / 2).min(max_cx),
-                pr.y + pr.height * 65 / 100,
-            )
+            ((pr.x + pr.width / 2).min(max_cx), pr.y + pct(pr.height, 65))
         } else {
             (
-                (pr.x + pr.width * 60 / 100).min(max_cx),
-                pr.y + pr.height * 60 / 100,
+                (pr.x + pct(pr.width, 60)).min(max_cx),
+                pr.y + pct(pr.height, 60),
             )
         };
         waypoints.push(Waypoint {
@@ -875,7 +881,12 @@ pub(super) fn compute_waypoints(
     }
     for (room_id, table) in meeting_tables.iter().enumerate() {
         // West stand faces East (toward the table centre); east stand faces West.
-        for (dx, facing) in [(-8i16, Facing::East), (8, Facing::West)] {
+        // The table obstacle (mask.rs) is `mark_blocked(t.x-6, w=12, pad=2)` →
+        // blocks x ∈ [t.x-8, t.x+7]. It is NOT centred on t.x (6 left, 5 right),
+        // so a symmetric ±8 puts the WEST point on the inclusive left edge (t.x-8 →
+        // non-walkable, router has to snap it). Offset the west stand one px further
+        // out (t.x-9) so both stands land on walkable cells. East (t.x+8) already clears.
+        for (dx, facing) in [(-9i16, Facing::East), (8, Facing::West)] {
             waypoints.push(Waypoint {
                 pos: Point {
                     x: table.x.saturating_add_signed(dx),

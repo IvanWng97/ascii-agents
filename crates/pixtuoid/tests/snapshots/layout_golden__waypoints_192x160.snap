@@ -85,7 +85,7 @@ expression: l.waypoints
     },
     Waypoint {
         pos: Point {
-            x: 18,
+            x: 17,
             y: 76,
         },
         kind: MeetingStand,

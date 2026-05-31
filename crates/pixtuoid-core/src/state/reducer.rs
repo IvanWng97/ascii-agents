@@ -519,6 +519,11 @@ impl Reducer {
         for id in expired {
             scene.agents.remove(&id);
             self.active_tasks.remove(&id);
+            // Symmetric with active_tasks: sweep_exited runs on the apply path
+            // (not just tick), where the tick-time `gated_before_waiting.retain`
+            // doesn't run — so reclaim it here too, else a Waiting slot that was
+            // swept mid-turn leaks its gated tool_use_id until the next tick.
+            self.gated_before_waiting.remove(&id);
         }
     }
 }

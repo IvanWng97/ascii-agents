@@ -3,6 +3,11 @@
 //! Snapshots the key fields of `SceneLayout` at fixed buffer sizes so any
 //! refactor to `compute` / `compute_with_seed` that accidentally shifts desk
 //! positions, room bounds, or waypoint coords will fail immediately.
+//!
+//! Regenerating after an INTENTIONAL layout change: run the suite to produce
+//! `*.snap.new`, eyeball the diff, then `cargo insta accept` (or
+//! `INSTA_UPDATE=always cargo test -p pixtuoid --test layout_golden`). The same
+//! applies to `walkable_golden.rs`.
 
 use pixtuoid_core::layout::SceneLayout;
 
