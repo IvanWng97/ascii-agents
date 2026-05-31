@@ -1570,6 +1570,90 @@ fn stale_sweep_cascade_skips_unrelated_fresh_agents() {
     );
 }
 
+#[test]
+fn long_delegation_keeps_parent_and_live_subagent_alive() {
+    // A parent delegating a single Task longer than STALE_ACTIVE_TIMEOUT
+    // gets no events of its OWN — the subagent's hook events are misattributed
+    // to the parent's AgentId and suppressed. Those suppressed events are still
+    // proof the subtree is alive, so they must refresh the parent's
+    // last_event_at; otherwise sweep_stale reaps the live parent and the
+    // cascade drags its still-working subagent out with it.
+    use pixtuoid_core::state::reducer::STALE_ACTIVE_TIMEOUT;
+    let mut scene = SceneState::uniform(8);
+    let mut r = Reducer::new();
+    let parent = AgentId::from_transcript_path("/p/deleg.jsonl");
+    let child = AgentId::from_parts("claude-code", "/p/deleg/subagents/agent-1.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: parent,
+            source: "claude-code".into(),
+            session_id: "p".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: child,
+            source: "claude-code".into(),
+            session_id: "c".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(parent),
+        },
+        t0 + Duration::from_millis(100),
+        Transport::Jsonl,
+    );
+
+    // Parent delegates one long Task → Active{Delegating}. The Task-start arm
+    // does NOT bump last_event_at, so the parent's liveness is frozen at t0.
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: parent,
+            activity: Activity::Typing,
+            tool_use_id: Some("task-T".into()),
+            detail: Some("Task".into()),
+        },
+        t0 + Duration::from_secs(1),
+        Transport::Hook,
+    );
+
+    // The subagent works for ~9 min; each tool call is a hook event CC
+    // misattributes to the parent's AgentId, so the reducer suppresses it.
+    for (mins, tuid) in [(5u64, "sub-R1"), (9u64, "sub-R2")] {
+        r.apply(
+            &mut scene,
+            AgentEvent::ActivityStart {
+                agent_id: parent,
+                activity: Activity::Typing,
+                tool_use_id: Some(tuid.into()),
+                detail: Some("Read: /x".into()),
+            },
+            t0 + Duration::from_secs(mins * 60),
+            Transport::Hook,
+        );
+    }
+
+    // Tick just past the parent's Active stale threshold measured from t0, but
+    // well within it measured from the last suppressed child event (t0+9min).
+    r.tick(&mut scene, t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(1));
+
+    assert!(
+        scene.agents.get(&parent).unwrap().exiting_at.is_none(),
+        "a delegating parent must stay alive while its subagent emits events"
+    );
+    assert!(
+        scene.agents.get(&child).unwrap().exiting_at.is_none(),
+        "the live subagent must NOT be cascaded out by a falsely-stale parent"
+    );
+}
+
 /// With heterogeneous per-floor capacities, the third session should
 /// overflow from floor 0 (cap=2) to floor 1's first desk (global index 2).
 #[test]

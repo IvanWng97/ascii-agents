@@ -133,6 +133,17 @@ impl Reducer {
                 _ => false,
             };
             if suppress {
+                // A suppressed event is a real subagent hook misattributed to
+                // the parent (CC points transcript_path at the parent), so it is
+                // positive evidence the delegated subtree is alive. Refresh the
+                // parent's liveness before dropping it — otherwise a single Task
+                // running past STALE_ACTIVE_TIMEOUT makes the still-working
+                // parent look stale, and sweep_stale's cascade drags the live
+                // subagent out with it. (Liveness from a real event, not the
+                // silence-based reaping the stale-sweep deliberately avoids.)
+                if let Some(slot) = scene.agents.get_mut(&id) {
+                    slot.last_event_at = now;
+                }
                 return;
             }
         }
