@@ -125,10 +125,20 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
         }
     }
 
+    // Lounge couch: one 20px hover region centred on the sofa. It's 3 seat
+    // waypoints now, so per-seat boxes would over-cover and multi-fire — hit
+    // it once at couch_sprite_center, mirroring the single furniture paint.
+    if let Some(c) = layout.couch_sprite_center {
+        if hit(c.x.saturating_sub(10), c.y.saturating_sub(3), 20, 7) {
+            return Some("Lounge Sofa");
+        }
+    }
+
     // Waypoints
     for wp in &layout.waypoints {
         let (w, h) = match wp.kind {
-            WaypointKind::Couch => (16, 7),
+            // Couch hovers via the one-time region above (3 seat waypoints).
+            WaypointKind::Couch => continue,
             WaypointKind::Pantry => layout.pantry_counter_size,
             WaypointKind::PhoneBooth => (6, 12),
             WaypointKind::StandingDesk => (8, 8),
@@ -141,21 +151,22 @@ pub fn hit_test_furniture(layout: &Layout, mx: u16, my: u16) -> Option<&'static 
         let wy = wp.pos.y.saturating_sub(h / 2);
         if hit(wx, wy, w, h) {
             return Some(match wp.kind {
-                WaypointKind::Couch => "Lounge Sofa",
                 WaypointKind::Pantry => "Pantry Counter",
                 WaypointKind::PhoneBooth => "Phone Booth",
                 WaypointKind::StandingDesk => "Standing Desk",
                 WaypointKind::VendingMachine => "Vending Machine",
                 WaypointKind::Printer => "Printer",
-                // Unreachable: meeting slots `continue` above.
-                WaypointKind::MeetingSofa | WaypointKind::MeetingStand => unreachable!(),
+                // Unreachable: couch + meeting slots `continue` above.
+                WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {
+                    unreachable!()
+                }
             });
         }
     }
 
-    // Meeting sofas
+    // Meeting sofas (20px sprite, centred on the sofa point).
     for sofa in &layout.meeting_sofas {
-        if hit(sofa.x.saturating_sub(8), sofa.y.saturating_sub(3), 16, 7) {
+        if hit(sofa.x.saturating_sub(10), sofa.y.saturating_sub(3), 20, 7) {
             return Some("Meeting Sofa");
         }
     }

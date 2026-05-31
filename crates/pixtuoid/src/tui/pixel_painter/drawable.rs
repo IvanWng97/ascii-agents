@@ -368,7 +368,7 @@ pub(super) fn paint_drawable(
             }
         }
         DrawableKind::WaypointCouch { pos } => {
-            // Lounge couch reuses the meeting_sofa sprite (16×7) so
+            // Lounge couch reuses the meeting_sofa sprite (20×7) so
             // both seating areas have the same readable 3-cushion
             // silhouette. Flipped vertically so the back faces NORTH
             // (toward the windows the viewer is looking at).

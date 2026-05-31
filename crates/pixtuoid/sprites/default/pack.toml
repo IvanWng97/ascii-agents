@@ -141,7 +141,7 @@ frames   = ["dog_sleep.sprite"]
 frame_ms = 600
 
 [animations.meeting_sofa]
-# 16x7 sofa used for the meeting room only (lounge keeps `couch`).
+# 20x7 3-seat sofa, shared by the meeting room AND the lounge couch.
 # Bigger silhouette + visible cushion divisions so the focal furniture
 # of the meeting area reads as a sofa rather than a flat plank.
 frames   = ["meeting_sofa.sprite"]

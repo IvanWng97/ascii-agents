@@ -494,10 +494,26 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         );
     }
     for wp in &ctx.layout.waypoints {
+        // Couch shadow is emitted once below (it's 3 seat waypoints; per-seat
+        // shadows would overlap and darken the cushion seams).
+        if wp.kind == crate::tui::layout::WaypointKind::Couch {
+            continue;
+        }
         paint_shadow(
             ctx.buf,
             wp.pos.x,
             wp.pos.y + 2,
+            7,
+            2,
+            shadow_strength,
+            ctx.theme,
+        );
+    }
+    if let Some(center) = ctx.layout.couch_sprite_center {
+        paint_shadow(
+            ctx.buf,
+            center.x,
+            center.y + 2,
             7,
             2,
             shadow_strength,
