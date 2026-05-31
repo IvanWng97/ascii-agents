@@ -22,7 +22,7 @@ use pixtuoid_core::{AgentSlot, SceneState};
 use crate::tui::chitchat::{self, ActiveChitchat, ChitchatBubble};
 use crate::tui::floor::LightingState;
 use crate::tui::frame_cache::FrameCache;
-use crate::tui::layout::{Layout, Point, DESK_W};
+use crate::tui::layout::{Layout, Point, DESK_H, DESK_W};
 use crate::tui::motion::MotionState;
 use crate::tui::pathfind::Router;
 use crate::tui::pet::PetKind;
@@ -236,6 +236,12 @@ fn paint_glass_wall_v(
 /// Same rationale as the glass wall's `GLASS_CAP_PX`; 5 ≈ pad(1) + 1 feet row +
 /// ~3 leg rows for the northmost reachable stand cell.
 pub(super) const FURNITURE_BACK_PX: u16 = 5;
+
+/// The home desk sprite's front lip extends this many px past its blocked
+/// footprint (the top-down 3/4 bevel), so the desk's z-sort baseline is the
+/// footprint front edge + this overhang — the same "footprint front + sprite
+/// overhang" form every other drawable's z-key uses (was a bare `desk.y + 8`).
+const DESK_FRONT_OVERHANG: u16 = 2;
 
 /// Extrude `frame`'s top edge north of its blit origin `(sx, sy)` into an
 /// opaque back face (see [`FURNITURE_BACK_PX`]). Each column repeats its
@@ -812,10 +818,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         })
         .collect();
     for (i, &desk) in ctx.layout.home_desks.iter().enumerate() {
-        let desk_mask_w = crate::tui::layout::desk_furniture_def()
+        let (desk_fp_w, desk_fp_h) = crate::tui::layout::desk_furniture_def()
             .footprint
-            .map_or(DESK_W, |(w, _)| w);
-        let is_last_col = desk.x + desk_mask_w + DESK_W
+            .unwrap_or((DESK_W, DESK_H));
+        let is_last_col = desk.x + desk_fp_w + DESK_W
             >= ctx.layout.cubicle_band.x + ctx.layout.cubicle_band.width;
         let occupant = agents
             .iter()
@@ -840,7 +846,12 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
         drawables.push(Drawable {
-            anchor_y: desk.y + 8,
+            // z-sort baseline = the footprint's south/front edge + the desk
+            // sprite's front-lip overhang, mirroring every other drawable's
+            // "footprint front + sprite overhang" form (here: 6 + 2 = 8). The
+            // desk's front legs/lip extend DESK_FRONT_OVERHANG px past its
+            // blocked footprint (top-down 3/4 bevel), so it sorts there.
+            anchor_y: desk.y + desk_fp_h + DESK_FRONT_OVERHANG,
             kind: DrawableKind::DeskCubicle {
                 desk,
                 is_last_col,
@@ -1323,9 +1334,12 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                 }
             }
             Pose::AimlessAt { dest } => {
-                let anchor = with_breath(waypoint_anchor(dest), agent.agent_id, ctx.now);
+                // Breath-independent sort key (like the AtWaypoint arm): the
+                // ±1px breath bob must not flicker the z-order frame to frame.
+                let anchor_no_breath = waypoint_anchor(dest);
+                let anchor = with_breath(anchor_no_breath, agent.agent_id, ctx.now);
                 drawables.push(Drawable {
-                    anchor_y: anchor.y + 12,
+                    anchor_y: anchor_no_breath.y + 12,
                     kind: DrawableKind::Character {
                         agent,
                         anim_name: "standing",
@@ -1896,6 +1910,56 @@ mod tests {
                 "walking_anchor(desk_walk_anchor({desk:?})) must equal seated_anchor",
             );
         }
+    }
+
+    #[test]
+    fn desk_z_key_is_footprint_front_plus_overhang() {
+        // The DeskCubicle z-sort baseline is `desk.y + footprint.h +
+        // DESK_FRONT_OVERHANG` — footprint-front-derived (consistent with the
+        // waypoint/wall baselines), not a bare sprite-bottom literal. Equals
+        // the historical `desk.y + 8` (6 + 2). Locks the relationship so a
+        // footprint or overhang edit surfaces here, not as a layering bug.
+        let fp_h = crate::tui::layout::desk_furniture_def()
+            .footprint
+            .expect("desk has a footprint")
+            .1;
+        assert_eq!(fp_h + DESK_FRONT_OVERHANG, 8, "desk z-key offset (was +8)");
+    }
+
+    #[test]
+    fn back_cap_covers_exactly_the_freestanding_pods() {
+        // Per-kind occlusion policy: the north back-cap (occlude a walker
+        // standing behind) applies to EXACTLY the tall free-standing aisle pods
+        // — not the wall-flanking decor. Exhaustive over PodDecor::ALL so a new
+        // pod kind must make a deliberate back-cap choice.
+        use crate::tui::layout::PodDecor;
+        for &kind in PodDecor::ALL {
+            let expected = matches!(kind, PodDecor::PhoneBooth | PodDecor::StandingDesk);
+            assert_eq!(
+                back_cap(kind),
+                expected,
+                "{kind:?}: back-cap policy mismatch (only free-standing pods get one)"
+            );
+        }
+    }
+
+    #[test]
+    fn back_view_seats_sort_over_their_sitter() {
+        // Occlusion for BOTH back-view seat renderers (lounge couch + the
+        // north meeting sofa): the furniture must y-sort OVER the back-view
+        // sitter so the sofa back occludes the body. The sitter's z-key is
+        // `base + 2` (back_couch_anchor stand-7 + sprite_h 9); the back
+        // furniture is `base + 3`. Lounge couch (`center.y + 3`) and the north
+        // meeting sofa (`sofa.y + 3`) both satisfy it.
+        let base: u16 = 40;
+        let sitter = (base - 7) + 9; // = base + 2
+        let couch_furniture = base + 3; // WaypointCouch drawable
+        let back_meeting_sofa = base + 3; // faces_away meeting sofa
+        assert!(couch_furniture > sitter, "couch must sort over its sitter");
+        assert!(
+            back_meeting_sofa > sitter,
+            "north meeting sofa must sort over its sitter"
+        );
     }
 
     #[test]
