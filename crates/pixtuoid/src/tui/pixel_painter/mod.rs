@@ -84,7 +84,13 @@ const GLASS_SEAM_STRIDE: u16 = 16;
 // y-sorted at its south (front) base, a character standing just north of the
 // wall has their feet/legs composited behind this translucent cap (occluded
 // behind the glass). The cap is over floor (visual only), not the mask.
-const GLASS_CAP_PX: u16 = 3;
+//
+// Sized to WALL_THICK_H so the cap reaches into the legs of a walker at the
+// northmost walkable row (footprint top `W` minus OBSTACLE_PAD+1 = `W-3`): the
+// 12px sprite spans `W-15..W-3`, the cap now covers `W-6..W-1`, so the bottom
+// ~4px (feet + lower legs) read behind the pane. At the old value of 3 only the
+// single feet row was grazed.
+const GLASS_CAP_PX: u16 = 6;
 
 fn glass_tones(theme: &crate::tui::theme::Theme) -> (Rgb, Rgb, Rgb) {
     let tl = theme.office.room_wall_trim_light;
@@ -810,8 +816,22 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     }
     for (i, &sofa) in ctx.layout.meeting_sofas.iter().enumerate() {
         let mirrored = i % 2 != 0;
+        // A south-of-table sofa faces away (Facing::North → `back_couch`
+        // sprite), so the sitter sits BEHIND the sofa back and must be
+        // occluded by it — same as the lounge couch. The sitter's y-sort
+        // key is `sofa.y + 2`, so the back sofa needs +3 to win that tie;
+        // the front (north) sofa stays +2 so its sitter paints on top
+        // (insertion order breaks the tie in the sitter's favor). Mirrors
+        // core's facing rule (`compute.rs`): back iff sofa.y >= table.y.
+        let room_id = i / 2;
+        let table_y = ctx
+            .layout
+            .meeting_tables
+            .get(room_id)
+            .map_or(sofa.y, |t| t.y);
+        let faces_away = sofa.y >= table_y;
         drawables.push(Drawable {
-            anchor_y: sofa.y + 2,
+            anchor_y: sofa.y + if faces_away { 3 } else { 2 },
             kind: DrawableKind::MeetingSofa {
                 pos: sofa,
                 mirrored,
@@ -1397,10 +1417,13 @@ mod tests {
         // cool tone (red drops, blue rises) rather than leave it untouched.
         let theme = crate::tui::theme::theme_by_name("normal").expect("theme");
         let y_top = 20u16;
-        // A mid cap row (not the bright lit top edge, not a seam column) where
-        // the cool body tone dominates the composite — clearly north of the
-        // footprint, so it's the back cap painting over the character.
-        let cap_row = y_top - 2;
+        // Place the stand-in at the REAL northmost row a routed walker's feet
+        // can reach: footprint top `y_top` minus (OBSTACLE_PAD_PX=2 + 1) = the
+        // first walkable row north of the wall. With GLASS_CAP_PX=6 the cap
+        // (rows y_top-6..y_top-1) covers this row, so a walker's feet/lower legs
+        // composite behind the glass. (The old test used y_top-2, a row inside
+        // the blocked footprint+pad band that no walker ever occupies.)
+        let cap_row = y_top - 3;
         let character = Rgb(220, 40, 40);
         let mut buf = RgbBuffer::filled(48, 48, Rgb(150, 110, 72)); // carpet
         for x in 4..20 {
@@ -1668,6 +1691,31 @@ mod tests {
             })
             .collect();
         assert_eq!(xs, [1, 2, 3]);
+    }
+
+    #[test]
+    fn back_view_meeting_sofa_sorts_over_its_sitter() {
+        // A south-of-table meeting sofa renders the `back_couch` sprite
+        // (Facing::North) — the sitter's body must be occluded BEHIND the
+        // sofa back, same as the lounge couch. The back-view sitter's
+        // y-sort key is `sofa.y + 2` (back_couch_anchor = stand.y - 7,
+        // sprite_h = 9, stand.y = sofa.y); the back sofa must beat that.
+        let sofa_y: u16 = 40;
+        let sitter_anchor_y = (sofa_y - 7) + 9; // back_couch_anchor + sprite_h
+        let back_sofa_anchor_y = sofa_y + 3; // faces_away bump
+        let front_sofa_anchor_y = sofa_y + 2; // sitter-on-top default
+        assert!(
+            back_sofa_anchor_y > sitter_anchor_y,
+            "back-view sofa must sort AFTER its sitter (paint on top): \
+             sofa={back_sofa_anchor_y}, sitter={sitter_anchor_y}"
+        );
+        // Front sofa ties the sitter; insertion order (decor first) then
+        // keeps the sitter on top — so it must NOT exceed the sitter.
+        assert!(
+            front_sofa_anchor_y <= sitter_anchor_y,
+            "front-view sofa must not sort after its sitter: \
+             sofa={front_sofa_anchor_y}, sitter={sitter_anchor_y}"
+        );
     }
 
     #[test]
