@@ -39,6 +39,31 @@ pub enum WaypointKind {
 pub(crate) const PHONE_BOOTH_FOOTPRINT: (u16, u16) = (6, 12);
 pub(crate) const STANDING_DESK_FOOTPRINT: (u16, u16) = (8, 8);
 
+// ── Footprints for non-waypoint static furniture ──────────────────────────
+// These pieces aren't `WaypointKind` rows (they're positioned `Point`s, not
+// wander destinations keyed by a kind), so they declare their ground footprint
+// here as named consts rather than `furniture_def` rows. Same principle as the
+// rest of the model — the footprint is declared ONCE: `mask.rs` stamps from
+// these (no inline literals) and the placement-overlap test reads them. Render
+// geometry still derives from the sprite (top-down rule: visuals may overhang).
+/// Meeting sofa BODY footprint, centred on the sofa Point. (The 3 seat
+/// waypoints are `MeetingSofa` with `None` footprint — they sit on this body.)
+pub const MEETING_SOFA_FOOTPRINT: (u16, u16) = (16, 7);
+/// Meeting coffee-table footprint, centred on the table Point.
+pub const MEETING_TABLE_FOOTPRINT: (u16, u16) = (12, 6);
+/// Pantry bistro-table footprint, centred on the table Point.
+pub const PANTRY_TABLE_FOOTPRINT: (u16, u16) = (8, 5);
+/// Pantry stool footprint (left-biased stamp; see `mask.rs`).
+pub const PANTRY_CHAIR_FOOTPRINT: (u16, u16) = (3, 3);
+/// Lounge floor-lamp footprint, centred on the lamp Point.
+pub const FLOOR_LAMP_FOOTPRINT: (u16, u16) = (4, 6);
+/// Lounge side-table footprint, centred on the table Point.
+pub const LOUNGE_SIDE_TABLE_FOOTPRINT: (u16, u16) = (7, 4);
+/// Plant GROUND footprint, centred on the pot. Deliberately distinct from
+/// [`PlantKind::size`] (the taller VISUAL sprite) — top-down rule: the leaves
+/// overhang the pot's ground base, so the blocked footprint stays a tight 6×6.
+pub const PLANT_FOOTPRINT: (u16, u16) = (6, 6);
+
 /// Which sides an agent may approach a piece of furniture from, in the
 /// CANONICAL frame (furniture facing South, toward the viewer). [`Self::allows`]
 /// rotates this to the live `facing`, so one stored set works for

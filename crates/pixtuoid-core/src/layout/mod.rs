@@ -20,7 +20,7 @@ pub use decor::{
     desk_furniture_def, desk_walk_anchor, furniture_def, ApproachSides, Facing, FurnitureDef,
     PlantKind, PodDecor, WallDecor, WaypointKind, DESK_APPROACH,
 };
-pub use mask::WALL_THICK_H;
+pub use mask::{WALL_THICK_H, WALL_THICK_V};
 
 use crate::walkable::WalkableMask;
 
@@ -179,14 +179,15 @@ mod tests {
         }
     }
 
-    // Ground-footprint rectangles (no clearance pad — the pad is routing
-    // slack, not the object's solid area). Mirror the stamps in `mask.rs`.
-    fn rects_overlap(a: (u16, u16, u16, u16), b: (u16, u16, u16, u16)) -> bool {
+    // Ground-footprint rectangle `(x, y, w, h)` (no clearance pad — the pad is
+    // routing slack, not the object's solid area). Mirror the stamps in `mask.rs`.
+    type Rect = (u16, u16, u16, u16);
+    fn rects_overlap(a: Rect, b: Rect) -> bool {
         a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
     }
-    fn wall_rect(s: Point, e: Point) -> (u16, u16, u16, u16) {
+    fn wall_rect(s: Point, e: Point) -> Rect {
         if s.x == e.x {
-            (s.x, s.y.min(e.y), 1, s.y.abs_diff(e.y) + 1) // vertical: WALL_THICK_V=1
+            (s.x, s.y.min(e.y), WALL_THICK_V, s.y.abs_diff(e.y) + 1)
         } else {
             (s.x.min(e.x), s.y, s.x.abs_diff(e.x) + 1, WALL_THICK_H)
         }
@@ -205,17 +206,20 @@ mod tests {
                 let Some(l) = SceneLayout::compute_with_seed(w, h, 8, seed) else {
                     continue;
                 };
-                let mut items: Vec<(&str, (u16, u16, u16, u16))> = Vec::new();
+                use super::decor::{LOUNGE_SIDE_TABLE_FOOTPRINT, PANTRY_TABLE_FOOTPRINT};
+                let mut items: Vec<(&str, Rect)> = Vec::new();
                 if let Some(t) = l.pantry_table {
+                    let (w, h) = PANTRY_TABLE_FOOTPRINT;
                     items.push((
                         "pantry_table",
-                        (t.x.saturating_sub(4), t.y.saturating_sub(2), 8, 5),
+                        (t.x.saturating_sub(w / 2), t.y.saturating_sub(h / 2), w, h),
                     ));
                 }
                 if let Some(t) = l.lounge_side_table {
+                    let (w, h) = LOUNGE_SIDE_TABLE_FOOTPRINT;
                     items.push((
                         "lounge_side_table",
-                        (t.x.saturating_sub(3), t.y.saturating_sub(2), 7, 4),
+                        (t.x.saturating_sub(w / 2), t.y.saturating_sub(h / 2), w, h),
                     ));
                 }
                 for (item, rect) in &items {

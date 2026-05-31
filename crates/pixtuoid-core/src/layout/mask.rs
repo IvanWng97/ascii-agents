@@ -4,6 +4,10 @@
 //! clearance band around each obstacle so walkers don't scrape along
 //! edges.
 
+use super::decor::{
+    FLOOR_LAMP_FOOTPRINT, LOUNGE_SIDE_TABLE_FOOTPRINT, MEETING_SOFA_FOOTPRINT,
+    MEETING_TABLE_FOOTPRINT, PANTRY_CHAIR_FOOTPRINT, PANTRY_TABLE_FOOTPRINT, PLANT_FOOTPRINT,
+};
 use super::{PodDecor, Point, WallDecor, Waypoint, OBSTACLE_PAD_PX};
 use crate::walkable::WalkableMask;
 
@@ -11,6 +15,11 @@ use crate::walkable::WalkableMask;
 /// wall, in px. The renderer derives `WALL_THICK_H_PX` from this so the visible
 /// glass face and the blocked ground footprint can never drift apart.
 pub const WALL_THICK_H: u16 = 6;
+/// Walkable footprint of a vertical (N-S) interior wall — seen edge-on, so 1px
+/// (the renderer draws it 3px wide, visual-wider-than-footprint per the
+/// top-down ground-projection rule). Single source: mask + the placement test
+/// read this rather than re-typing `1`.
+pub const WALL_THICK_V: u16 = 1;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_walkable_mask(
@@ -48,10 +57,9 @@ pub(super) fn build_walkable_mask(
     //   • horizontal walls (E-W) show their FACE — WALL_THICK_H px tall so the
     //     wall reads as having real mass/height when viewed from the north
     //     room (clearly thicker than the edge-on vertical).
-    //   • vertical walls (N-S) are seen EDGE-ON — 1 px thin footprint (the
-    //     renderer draws it 3 px wide; visual-wider-than-footprint per the
+    //   • vertical walls (N-S) are seen EDGE-ON — WALL_THICK_V px thin footprint
+    //     (the renderer draws it 3 px wide; visual-wider-than-footprint per the
     //     top-down ground-projection rule).
-    const WALL_THICK_V: u16 = 1;
     for (start, end) in room_walls {
         if start.x == end.x {
             mask.mark_blocked(
@@ -97,40 +105,46 @@ pub(super) fn build_walkable_mask(
         // `20, pad` block is 24px wide and disconnects the room (the
         // walkable_mask_is_fully_connected test catches it). Top-down rule:
         // characters walk right up to the sofa's sides, clear above/below.
+        let (w, h) = MEETING_SOFA_FOOTPRINT;
         mask.mark_blocked(
-            sofa.x.saturating_sub(8),
-            sofa.y.saturating_sub(3),
-            16,
-            7,
+            sofa.x.saturating_sub(w / 2),
+            sofa.y.saturating_sub(h / 2),
+            w,
+            h,
             OBSTACLE_PAD_PX,
         );
     }
 
     for t in meeting_tables {
+        let (w, h) = MEETING_TABLE_FOOTPRINT;
         mask.mark_blocked(
-            t.x.saturating_sub(6),
-            t.y.saturating_sub(3),
-            12,
-            6,
+            t.x.saturating_sub(w / 2),
+            t.y.saturating_sub(h / 2),
+            w,
+            h,
             OBSTACLE_PAD_PX,
         );
     }
 
     if let Some(t) = pantry_table {
+        let (w, h) = PANTRY_TABLE_FOOTPRINT;
         mask.mark_blocked(
-            t.x.saturating_sub(4),
-            t.y.saturating_sub(2),
-            8,
-            5,
+            t.x.saturating_sub(w / 2),
+            t.y.saturating_sub(h / 2),
+            w,
+            h,
             OBSTACLE_PAD_PX,
         );
     }
     for chair in pantry_chairs {
+        // Stool footprint is small; stamped left-biased (offset 2, not w/2) to
+        // sit snug against the bistro table — kept as-is for the look.
+        let (w, h) = PANTRY_CHAIR_FOOTPRINT;
         mask.mark_blocked(
             chair.x.saturating_sub(2),
             chair.y.saturating_sub(2),
-            3,
-            3,
+            w,
+            h,
             1,
         );
     }
@@ -156,17 +170,40 @@ pub(super) fn build_walkable_mask(
     }
 
     for (_, p) in plants {
-        mask.mark_blocked(p.x.saturating_sub(3), p.y.saturating_sub(3), 6, 6, 1);
+        // PLANT_FOOTPRINT (ground 6×6) — tighter than PlantKind::size (the
+        // taller visual sprite); top-down rule lets the leaves overhang.
+        let (w, h) = PLANT_FOOTPRINT;
+        mask.mark_blocked(
+            p.x.saturating_sub(w / 2),
+            p.y.saturating_sub(h / 2),
+            w,
+            h,
+            1,
+        );
     }
 
     if let Some(lamp) = floor_lamp {
-        mask.mark_blocked(lamp.x.saturating_sub(2), lamp.y.saturating_sub(3), 4, 6, 1);
+        let (w, h) = FLOOR_LAMP_FOOTPRINT;
+        mask.mark_blocked(
+            lamp.x.saturating_sub(w / 2),
+            lamp.y.saturating_sub(h / 2),
+            w,
+            h,
+            1,
+        );
     }
 
     if let Some(t) = lounge_side_table {
-        // 7×4 footprint centred on `t`; pad=1 since it's small and
-        // sits in the wide open lounge floor with plenty of clearance.
-        mask.mark_blocked(t.x.saturating_sub(3), t.y.saturating_sub(2), 7, 4, 1);
+        // Small footprint, pad=1: sits in the wide open lounge floor with
+        // plenty of clearance.
+        let (w, h) = LOUNGE_SIDE_TABLE_FOOTPRINT;
+        mask.mark_blocked(
+            t.x.saturating_sub(w / 2),
+            t.y.saturating_sub(h / 2),
+            w,
+            h,
+            1,
+        );
     }
 
     for (kind, pos) in wall_decor {
