@@ -254,6 +254,17 @@ fn center_pin_south_offset(h: u16) -> u16 {
     h.saturating_sub(1) / 2
 }
 
+/// South-row (base) offset of the floor-lamp sprite, derived from the one
+/// furniture table so the halo / shadow / z-anchor all move together if the
+/// lamp's visual height changes (locked by a unit test).
+fn floor_lamp_south_offset() -> u16 {
+    center_pin_south_offset(
+        crate::tui::layout::furniture_def(crate::tui::layout::Furniture::FloorLamp)
+            .visual
+            .1,
+    )
+}
+
 /// Extrude `frame`'s top edge north of its blit origin `(sx, sy)` into an
 /// opaque back face (see [`FURNITURE_BACK_PX`]). Each column repeats its
 /// topmost opaque sprite color, darkened with distance so the band reads as the
@@ -491,7 +502,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         paint_floor_lamp_halo(
             ctx.buf,
             lamp.x,
-            lamp.y + 4, // glow emanates from the lamp BASE (sprite south), not the pole
+            lamp.y + floor_lamp_south_offset(), // glow emanates from the lamp BASE, not the pole
             look.darkness * 0.55 * indoor_scale,
             ctx.theme,
         );
@@ -738,7 +749,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         paint_shadow(
             ctx.buf,
             lamp.x,
-            lamp.y + 4, // flush with the lamp base (sprite south = lamp.y+4, 4×10 centred)
+            lamp.y + floor_lamp_south_offset(), // flush with the lamp base (sprite south)
             2,
             1,
             shadow_strength,
@@ -994,6 +1005,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             .footprint
             .map_or(0, |(_, h)| h);
         match wp.kind {
+            // Rendered once via `couch_sprite_center` above (3 seats, 1 sprite).
             WaypointKind::Couch => {}
             WaypointKind::Pantry => {
                 let (cw, ch) = ctx.layout.pantry_counter_size; // runtime-sized
@@ -1005,6 +1017,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     },
                 });
             }
+            // Rendered via the `pod_decor` drawables below (they ARE the decor).
             WaypointKind::PhoneBooth | WaypointKind::StandingDesk => {}
             WaypointKind::VendingMachine => {
                 drawables.push(Drawable {
@@ -1018,9 +1031,8 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
-            // Meeting slots ride on the sofa/table furniture, which is
-            // painted via the `meeting_sofas` / `meeting_tables` drawables
-            // elsewhere — no per-slot furniture here.
+            // Rendered via the `meeting_sofas` / `meeting_tables` drawables
+            // elsewhere (the slots ride on the sofa/table) — nothing per-slot.
             WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {}
         }
     }
@@ -1066,7 +1078,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // shadow + let the lamp paint over a character standing just in front).
     if let Some(lamp) = ctx.layout.floor_lamp {
         drawables.push(Drawable {
-            anchor_y: lamp.y + 4,
+            anchor_y: lamp.y + floor_lamp_south_offset(),
             kind: DrawableKind::FloorLamp { pos: lamp },
         });
     }
@@ -1940,6 +1952,14 @@ mod tests {
     }
 
     #[test]
+    fn floor_lamp_south_offset_is_the_base_row() {
+        // The lamp's halo / shadow / z-anchor all use floor_lamp_south_offset();
+        // for the 4×10 sprite that's +4 (the base disc). Locks the value so a
+        // visual-height edit in the table surfaces HERE, not as a floating halo.
+        assert_eq!(floor_lamp_south_offset(), 4);
+    }
+
+    #[test]
     fn waypoint_depth_baseline_is_center_pinned_sprite_south() {
         use crate::tui::layout::{furniture_def, WaypointKind};
         // These appliances are center-pinned, so the z-sort key is the sprite's
@@ -2000,13 +2020,25 @@ mod tests {
         // standing behind) applies to EXACTLY the tall free-standing aisle pods
         // — not the wall-flanking decor. Exhaustive over PodDecor::ALL so a new
         // pod kind must make a deliberate back-cap choice.
-        use crate::tui::layout::PodDecor;
+        use crate::tui::layout::{furniture_def, PodDecor};
+        assert_eq!(
+            PodDecor::ALL.len(),
+            5,
+            "PodDecor variant added/removed — update ALL (and this count)"
+        );
         for &kind in PodDecor::ALL {
             let expected = matches!(kind, PodDecor::PhoneBooth | PodDecor::StandingDesk);
             assert_eq!(
                 back_cap(kind),
                 expected,
                 "{kind:?}: back-cap policy mismatch (only free-standing pods get one)"
+            );
+            // z-sort precondition: the pod-decor loop anchors at
+            // `center_pin_south_offset(visual.1)`, so a 0-height visual would
+            // sort the sprite at its own center. Every pod must have visible h.
+            assert!(
+                furniture_def(kind.furniture()).visual.1 > 0,
+                "{kind:?}: pod decor needs a non-zero visual height for the z-sort"
             );
         }
     }

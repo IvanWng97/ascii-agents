@@ -32,10 +32,10 @@ pub enum WaypointKind {
     MeetingStand,
 }
 
-/// Footprints for the two kinds that appear in BOTH `WaypointKind` (wander
-/// destination) and `PodDecor` (aisle decor). Declared once and used as the
-/// `footprint`==`visual` values in their single [`Furniture`] rows, so the
-/// wander-approach geometry and the aisle mask stamp can't drift apart.
+/// The booth/desk dimensions — named so each appears once as BOTH the
+/// `footprint` and `visual` of its single [`Furniture`] row (these two kinds are
+/// box-like: ground base == sprite). Reached via either `WaypointKind` (wander
+/// destination) or `PodDecor` (aisle decor), but it's one row, so nothing drifts.
 pub(crate) const PHONE_BOOTH_FOOTPRINT: (u16, u16) = (6, 12);
 pub(crate) const STANDING_DESK_FOOTPRINT: (u16, u16) = (8, 8);
 
@@ -157,8 +157,12 @@ pub struct FurnitureDef {
     /// CENTER, approached from a side. True set: {Couch, MeetingSofa,
     /// MeetingStand}. (Desks are NOT rows here — home workstation is separate.)
     pub occupies_pos: bool,
-    /// Per-spot idle dwell window `(base_ms, range_ms)`. Invariant: range > 0
-    /// (a zero range would divide-by-zero in `pose::dwell_ms`).
+    /// Per-spot idle dwell window `(base_ms, range_ms)`. `range == 0` (the
+    /// `DECOR` rows) marks a kind that is NOT a wander destination and is never
+    /// fed to `pose::dwell_ms`; `range > 0` marks a destination. `dwell_ms`
+    /// guards with `% range.max(1)`, so a zero range is safe — it IS the decor
+    /// sentinel, not a bug. Do not "fix" a decor row to a non-zero range (that
+    /// silently turns it into a wander destination).
     pub dwell: (u64, u64),
     /// Canonical (facing-South) sides an agent may approach from. Obstacle
     /// furniture against walls keeps `ALL` (walls already constrain the open
@@ -245,6 +249,39 @@ pub enum Furniture {
     PantryChair,
     FloorLamp,
     LoungeSideTable,
+}
+
+impl Furniture {
+    /// Every variant — the iteration handle for the exhaustive row-invariant
+    /// test. Adding a variant is a compile error in [`furniture_def`]'s match
+    /// AND fails the `ALL.len()` count assert until listed here, so no row can
+    /// slip in unverified (the singleton/decor rows have no other guard).
+    pub const ALL: &'static [Furniture] = &[
+        Furniture::Couch,
+        Furniture::Pantry,
+        Furniture::PhoneBooth,
+        Furniture::StandingDesk,
+        Furniture::VendingMachine,
+        Furniture::Printer,
+        Furniture::MeetingSofa,
+        Furniture::MeetingStand,
+        Furniture::PlantFicus,
+        Furniture::PlantTall,
+        Furniture::PlantFlower,
+        Furniture::PlantSucculent,
+        Furniture::Whiteboard,
+        Furniture::Tv,
+        Furniture::Bookshelf,
+        Furniture::BulletinBoard,
+        Furniture::ExitSign,
+        Furniture::MeetingScreen,
+        Furniture::MeetingSofaBody,
+        Furniture::MeetingTable,
+        Furniture::PantryTable,
+        Furniture::PantryChair,
+        Furniture::FloorLamp,
+        Furniture::LoungeSideTable,
+    ];
 }
 
 /// THE furniture table — one row per [`Furniture`] kind, the **single** source
@@ -342,9 +379,10 @@ pub const fn furniture_def(kind: Furniture) -> FurnitureDef {
             visual: (5, 4),
             ..DECOR
         },
-        // Whiteboard/TV: as POD-aisle decor they ARE ground obstacles (footprint
-        // == sprite, intentional aisle blocking); as WALL decor (whiteboard)
-        // only `.visual` is read (wall-mounted, not stamped).
+        // Whiteboard/TV are floor-level obstacles (a rolling board / TV stand),
+        // footprint == sprite — stamped whether reached via PodDecor (aisle) or
+        // WallDecor (the free-standing board placed in the room, NOT wall-hung;
+        // mask.rs stamps any WallDecor row whose footprint is Some).
         Furniture::Whiteboard => FurnitureDef {
             footprint: Some((14, 11)),
             visual: (14, 11),
@@ -384,9 +422,12 @@ pub const fn furniture_def(kind: Furniture) -> FurnitureDef {
             visual: (20, 8),
             ..DECOR
         },
+        // 11×5 = the real coffee-table sprite (paint_coffee_table). footprint ==
+        // visual so the mask blocks exactly what's drawn; the MeetingStand west
+        // offset (compute.rs, t.x-9) still clears (padded west edge = cx-7).
         Furniture::MeetingTable => FurnitureDef {
-            footprint: Some((12, 6)),
-            visual: (12, 6),
+            footprint: Some((11, 5)),
+            visual: (11, 5),
             ..DECOR
         },
         Furniture::PantryTable => FurnitureDef {
@@ -657,5 +698,55 @@ mod tests {
             "desk uses the editable DESK_APPROACH policy"
         );
         assert!(d.dwell.1 > 0, "seated dwell range must be positive");
+    }
+
+    #[test]
+    fn furniture_def_invariants_hold_for_every_row() {
+        // The singleton/decor rows have no other test (unlike WaypointKind::ALL),
+        // so a typo in any of the 24 rows — wrong dwell sentinel, an accidental
+        // occupies_pos, a wrong plant footprint — is caught HERE rather than as a
+        // silent wrong-mask/wrong-render at runtime.
+        assert_eq!(
+            Furniture::ALL.len(),
+            24,
+            "Furniture variant added/removed — update ALL (and this count)"
+        );
+        for &f in Furniture::ALL {
+            let d = furniture_def(f);
+            // dwell is either the decor sentinel (0,0) or a real window (range>0);
+            // never half-broken like (n, 0) — see the FurnitureDef::dwell doc.
+            assert!(
+                d.dwell == (0, 0) || d.dwell.1 > 0,
+                "{f:?}: half-broken dwell {:?}",
+                d.dwell
+            );
+            // occupies_pos is EXACTLY the on-furniture seat/stand kinds.
+            let expect_occupies = matches!(
+                f,
+                Furniture::Couch | Furniture::MeetingSofa | Furniture::MeetingStand
+            );
+            assert_eq!(d.occupies_pos, expect_occupies, "{f:?}: occupies_pos");
+            // Meeting SEAT rows add no obstacle (3 seats sit on the 1 body row).
+            if matches!(f, Furniture::MeetingSofa | Furniture::MeetingStand) {
+                assert!(
+                    d.footprint.is_none(),
+                    "{f:?}: seat row must carry no footprint"
+                );
+            }
+            // All plant rows share the one tight ground footprint.
+            if matches!(
+                f,
+                Furniture::PlantFicus
+                    | Furniture::PlantTall
+                    | Furniture::PlantFlower
+                    | Furniture::PlantSucculent
+            ) {
+                assert_eq!(
+                    d.footprint,
+                    Some(PLANT_FOOTPRINT),
+                    "{f:?}: plant ground footprint"
+                );
+            }
+        }
     }
 }

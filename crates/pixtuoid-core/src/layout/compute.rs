@@ -838,10 +838,14 @@ pub(super) fn compute_waypoints(
     // wander to during Idle cycles. Plant/Whiteboard/TV are pure
     // decor (already obstacles via pod_decor).
     for (kind, pos) in pod_decor {
+        // Exhaustive (no `_`): a NEW PodDecor must make a deliberate
+        // wander-destination decision here — `None` = pure decor (aisle
+        // obstacle only), `Some(kind)` = also a walkable destination. A `_`
+        // would silently leave a new interactive kind unreachable.
         let wp_kind = match kind {
             PodDecor::PhoneBooth => Some(WaypointKind::PhoneBooth),
             PodDecor::StandingDesk => Some(WaypointKind::StandingDesk),
-            _ => None,
+            PodDecor::PlantTall | PodDecor::Whiteboard | PodDecor::Tv => None,
         };
         if let Some(wp_kind) = wp_kind {
             waypoints.push(Waypoint {

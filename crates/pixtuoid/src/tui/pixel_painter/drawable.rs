@@ -446,7 +446,12 @@ pub(super) fn paint_drawable(
             }
         }
         DrawableKind::MeetingTable { pos } => {
-            paint_coffee_table(buf, pos.x, pos.y, 11, 5, theme);
+            // Sprite size from the table (== footprint for the meeting table) so
+            // the painted coffee table can't drift from the masked obstacle.
+            let (w, h) =
+                crate::tui::layout::furniture_def(crate::tui::layout::Furniture::MeetingTable)
+                    .visual;
+            paint_coffee_table(buf, pos.x, pos.y, w, h, theme);
         }
         DrawableKind::AreaRug { pos, width, height } => {
             paint_area_rug(buf, pos.x, pos.y, *width, *height, theme);
