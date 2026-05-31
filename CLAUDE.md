@@ -121,9 +121,9 @@ Don't be surprised by these. **Full explanation (the WHY) lives in the nested `C
 
 **`pixtuoid-core`** (see [`crates/pixtuoid-core/CLAUDE.md`](crates/pixtuoid-core/CLAUDE.md)):
 - CC hook payloads DO include `tool_use_id` (hook-wins dedup fires).
-- CC hook `transcript_path` always points to the PARENT transcript → `active_tasks` suppresses subagent-leak.
+- CC hook `transcript_path` always points to the PARENT transcript → `active_tasks` suppresses subagent-leak (and refreshes the parent's `last_event_at` — load-bearing liveness so a long delegation isn't stale-swept).
 - JSONL watcher skips historical transcripts on startup (1-hour mtime window + session-end tail scan).
-- Agent removal needs a `SessionEnd`; abrupt exits (Ctrl-C / Codex) have none → fall back to the slow stale-sweep.
+- Agent removal needs a `SessionEnd`; abrupt exits (Ctrl-C / Codex) have none → fall back to the slow stale-sweep, which cascade-exits the parent's whole subagent subtree.
 - Subagent display names come from `attributionAgent` in JSONL.
 - `AgentSlot.state_started_at` is `SystemTime` (process-local; v2-daemon-ready type).
 - `ActivityState::Active` ≠ "tool currently executing" — Active→Idle is debounced (`ACTIVE_GRACE_WINDOW`).
