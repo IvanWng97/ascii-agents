@@ -215,17 +215,16 @@ mod tests {
                 let Some(l) = SceneLayout::compute_with_seed(w, h, 8, seed) else {
                     continue;
                 };
-                use super::decor::{LOUNGE_SIDE_TABLE_FOOTPRINT, PANTRY_TABLE_FOOTPRINT};
                 let mut items: Vec<(&str, Rect)> = Vec::new();
                 if let Some(t) = l.pantry_table {
-                    let (w, h) = PANTRY_TABLE_FOOTPRINT;
+                    let (w, h) = furniture_def(Furniture::PantryTable).footprint.unwrap();
                     items.push((
                         "pantry_table",
                         (t.x.saturating_sub(w / 2), t.y.saturating_sub(h / 2), w, h),
                     ));
                 }
                 if let Some(t) = l.lounge_side_table {
-                    let (w, h) = LOUNGE_SIDE_TABLE_FOOTPRINT;
+                    let (w, h) = furniture_def(Furniture::LoungeSideTable).footprint.unwrap();
                     items.push((
                         "lounge_side_table",
                         (t.x.saturating_sub(w / 2), t.y.saturating_sub(h / 2), w, h),

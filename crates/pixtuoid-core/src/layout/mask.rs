@@ -4,11 +4,7 @@
 //! clearance band around each obstacle so walkers don't scrape along
 //! edges.
 
-use super::decor::{
-    FLOOR_LAMP_FOOTPRINT, LOUNGE_SIDE_TABLE_FOOTPRINT, MEETING_SOFA_FOOTPRINT,
-    MEETING_TABLE_FOOTPRINT, PANTRY_CHAIR_FOOTPRINT, PANTRY_TABLE_FOOTPRINT, PLANT_FOOTPRINT,
-};
-use super::{furniture_def, PodDecor, Point, WallDecor, Waypoint, OBSTACLE_PAD_PX};
+use super::{furniture_def, Furniture, PodDecor, Point, WallDecor, Waypoint, OBSTACLE_PAD_PX};
 use crate::walkable::WalkableMask;
 
 /// Walkable footprint (and render face height) of a horizontal (E-W) interior
@@ -97,56 +93,55 @@ pub(super) fn build_walkable_mask(
     }
 
     for sofa in meeting_sofas {
-        // The sofa sprite is 20px wide. The width arg is 16 ON PURPOSE, not a
-        // stale 16px sprite size: `16 + 2·OBSTACLE_PAD = 20` reproduces the
-        // exact 20px X footprint while the pad provides the 7→11px VERTICAL
-        // approach clearance (sit access between sofa and table). The narrowest
-        // meeting room (~26px wide) can't fit horizontal clearance — a literal
-        // `20, pad` block is 24px wide and disconnects the room (the
-        // walkable_mask_is_fully_connected test catches it). Top-down rule:
-        // characters walk right up to the sofa's sides, clear above/below.
-        let (w, h) = MEETING_SOFA_FOOTPRINT;
-        mask.mark_blocked(
-            sofa.x.saturating_sub(w / 2),
-            sofa.y.saturating_sub(h / 2),
-            w,
-            h,
-            OBSTACLE_PAD_PX,
-        );
+        // Sofa BODY footprint from the table (16 ON PURPOSE: 16 + 2·pad = the
+        // 20px sprite X footprint, with the pad giving vertical sit clearance —
+        // see the furniture_def row). Top-down rule: walk up to its sides.
+        if let Some((w, h)) = furniture_def(Furniture::MeetingSofaBody).footprint {
+            mask.mark_blocked(
+                sofa.x.saturating_sub(w / 2),
+                sofa.y.saturating_sub(h / 2),
+                w,
+                h,
+                OBSTACLE_PAD_PX,
+            );
+        }
     }
 
     for t in meeting_tables {
-        let (w, h) = MEETING_TABLE_FOOTPRINT;
-        mask.mark_blocked(
-            t.x.saturating_sub(w / 2),
-            t.y.saturating_sub(h / 2),
-            w,
-            h,
-            OBSTACLE_PAD_PX,
-        );
+        if let Some((w, h)) = furniture_def(Furniture::MeetingTable).footprint {
+            mask.mark_blocked(
+                t.x.saturating_sub(w / 2),
+                t.y.saturating_sub(h / 2),
+                w,
+                h,
+                OBSTACLE_PAD_PX,
+            );
+        }
     }
 
     if let Some(t) = pantry_table {
-        let (w, h) = PANTRY_TABLE_FOOTPRINT;
-        mask.mark_blocked(
-            t.x.saturating_sub(w / 2),
-            t.y.saturating_sub(h / 2),
-            w,
-            h,
-            OBSTACLE_PAD_PX,
-        );
+        if let Some((w, h)) = furniture_def(Furniture::PantryTable).footprint {
+            mask.mark_blocked(
+                t.x.saturating_sub(w / 2),
+                t.y.saturating_sub(h / 2),
+                w,
+                h,
+                OBSTACLE_PAD_PX,
+            );
+        }
     }
     for chair in pantry_chairs {
         // Stool footprint is small; stamped left-biased (offset 2, not w/2) to
         // sit snug against the bistro table — kept as-is for the look.
-        let (w, h) = PANTRY_CHAIR_FOOTPRINT;
-        mask.mark_blocked(
-            chair.x.saturating_sub(2),
-            chair.y.saturating_sub(2),
-            w,
-            h,
-            1,
-        );
+        if let Some((w, h)) = furniture_def(Furniture::PantryChair).footprint {
+            mask.mark_blocked(
+                chair.x.saturating_sub(2),
+                chair.y.saturating_sub(2),
+                w,
+                h,
+                1,
+            );
+        }
     }
 
     for wp in waypoints {
@@ -169,41 +164,44 @@ pub(super) fn build_walkable_mask(
         );
     }
 
-    for (_, p) in plants {
-        // PLANT_FOOTPRINT (ground 6×6) — tighter than the taller visual sprite
-        // (furniture_def(_).visual); top-down rule lets the leaves overhang.
-        let (w, h) = PLANT_FOOTPRINT;
-        mask.mark_blocked(
-            p.x.saturating_sub(w / 2),
-            p.y.saturating_sub(h / 2),
-            w,
-            h,
-            1,
-        );
+    for (kind, p) in plants {
+        // GROUND footprint from the table — tighter than the taller visual
+        // sprite (top-down rule lets the leaves overhang).
+        if let Some((w, h)) = furniture_def(kind.furniture()).footprint {
+            mask.mark_blocked(
+                p.x.saturating_sub(w / 2),
+                p.y.saturating_sub(h / 2),
+                w,
+                h,
+                1,
+            );
+        }
     }
 
     if let Some(lamp) = floor_lamp {
-        let (w, h) = FLOOR_LAMP_FOOTPRINT;
-        mask.mark_blocked(
-            lamp.x.saturating_sub(w / 2),
-            lamp.y.saturating_sub(h / 2),
-            w,
-            h,
-            1,
-        );
+        if let Some((w, h)) = furniture_def(Furniture::FloorLamp).footprint {
+            mask.mark_blocked(
+                lamp.x.saturating_sub(w / 2),
+                lamp.y.saturating_sub(h / 2),
+                w,
+                h,
+                1,
+            );
+        }
     }
 
     if let Some(t) = lounge_side_table {
         // Small footprint, pad=1: sits in the wide open lounge floor with
         // plenty of clearance.
-        let (w, h) = LOUNGE_SIDE_TABLE_FOOTPRINT;
-        mask.mark_blocked(
-            t.x.saturating_sub(w / 2),
-            t.y.saturating_sub(h / 2),
-            w,
-            h,
-            1,
-        );
+        if let Some((w, h)) = furniture_def(Furniture::LoungeSideTable).footprint {
+            mask.mark_blocked(
+                t.x.saturating_sub(w / 2),
+                t.y.saturating_sub(h / 2),
+                w,
+                h,
+                1,
+            );
+        }
     }
 
     // Wall decor is top-left anchored. Only kinds with a ground footprint in

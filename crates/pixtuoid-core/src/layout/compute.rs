@@ -319,10 +319,11 @@ pub(super) fn compute_with_seed(
     // (west of the couch). Clamp its x so the footprint's left edge clears the
     // vertical room wall at `right_x` — at the minimum buffer width couch_x-10
     // would otherwise drop the 7-wide footprint onto the wall column.
+    let side_half_w = furniture_def(Furniture::LoungeSideTable)
+        .footprint
+        .map_or(0, |(w, _)| w / 2);
     let lounge_side_table = Some(Point {
-        x: couch_x
-            .saturating_sub(10)
-            .max(right_x + super::decor::LOUNGE_SIDE_TABLE_FOOTPRINT.0 / 2 + 1),
+        x: couch_x.saturating_sub(10).max(right_x + side_half_w + 1),
         y: couch_y + 2,
     });
 

@@ -39,32 +39,12 @@ pub enum WaypointKind {
 pub(crate) const PHONE_BOOTH_FOOTPRINT: (u16, u16) = (6, 12);
 pub(crate) const STANDING_DESK_FOOTPRINT: (u16, u16) = (8, 8);
 
-// ── Footprints for non-waypoint static furniture ──────────────────────────
-// These pieces aren't `WaypointKind` rows (they're positioned `Point`s, not
-// wander destinations keyed by a kind), so they declare their ground footprint
-// here as named consts rather than `furniture_def` rows. Same principle as the
-// rest of the model — the footprint is declared ONCE: `mask.rs` stamps from
-// these (no inline literals) and the placement-overlap test reads them. Render
-// geometry still derives from the sprite (top-down rule: visuals may overhang).
-/// Meeting sofa BODY footprint, centred on the sofa Point. (The 3 seat
-/// waypoints are `MeetingSofa` with `None` footprint — they sit on this body.)
-pub const MEETING_SOFA_FOOTPRINT: (u16, u16) = (16, 7);
-/// Meeting coffee-table footprint, centred on the table Point.
-pub const MEETING_TABLE_FOOTPRINT: (u16, u16) = (12, 6);
-/// Pantry bistro-table footprint, centred on the table Point.
-pub const PANTRY_TABLE_FOOTPRINT: (u16, u16) = (7, 4);
-/// Pantry stool footprint (left-biased stamp; see `mask.rs`).
-pub const PANTRY_CHAIR_FOOTPRINT: (u16, u16) = (3, 3);
-/// Lounge floor-lamp footprint, centred on the lamp Point. Height 7 (not 6) so
-/// the padded stamp reaches the base disc at `lamp.y+4` (the 4×10 sprite's
-/// south) — at 6 an agent's feet routed through the lamp's ground contact.
-pub const FLOOR_LAMP_FOOTPRINT: (u16, u16) = (4, 7);
-/// Lounge side-table footprint, centred on the table Point.
-pub const LOUNGE_SIDE_TABLE_FOOTPRINT: (u16, u16) = (7, 4);
-/// Plant GROUND footprint, centred on the pot. Deliberately distinct from the
-/// taller VISUAL sprite (`furniture_def(_).visual`) — top-down rule: the leaves
-/// overhang the pot's ground base, so the blocked footprint stays a tight 6×6.
-pub const PLANT_FOOTPRINT: (u16, u16) = (6, 6);
+/// Plant GROUND footprint — the one geometry VALUE shared by all four plant
+/// rows in [`furniture_def`], named here so it's declared once instead of
+/// duplicated across the rows. Deliberately tighter than the taller VISUAL
+/// sprite (top-down rule: the leaves overhang the pot's ground base). Read only
+/// THROUGH the table (`furniture_def(_).footprint`), never directly.
+pub(crate) const PLANT_FOOTPRINT: (u16, u16) = (6, 6);
 
 /// Which sides an agent may approach a piece of furniture from, in the
 /// CANONICAL frame (furniture facing South, toward the viewer). [`Self::allows`]
@@ -254,6 +234,17 @@ pub enum Furniture {
     BulletinBoard,
     ExitSign,
     MeetingScreen,
+    // Singleton / per-room furniture (not keyed by a role enum — placed
+    // directly in the layout). The meeting sofa/table BODIES are distinct from
+    // the `MeetingSofa`/`MeetingStand` SEAT rows above (3 seats sit on 1 body):
+    // the seat rows carry `None` footprint, these carry the obstacle the mask
+    // stamps once per room.
+    MeetingSofaBody,
+    MeetingTable,
+    PantryTable,
+    PantryChair,
+    FloorLamp,
+    LoungeSideTable,
 }
 
 /// THE furniture table — one row per [`Furniture`] kind, the **single** source
@@ -380,6 +371,44 @@ pub const fn furniture_def(kind: Furniture) -> FurnitureDef {
         },
         Furniture::MeetingScreen => FurnitureDef {
             visual: (14, 12),
+            ..DECOR
+        },
+        // Singleton / per-room furniture (rendered procedurally, so `visual` is
+        // mostly informational; the mask stamps `footprint`). The meeting sofa
+        // body's width is 16 ON PURPOSE: `16 + 2·OBSTACLE_PAD = 20` reproduces
+        // the 20px sprite's X footprint while the pad gives the vertical sit-
+        // access clearance — a literal 20-wide block disconnects the narrowest
+        // meeting room (caught by the connectivity test).
+        Furniture::MeetingSofaBody => FurnitureDef {
+            footprint: Some((16, 7)),
+            visual: (20, 8),
+            ..DECOR
+        },
+        Furniture::MeetingTable => FurnitureDef {
+            footprint: Some((12, 6)),
+            visual: (12, 6),
+            ..DECOR
+        },
+        Furniture::PantryTable => FurnitureDef {
+            footprint: Some((7, 4)),
+            visual: (7, 4),
+            ..DECOR
+        },
+        Furniture::PantryChair => FurnitureDef {
+            footprint: Some((3, 3)),
+            visual: (3, 3),
+            ..DECOR
+        },
+        // Footprint height 7 (not 6) so the padded stamp reaches the base disc
+        // at lamp.y+4 (the 4×10 sprite's south); visual is the full 4×10 sprite.
+        Furniture::FloorLamp => FurnitureDef {
+            footprint: Some((4, 7)),
+            visual: (4, 10),
+            ..DECOR
+        },
+        Furniture::LoungeSideTable => FurnitureDef {
+            footprint: Some((7, 4)),
+            visual: (7, 4),
             ..DECOR
         },
     }
