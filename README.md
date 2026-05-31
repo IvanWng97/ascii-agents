@@ -54,7 +54,7 @@ pixtuoid
 
 In another terminal, start a Claude Code session. A character walks in from the elevator within a second.
 
-**Keyboard shortcuts:** `q` quit · `p` pause · `t` themes · `↑↓/jk/PgUp/PgDn` floors · click to pin tooltip
+**Keyboard shortcuts:** `q` quit · `p` pause · `t` themes · `?` help · `↑↓/jk/PgUp/PgDn` floors · click to pin tooltip
 
 <details>
 <summary><strong>More install methods</strong></summary>
@@ -97,7 +97,7 @@ cargo build --release
 | 🌧️ | **Weather effects** | Rain, storm, snow, fog, overcast, windy — cycles every 10 min + sunset golden hour |
 | 📊 | **Tooltip stats** | Hover any agent to see session duration, tool call count, and active time % |
 | 🏷️ | **Furniture tooltips** | Hover any item — desks, sofas, plants, vending machine, printer — to see its name |
-| 🐱 | **Office cat** | Roams desks, pantry, sofas; sleeps near idle agents. Click to pet — pixel-art hearts float up |
+| 🐾 | **Office pets** | A cat or dog (one per floor) roams desks, pantry, sofas; sleeps near idle agents. Click to pet — pixel-art hearts float up |
 | ☕ | **Coffee run** | Idle agents visit the pantry, carry a cup back to their desk. Cup stays while you work; taken on exit |
 | 💬 | **Pantry chitchat** | 2+ idle agents at the same waypoint trigger speech bubbles with dev-humor snippets |
 | 🪴 | **Desk personalization** | Plant (30min), photo frame (1hr) appear over time |
@@ -109,7 +109,7 @@ cargo build --release
 |---|---|---|
 | [**Claude Code**](https://code.claude.com) | ✅ Supported | Hook shim + JSONL watcher |
 | [**Antigravity CLI**](https://github.com/antiGravity-AI/antigravity-cli) | ✅ Supported | JSONL watcher |
-| [**Codex CLI**](https://github.com/openai/codex) | 🔜 Planned | Same hook pattern as CC |
+| [**Codex CLI**](https://github.com/openai/codex) | ✅ Supported | Hook shim + JSONL watcher (hook/JSONL coalesce on session UUID) |
 | [**Copilot CLI**](https://github.com/github/copilot-cli) | 🔜 Planned | Identical event names |
 | [**OpenCode**](https://github.com/anomalyco/opencode) | 🔜 Planned | Any LLM (DeepSeek / GPT / Claude / Gemini) |
 | [**Cursor CLI**](https://cursor.com/cli) | 🔜 Planned | NDJSON stream |
@@ -163,7 +163,7 @@ pixtuoid validate-pack ./my-pack # check for missing animations
 pixtuoid run --pack-dir ./my-pack
 ```
 
-A **robot** pack ships as an example at `sprites/robot/`. See the [sprite format docs](CLAUDE.md) for palette keys and animation requirements.
+A **robot** pack ships as an example at `crates/pixtuoid/sprites/robot/`. See the [sprite format docs](CLAUDE.md) for palette keys and animation requirements.
 
 ## How It Works
 
@@ -238,7 +238,7 @@ Three Rust crates:
 
 ## Contributing
 
-See [`CLAUDE.md`](CLAUDE.md) for architecture and conventions. PRs welcome — especially new themes and `Source` adapters for other agent CLIs (Codex, Cursor, Gemini).
+See [`CLAUDE.md`](CLAUDE.md) for architecture and conventions. PRs welcome — especially new themes and `Source` adapters for other agent CLIs (Copilot, Cursor, OpenCode).
 
 <details>
 <summary><strong>Adding a new agent CLI</strong></summary>
