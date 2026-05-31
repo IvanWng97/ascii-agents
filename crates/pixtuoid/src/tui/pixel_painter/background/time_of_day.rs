@@ -86,6 +86,16 @@ pub(in crate::tui::pixel_painter) fn atmo_attenuation(w: Weather) -> AtmoAttenua
         // Steady rain: dark diffuse, dark night.
         Weather::Rain => (0.40, 0.0, 0.18),
     };
+    // All three channels are 0..1 multipliers/weights — enforce it at the one
+    // place values are minted so a future tuning typo (e.g. pushing `night_sky`
+    // past 1.0, which would over-lerp glass past the day sky / drive `darkness`
+    // negative) trips in dev/test builds. Zero cost in release.
+    debug_assert!(
+        (0.0..=1.0).contains(&intensity)
+            && (0.0..=1.0).contains(&beam_strength)
+            && (0.0..=1.0).contains(&night_sky),
+        "AtmoAttenuation channels must be 0..=1: {w:?} -> ({intensity}, {beam_strength}, {night_sky})"
+    );
     AtmoAttenuation {
         intensity,
         beam_strength,
@@ -312,6 +322,66 @@ mod tests {
             .single()
             .expect("local time should be unambiguous")
             .into()
+    }
+
+    /// Local 02:00 (always night in the day-ramp) on a given January day.
+    /// Weather varies by day at a fixed hour (the hash keys on unix-secs/600),
+    /// so searching days lets us find a clear vs storm night TZ-independently.
+    fn night_on(day: u32) -> SystemTime {
+        chrono::Local
+            .with_ymd_and_hms(2026, 1, day, 2, 0, 0)
+            .single()
+            .expect("local time should be unambiguous")
+            .into()
+    }
+
+    // The headline F1 logic: `darkness = 1 - max(day_eff, night_glow)` makes the
+    // interior brightness track weather AT NIGHT (previously every weather gave
+    // day_eff=0 → identical pitch black). A revert to `1 - day_eff` (dropping
+    // night_glow), a sign flip, or a min/max swap would leave the atmo table
+    // tests green but fail here.
+    #[test]
+    fn time_of_day_look_night_darkness_tracks_weather() {
+        let theme = crate::tui::theme::ALL_THEMES[0];
+        let (mut clear_t, mut storm_t) = (None, None);
+        for day in 1..=28u32 {
+            let t = night_on(day);
+            match weather_state(t) {
+                Weather::Clear if clear_t.is_none() => clear_t = Some(t),
+                Weather::Storm if storm_t.is_none() => storm_t = Some(t),
+                _ => {}
+            }
+        }
+        let clear = time_of_day_look(clear_t.expect("a clear night in January"), theme);
+        let storm = time_of_day_look(storm_t.expect("a storm night in January"), theme);
+        assert!(
+            clear.darkness < storm.darkness,
+            "clear night ({}) must be brighter than storm night ({})",
+            clear.darkness,
+            storm.darkness
+        );
+        assert!(
+            storm.darkness < 1.0,
+            "even a storm night keeps some sky-glow (not pitch black): {}",
+            storm.darkness
+        );
+        // Day path / `max(day_eff, night_glow)`: a CLEAR noon has day_eff≈1, so
+        // night_glow (`night_sky·(1−day)`) drops out and darkness≈0 — day must
+        // dominate the max regardless of the small night term.
+        let clear_noon: SystemTime = (1..=28u32)
+            .map(|d| {
+                chrono::Local
+                    .with_ymd_and_hms(2026, 1, d, 12, 0, 0)
+                    .single()
+                    .unwrap()
+                    .into()
+            })
+            .find(|t| weather_state(*t) == Weather::Clear)
+            .expect("a clear noon in January");
+        assert!(
+            time_of_day_look(clear_noon, theme).darkness < 0.1,
+            "a clear noon should be ~fully lit (day_eff dominates night_glow)"
+        );
     }
 
     #[test]

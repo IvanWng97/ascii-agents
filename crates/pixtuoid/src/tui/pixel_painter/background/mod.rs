@@ -43,11 +43,12 @@ const SPILL_DEPTH: u16 = 12;
 const DOOR_SPRITE_WIDTH: u16 = 16;
 
 /// Lightning strike cadence (Storm only): a flash fires every
-/// `LIGHTNING_PERIOD_MS`, lasting `LIGHTNING_FLASH_MS`. The flash shape is a
-/// two-pulse flicker (`lightning_envelope`) shared by the bright on-glass bolt
+/// `LIGHTNING_PERIOD_MS` (~15 s — a 6 s cadence read as a hyperactive storm),
+/// lasting `LIGHTNING_FLASH_MS`. The flash shape is a two-pulse flicker
+/// (`lightning_envelope`) shared by the bright on-glass bolt
 /// (`paint_floor_to_ceiling_window`) and the softer room-wide ambient bounce
 /// (`paint_lightning_flash`), so both stay in lockstep.
-const LIGHTNING_PERIOD_MS: u64 = 6000;
+const LIGHTNING_PERIOD_MS: u64 = 15000;
 const LIGHTNING_FLASH_MS: u64 = 90;
 
 /// Intensity envelope (0..1) of a lightning flash given ms since the strike
