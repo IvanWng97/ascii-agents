@@ -76,7 +76,10 @@ pub(super) fn dust_mote_positions(
     out
 }
 
-pub(super) fn paint_ambient(ctx: &mut PixelCtx<'_>) {
+pub(super) fn paint_ambient(
+    ctx: &mut PixelCtx<'_>,
+    seated_agents: &std::collections::HashMap<usize, bool>,
+) {
     paint_sun_spot(ctx.buf, ctx.theme, ctx.layout, ctx.now);
     paint_dust_motes(
         ctx.buf,
@@ -85,7 +88,7 @@ pub(super) fn paint_ambient(ctx: &mut PixelCtx<'_>) {
         ctx.floor.floor_seed,
         ctx.now,
     );
-    let halos = collect_ceiling_halos(ctx);
+    let halos = collect_ceiling_halos(ctx, seated_agents);
     paint_ceiling_halos(ctx.buf, ctx.theme, &halos);
 }
 
@@ -136,7 +139,10 @@ pub(super) fn paint_ceiling_halos(buf: &mut RgbBuffer, theme: &Theme, halos: &[C
 /// (desk.x + 6, matching the 4..=9 lit column band). Ceiling y is one
 /// row above the desk's top edge so the halo sits in the wall band
 /// rather than on the monitor frame itself.
-fn collect_ceiling_halos(ctx: &PixelCtx<'_>) -> Vec<CeilingHalo> {
+fn collect_ceiling_halos(
+    ctx: &PixelCtx<'_>,
+    seated_agents: &std::collections::HashMap<usize, bool>,
+) -> Vec<CeilingHalo> {
     use pixtuoid_core::state::ActivityState;
     let mut halos = Vec::new();
     for agent in ctx.scene.agents.values() {
@@ -153,6 +159,16 @@ fn collect_ceiling_halos(ctx: &PixelCtx<'_>) -> Vec<CeilingHalo> {
             continue;
         }
         if agent.floor_idx != ctx.floor.floor_idx {
+            continue;
+        }
+        // Only halo a desk whose occupant is actually SEATED right now — not
+        // mid-walk (entry / snap-back) during the Active grace window. Mirrors
+        // the desk-cubicle screen-glow gate so the two never disagree.
+        if !seated_agents
+            .get(&agent.desk_index)
+            .copied()
+            .unwrap_or(false)
+        {
             continue;
         }
         let Some(desk) = ctx.layout.home_desks.get(agent.desk_index) else {

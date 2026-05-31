@@ -552,8 +552,6 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     if let Some(mr) = ctx.layout.meeting_room {
         let wall_color = ctx.theme.office.room_wall_trim_dark;
         let accent = ctx.theme.furniture.rug_accent;
-        let wood = ctx.theme.furniture.wood_top;
-        let wood_dark = ctx.theme.furniture.wood_trim;
 
         // Notice board on the south wall (8×5)
         if mr.height > 20 && mr.width > 15 {
@@ -572,44 +570,10 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             }
         }
 
-        // Coat rack: 1px pole, 3-wide base, bright coat blobs on hooks
-        if mr.width > 20 {
-            let cx = mr.x + mr.width - 5;
-            let cy = mr.y + mr.height / 2 - 4;
-            let pole = wood_dark;
-            let base = wood;
-            let coats = [Rgb(200, 60, 60), Rgb(80, 120, 200), Rgb(240, 240, 240)];
-            // Pole (1px wide, 8 tall)
-            for dy in 0..8u16 {
-                let py = cy + dy;
-                if py < buf_h && cx < buf_w {
-                    ctx.buf.put(cx, py, pole);
-                }
-            }
-            // Base (3px wide)
-            let by = cy + 7;
-            for dx in 0..3u16 {
-                let px = cx.saturating_sub(1) + dx;
-                if px < buf_w && by < buf_h {
-                    ctx.buf.put(px, by, base);
-                }
-            }
-            // Coat blobs (2×2 colored blocks hanging from hooks)
-            for (i, &coat_color) in coats.iter().enumerate() {
-                let hook_y = cy + 1 + (i as u16) * 2;
-                let side: i16 = if i % 2 == 0 { -1 } else { 1 };
-                let hx = (cx as i16 + side) as u16;
-                for dy in 0..2u16 {
-                    for dx in 0..2u16 {
-                        let px = hx.wrapping_add(if side < 0 { dx.wrapping_sub(1) } else { dx });
-                        let py = hook_y + dy;
-                        if px < buf_w && py < buf_h {
-                            ctx.buf.put(px, py, coat_color);
-                        }
-                    }
-                }
-            }
-        }
+        // Coat rack is now a y-sorted DrawableKind::CoatRack (pushed in the
+        // drawable pass) so characters in front occlude it / behind it are
+        // occluded — was painted here in the background pass, always under
+        // every character.
 
         // Small doormat at the meeting room entrance (on the cubicle side)
         if mr.width > 10 {
@@ -706,9 +670,11 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         );
     }
     for wp in &ctx.layout.waypoints {
-        // Couch shadow is emitted once below (it's 3 seat waypoints; per-seat
-        // shadows would overlap and darken the cushion seams).
-        if wp.kind == crate::tui::layout::WaypointKind::Couch {
+        use crate::tui::layout::WaypointKind;
+        // Couch shadow is emitted once below (3 seat waypoints; per-seat
+        // shadows would overlap). Printer is handled just after — its 4px-tall
+        // sprite's south is pos.y+1, so the generic +2 would float 1px below.
+        if matches!(wp.kind, WaypointKind::Couch | WaypointKind::Printer) {
             continue;
         }
         paint_shadow(
@@ -717,6 +683,23 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             wp.pos.y + 2,
             7,
             2,
+            shadow_strength,
+            ctx.theme,
+        );
+    }
+    for wp in ctx
+        .layout
+        .waypoints
+        .iter()
+        .filter(|w| w.kind == crate::tui::layout::WaypointKind::Printer)
+    {
+        // Flush against the printer's sprite south (pos.y+1).
+        paint_shadow(
+            ctx.buf,
+            wp.pos.x,
+            wp.pos.y + 1,
+            5,
+            1,
             shadow_strength,
             ctx.theme,
         );
@@ -739,7 +722,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         paint_shadow(
             ctx.buf,
             lamp.x,
-            lamp.y + 5,
+            lamp.y + 4, // flush with the lamp base (sprite south = lamp.y+4, 4×10 centred)
             2,
             1,
             shadow_strength,
@@ -747,7 +730,32 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         );
     }
 
-    ambient::paint_ambient(ctx);
+    // Per-desk "is the occupant actually seated right now" map (pose is
+    // SeatedTyping/Thinking, not walking in / snapping back). Built ONCE here
+    // (before the ambient pass) and reused by the desk-cubicle screen glow
+    // below — so the ceiling halo and the screen glow share one gate and one
+    // pose derivation (no double A*).
+    let seated_agents: HashMap<usize, bool> = agents
+        .iter()
+        .filter(|a| a.desk_index < ctx.layout.home_desks.len() && a.exiting_at.is_none())
+        .map(|a| {
+            let p = pose::derive_with_routing(
+                a,
+                ctx.now,
+                ctx.layout,
+                ctx.router,
+                ctx.overlay,
+                ctx.history,
+                ctx.motion,
+            );
+            let seated = matches!(p, Some(Pose::SeatedTyping { .. } | Pose::SeatedThinking));
+            (a.desk_index, seated)
+        })
+        .collect();
+
+    // Ceiling halos gate on `seated_agents` so a tool-glow halo never floats
+    // above an empty desk while its Active occupant is mid-walk (entry/snap).
+    ambient::paint_ambient(ctx, &seated_agents);
 
     // Build per-frame occupancy from STATIONARY agent positions only.
     // Walkers are deliberately excluded — their position interpolates
@@ -800,23 +808,7 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // glow). Sprite is 16×8, so the actual bottom edge is desk.y + 8 —
     // just past the seated character's feet (desk.y + 4), which keeps
     // the seated worker visually behind the desk like it always was.
-    let seated_agents: HashMap<usize, bool> = agents
-        .iter()
-        .filter(|a| a.desk_index < ctx.layout.home_desks.len() && a.exiting_at.is_none())
-        .map(|a| {
-            let p = pose::derive_with_routing(
-                a,
-                ctx.now,
-                ctx.layout,
-                ctx.router,
-                ctx.overlay,
-                ctx.history,
-                ctx.motion,
-            );
-            let seated = matches!(p, Some(Pose::SeatedTyping { .. } | Pose::SeatedThinking));
-            (a.desk_index, seated)
-        })
-        .collect();
+    // (`seated_agents` was built once above, before the ambient pass.)
     for (i, &desk) in ctx.layout.home_desks.iter().enumerate() {
         let (desk_fp_w, desk_fp_h) = crate::tui::layout::desk_furniture_def()
             .footprint
@@ -977,16 +969,20 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
     // above (it spans 3 seat waypoints).
     for wp in &ctx.layout.waypoints {
         use crate::tui::layout::{furniture_def, WaypointKind};
-        // Depth (y-sort) baseline = the footprint's south/front edge =
-        // pos.y + footprint.h/2. Derived from furniture_def so it can't drift
-        // from the mask/stand-point footprint (was hand-typed +3 / +2 / +ch/2).
+        // Depth (y-sort) baseline = the sprite's south row. These appliances
+        // are center-pinned at `pos`, so a sprite of height h occupies rows
+        // [pos.y - h/2, pos.y + h/2 - 1]; the z-key is `pos.y + h/2 - 1` (NOT
+        // +h/2, which overshoots by one and lets the sprite paint over a
+        // character standing immediately in front). h is the footprint height
+        // (= sprite height for these), from furniture_def — no drift.
         let footprint_h = furniture_def(wp.kind).footprint.map_or(0, |(_, h)| h);
         match wp.kind {
             WaypointKind::Couch => {}
             WaypointKind::Pantry => {
                 let (cw, ch) = ctx.layout.pantry_counter_size; // runtime-sized
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + ch / 2,
+                    // center-pinned sprite of height h: south row = h/2 - 1
+                    anchor_y: wp.pos.y + (ch / 2).saturating_sub(1),
                     kind: DrawableKind::WaypointPantry {
                         pos: wp.pos,
                         use_large: cw >= 32,
@@ -996,13 +992,13 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
             WaypointKind::PhoneBooth | WaypointKind::StandingDesk => {}
             WaypointKind::VendingMachine => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + footprint_h / 2,
+                    anchor_y: wp.pos.y + (footprint_h / 2).saturating_sub(1),
                     kind: DrawableKind::VendingMachine { pos: wp.pos },
                 });
             }
             WaypointKind::Printer => {
                 drawables.push(Drawable {
-                    anchor_y: wp.pos.y + footprint_h / 2,
+                    anchor_y: wp.pos.y + (footprint_h / 2).saturating_sub(1),
                     kind: DrawableKind::Printer { pos: wp.pos },
                 });
             }
@@ -1047,12 +1043,27 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         });
     }
 
-    // Floor lamp (4×10 centered).
+    // Floor lamp (4×10 centered). z-key = sprite south row = lamp.y + h/2 - 1
+    // (10/2 - 1 = 4), the visual base — was +5 (one row past, floated the
+    // shadow + let the lamp paint over a character standing just in front).
     if let Some(lamp) = ctx.layout.floor_lamp {
         drawables.push(Drawable {
-            anchor_y: lamp.y + 5,
+            anchor_y: lamp.y + 4,
             kind: DrawableKind::FloorLamp { pos: lamp },
         });
+    }
+
+    // Meeting-room coat rack — y-sorted at its base row (cy+7) so a character
+    // in front occludes it. Same geometry the background pass used to draw.
+    if let Some(mr) = ctx.layout.meeting_room {
+        if mr.width > 20 {
+            let cx = mr.x + mr.width - 5;
+            let cy = mr.y + mr.height / 2 - 4;
+            drawables.push(Drawable {
+                anchor_y: cy + 7,
+                kind: DrawableKind::CoatRack { cx, cy },
+            });
+        }
     }
 
     // Elevator door (16×14, top-left anchored). Frame is computed
@@ -1125,7 +1136,9 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         if let Some((pos, flip, anim_name, frame_idx, pet_elapsed)) = pet_data {
             resolved_pet_pos = Some((pos, anim_name, kind));
             drawables.push(Drawable {
-                anchor_y: pos.y + 3,
+                // center-pinned pet sprite (walk/sit 8×6, 6×6) south row =
+                // pos.y + h/2 - 1 = pos.y + 2 (was +3, one row past).
+                anchor_y: pos.y + 2,
                 kind: DrawableKind::Pet {
                     kind,
                     pos,
@@ -1317,7 +1330,18 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
                         // visual `anchor` below still breathes; only the z-order
                         // is pinned. Insertion order (decor before characters)
                         // then keeps the sitter on top of the couch.
-                        anchor_y: anchor_no_breath.y + sprite_h,
+                        //
+                        // MeetingStand sits AT the table row (stand.y == table.y),
+                        // so its bare z-key (stand.y) ties below the meeting
+                        // table (table.y+2) and the table paints over the
+                        // stander's feet. +3 lifts it clear of the table.
+                        anchor_y: anchor_no_breath.y
+                            + sprite_h
+                            + if matches!(kind, WaypointKind::MeetingStand) {
+                                3
+                            } else {
+                                0
+                            },
                         kind: DrawableKind::Character {
                             agent,
                             anim_name,
@@ -1866,29 +1890,16 @@ mod tests {
     }
 
     #[test]
-    fn waypoint_depth_baseline_derives_from_footprint() {
+    fn waypoint_depth_baseline_is_center_pinned_sprite_south() {
         use crate::tui::layout::{furniture_def, WaypointKind};
-        // The waypoint z-sort key is pos.y + footprint.h/2 (the ground front
-        // edge), now DERIVED from furniture_def rather than hand-typed. These
-        // were the historical literals (+3 vending, +2 printer); assert the
-        // derivation still yields them, so a footprint edit that would shift
-        // z-order surfaces here instead of as a visual layering bug.
-        assert_eq!(
-            furniture_def(WaypointKind::VendingMachine)
-                .footprint
-                .expect("vending has a footprint")
-                .1
-                / 2,
-            3,
-        );
-        assert_eq!(
-            furniture_def(WaypointKind::Printer)
-                .footprint
-                .expect("printer has a footprint")
-                .1
-                / 2,
-            2,
-        );
+        // These appliances are center-pinned, so the z-sort key is the sprite's
+        // south ROW = pos.y + footprint.h/2 - 1 (NOT +h/2 — that overshoots by
+        // one and lets the sprite paint over a character just in front). Lock
+        // the corrected offsets (vending 6→2, printer 4→1), DERIVED from the
+        // footprint so a shape edit surfaces here, not as a visual layering bug.
+        let south_off = |k| furniture_def(k).footprint.expect("has footprint").1 / 2 - 1;
+        assert_eq!(south_off(WaypointKind::VendingMachine), 2);
+        assert_eq!(south_off(WaypointKind::Printer), 1);
     }
 
     #[test]
