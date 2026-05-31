@@ -153,6 +153,13 @@ pub(super) enum DrawableKind<'a> {
         frame_idx: usize,
         pet_elapsed_ms: Option<u64>,
     },
+    /// Horizontal (E-W) frosted-glass room divider, y-sorted at its south
+    /// (front) edge so it composites over a character standing behind it.
+    RoomWallH {
+        x0: u16,
+        x1: u16,
+        y_top: u16,
+    },
 }
 
 /// Pet roaming the whole office. Each 40s cycle picks a destination
@@ -594,6 +601,9 @@ pub(super) fn paint_drawable(
             } else if *anim_name == kind.sleep_anim() {
                 paint_sleep_z(buf, *pos, now, 0xCAFE, theme);
             }
+        }
+        DrawableKind::RoomWallH { x0, x1, y_top } => {
+            super::paint_glass_wall_h(buf, theme, *x0, *x1, *y_top);
         }
     }
 }
