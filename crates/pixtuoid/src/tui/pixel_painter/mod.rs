@@ -86,12 +86,13 @@ const GLASS_SEAM_STRIDE: u16 = 16;
 // wall has their feet/legs composited behind this translucent cap (occluded
 // behind the glass). The cap is over floor (visual only), not the mask.
 //
-// Sized to WALL_THICK_H so the cap reaches into the legs of a walker at the
-// northmost walkable row (footprint top `W` minus OBSTACLE_PAD+1 = `W-3`): the
-// 12px sprite spans `W-15..W-3`, the cap now covers `W-6..W-1`, so the bottom
-// ~4px (feet + lower legs) read behind the pane. At the old value of 3 only the
-// single feet row was grazed.
-const GLASS_CAP_PX: u16 = 6;
+// Derived from WALL_THICK_H_PX (the E-W wall face height) so the cap reaches
+// into the legs of a walker at the northmost walkable row (footprint top `W`
+// minus OBSTACLE_PAD+1 = `W-3`): the 12px sprite spans `W-15..W-3`, the cap
+// covers `W-6..W-1`, so the bottom ~4px (feet + lower legs) read behind the
+// pane. At the old value of 3 only the single feet row was grazed. Derived (not
+// a bare 6) so retuning the wall face thickness moves the cap with it.
+const GLASS_CAP_PX: u16 = WALL_THICK_H_PX;
 
 fn glass_tones(theme: &crate::tui::theme::Theme) -> (Rgb, Rgb, Rgb) {
     let tl = theme.office.room_wall_trim_light;
