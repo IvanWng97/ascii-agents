@@ -1373,6 +1373,203 @@ fn sweep_stale_marks_old_agent_exiting_on_tick() {
     );
 }
 
+#[test]
+fn stale_sweep_cascades_to_children() {
+    use pixtuoid_core::state::reducer::STALE_IDLE_TIMEOUT;
+    let mut scene = SceneState::uniform(8);
+    let mut r = Reducer::new();
+    let parent = AgentId::from_transcript_path("/p/stale-cascade.jsonl");
+    let child = AgentId::from_parts("claude-code", "/p/stale-cascade/subagents/agent-1.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: parent,
+            source: "claude-code".into(),
+            session_id: "parent".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: child,
+            source: "claude-code".into(),
+            session_id: "child".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(parent),
+        },
+        t0 + Duration::from_millis(100),
+        Transport::Jsonl,
+    );
+    // Heartbeat the child so it is NOT independently stale at the tick below.
+    // Only the parent (no events since t0) crosses STALE_IDLE_TIMEOUT, so the
+    // child's exit can only come from the cascade.
+    r.apply(
+        &mut scene,
+        AgentEvent::Rename {
+            agent_id: child,
+            label: "cc·sub".into(),
+        },
+        t0 + Duration::from_secs(25 * 60),
+        Transport::Jsonl,
+    );
+
+    r.tick(&mut scene, t0 + STALE_IDLE_TIMEOUT + Duration::from_secs(1));
+
+    assert!(
+        scene.agents.get(&parent).unwrap().exiting_at.is_some(),
+        "stale parent should be marked exiting"
+    );
+    assert!(
+        scene.agents.get(&child).unwrap().exiting_at.is_some(),
+        "child should cascade-exit with a stale-swept parent (it is not independently stale)"
+    );
+}
+
+#[test]
+fn stale_sweep_cascades_to_grandchildren() {
+    use pixtuoid_core::state::reducer::STALE_IDLE_TIMEOUT;
+    let mut scene = SceneState::uniform(8);
+    let mut r = Reducer::new();
+    let grandparent = AgentId::from_transcript_path("/p/stale-gp.jsonl");
+    let parent = AgentId::from_parts("claude-code", "/p/stale-gp/subagents/agent-p.jsonl");
+    let child = AgentId::from_parts("claude-code", "/p/stale-gp/subagents/agent-c.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: grandparent,
+            source: "claude-code".into(),
+            session_id: "gp".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: parent,
+            source: "claude-code".into(),
+            session_id: "p".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(grandparent),
+        },
+        t0 + Duration::from_millis(100),
+        Transport::Jsonl,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: child,
+            source: "claude-code".into(),
+            session_id: "c".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(parent),
+        },
+        t0 + Duration::from_millis(200),
+        Transport::Jsonl,
+    );
+    // Heartbeat the middle + leaf so only the grandparent is independently stale.
+    for (id, label) in [(parent, "cc·p"), (child, "cc·c")] {
+        r.apply(
+            &mut scene,
+            AgentEvent::Rename {
+                agent_id: id,
+                label: label.into(),
+            },
+            t0 + Duration::from_secs(25 * 60),
+            Transport::Jsonl,
+        );
+    }
+
+    r.tick(&mut scene, t0 + STALE_IDLE_TIMEOUT + Duration::from_secs(1));
+
+    assert!(
+        scene.agents.get(&child).unwrap().exiting_at.is_some(),
+        "grandchild should cascade-exit via BFS through the stale grandparent"
+    );
+}
+
+#[test]
+fn stale_sweep_cascade_skips_unrelated_fresh_agents() {
+    use pixtuoid_core::state::reducer::STALE_IDLE_TIMEOUT;
+    let mut scene = SceneState::uniform(8);
+    let mut r = Reducer::new();
+    let parent = AgentId::from_transcript_path("/p/stale-host.jsonl");
+    let child = AgentId::from_parts("claude-code", "/p/stale-host/subagents/agent-1.jsonl");
+    let unrelated = AgentId::from_transcript_path("/p/other-session.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: parent,
+            source: "claude-code".into(),
+            session_id: "parent".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: child,
+            source: "claude-code".into(),
+            session_id: "child".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(parent),
+        },
+        t0 + Duration::from_millis(100),
+        Transport::Jsonl,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: unrelated,
+            source: "claude-code".into(),
+            session_id: "other".into(),
+            cwd: PathBuf::from("/other-repo"),
+            parent_id: None,
+        },
+        t0 + Duration::from_millis(150),
+        Transport::Hook,
+    );
+    // Heartbeat the child AND the unrelated agent so neither is independently
+    // stale: only the parent crosses the threshold.
+    for (id, label) in [(child, "cc·sub"), (unrelated, "cc·other")] {
+        r.apply(
+            &mut scene,
+            AgentEvent::Rename {
+                agent_id: id,
+                label: label.into(),
+            },
+            t0 + Duration::from_secs(25 * 60),
+            Transport::Jsonl,
+        );
+    }
+
+    r.tick(&mut scene, t0 + STALE_IDLE_TIMEOUT + Duration::from_secs(1));
+
+    assert!(
+        scene.agents.get(&child).unwrap().exiting_at.is_some(),
+        "the stale parent's child must cascade-exit"
+    );
+    assert!(
+        scene.agents.get(&unrelated).unwrap().exiting_at.is_none(),
+        "a fresh, unrelated agent must NOT be cascaded out"
+    );
+}
+
 /// With heterogeneous per-floor capacities, the third session should
 /// overflow from floor 0 (cap=2) to floor 1's first desk (global index 2).
 #[test]

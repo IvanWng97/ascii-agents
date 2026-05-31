@@ -391,25 +391,7 @@ impl Reducer {
                         slot.exiting_at = Some(now);
                     }
                 }
-                let mut visited = HashSet::new();
-                visited.insert(agent_id);
-                let mut frontier = vec![agent_id];
-                while let Some(parent) = frontier.pop() {
-                    let children: Vec<AgentId> = scene
-                        .agents
-                        .values()
-                        .filter(|s| s.parent_id == Some(parent) && s.exiting_at.is_none())
-                        .map(|s| s.agent_id)
-                        .collect();
-                    for cid in children {
-                        if visited.insert(cid) {
-                            if let Some(slot) = scene.agents.get_mut(&cid) {
-                                slot.exiting_at = Some(now);
-                            }
-                            frontier.push(cid);
-                        }
-                    }
-                }
+                Self::cascade_exit(scene, agent_id, now);
             }
         }
     }
@@ -473,32 +455,80 @@ impl Reducer {
     /// Unknown-cwd agents (label starts with "cc#") get a much shorter
     /// timeout — they're almost always ghosts from JSONL startup seeding.
     fn sweep_stale(&mut self, scene: &mut SceneState, now: SystemTime) {
-        for slot in scene.agents.values_mut() {
-            if slot.exiting_at.is_some() {
-                continue;
-            }
-            let age = now
-                .duration_since(slot.last_event_at)
-                .unwrap_or(Duration::ZERO);
-            let unknown_cwd = slot.unknown_cwd;
-            let threshold = if unknown_cwd {
-                STALE_UNKNOWN_CWD_TIMEOUT
-            } else {
-                match &slot.state {
-                    ActivityState::Active { .. } => STALE_ACTIVE_TIMEOUT,
-                    ActivityState::Idle => STALE_IDLE_TIMEOUT,
-                    ActivityState::Waiting { .. } => STALE_WAITING_TIMEOUT,
+        // Pass 1 — collect agents crossing their stale threshold this tick.
+        // Immutable borrow: we can't cascade (which re-borrows `scene` mutably)
+        // while it's held, so gather ids first, mutate in pass 2. Mirrors
+        // `sweep_exited`'s collect-then-mutate shape.
+        let stale: Vec<(AgentId, Duration, Duration)> = scene
+            .agents
+            .values()
+            .filter(|slot| slot.exiting_at.is_none())
+            .filter_map(|slot| {
+                let age = now
+                    .duration_since(slot.last_event_at)
+                    .unwrap_or(Duration::ZERO);
+                let threshold = if slot.unknown_cwd {
+                    STALE_UNKNOWN_CWD_TIMEOUT
+                } else {
+                    match &slot.state {
+                        ActivityState::Active { .. } => STALE_ACTIVE_TIMEOUT,
+                        ActivityState::Idle => STALE_IDLE_TIMEOUT,
+                        ActivityState::Waiting { .. } => STALE_WAITING_TIMEOUT,
+                    }
+                };
+                (age > threshold).then_some((slot.agent_id, age, threshold))
+            })
+            .collect();
+
+        // Pass 2 — mark each stale agent exiting, then cascade to its subagents
+        // so a stale-swept (or abruptly-exited, SessionEnd-less) parent never
+        // leaves orphaned children behind. Skip any slot a prior cascade in this
+        // same sweep already marked (keeps the log + `exiting_at` write-once).
+        for (id, age, threshold) in stale {
+            {
+                let Some(slot) = scene.agents.get_mut(&id) else {
+                    continue;
+                };
+                if slot.exiting_at.is_some() {
+                    continue;
                 }
-            };
-            if age > threshold {
                 tracing::info!(
-                    agent_id = ?slot.agent_id,
+                    agent_id = ?id,
                     label = %slot.label,
                     age_secs = age.as_secs(),
                     threshold_secs = threshold.as_secs(),
                     "stale agent — marking exiting"
                 );
                 slot.exiting_at = Some(now);
+            }
+            Self::cascade_exit(scene, id, now);
+        }
+    }
+
+    /// Mark every not-yet-exiting descendant of `root` exiting, BFS over
+    /// `parent_id` links. The caller marks `root` itself first — `root` is only
+    /// the BFS seed here and is never re-stamped. Idempotent: slots already
+    /// exiting are filtered out, so a leaf or a partly-exiting subtree is a
+    /// safe no-op. Shared by the `SessionEnd` arm and `sweep_stale` so a parent
+    /// leaving by EITHER path takes its subagents with it.
+    fn cascade_exit(scene: &mut SceneState, root: AgentId, now: SystemTime) {
+        let mut visited: HashSet<AgentId> = HashSet::new();
+        visited.insert(root);
+        let mut frontier = vec![root];
+        while let Some(parent) = frontier.pop() {
+            let children: Vec<AgentId> = scene
+                .agents
+                .values()
+                .filter(|s| s.parent_id == Some(parent) && s.exiting_at.is_none())
+                .map(|s| s.agent_id)
+                .collect();
+            for cid in children {
+                if visited.insert(cid) {
+                    if let Some(slot) = scene.agents.get_mut(&cid) {
+                        slot.exiting_at = Some(now);
+                    }
+                    frontier.push(cid);
+                }
             }
         }
     }
