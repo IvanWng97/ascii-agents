@@ -391,6 +391,127 @@ fn snap_back_cornered_leg_freezes_path_no_reroute() {
 }
 
 #[test]
+fn snap_back_derive_is_idempotent_within_a_frame() {
+    // Regression: the render loop calls derive_with_routing up to 4x per agent
+    // per frame (seated map, sprite paint, hit-test, label) at the SAME `now`,
+    // sharing one history + motion. It must be idempotent within a frame —
+    // every call returns the same pose and its side-effects (history.record,
+    // snap_back arm/clear) settle to the same state — else the label and
+    // hit-box lead the painted sprite (the "K-call desync"). This holds only
+    // because every history-consuming walk freezes its origin: snap-back since
+    // #66, exit always, wander via advance_wander's last_advanced_at. A future
+    // walk that re-reads the advancing history position per frame would
+    // re-break it. Step a full snap-back lifecycle (arm -> walk -> walk_arrived
+    // clear), deriving 4x per frame, asserting pose + history are stable.
+    let now0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let l = layout();
+    let slot = active_slot(now0, now0 - Duration::from_secs(60));
+    let desk = l.home_desks[0];
+    // Short-ish snap so walk_arrived fires within the 900ms window (exercises
+    // the clear -> re-arm path), but >= SNAP_BACK_MIN_DIST so it arms.
+    let prev0 = Point {
+        x: desk.x + 14,
+        y: desk.y + 10,
+    };
+    let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+    let mut router = StubRouter::straight();
+    let mut history = PoseHistory::new();
+    history.record(slot.agent_id, prev0, now0 - Duration::from_millis(50));
+    let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+    for i in 0..30u64 {
+        let t = now0 + Duration::from_millis(i * 33);
+        let p0 = derive_with_routing(
+            &slot,
+            t,
+            &l,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        let h0 = history.recent(slot.agent_id, 300, t);
+        for k in 1..4 {
+            let pk = derive_with_routing(
+                &slot,
+                t,
+                &l,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            );
+            let hk = history.recent(slot.agent_id, 300, t);
+            assert_eq!(
+                p0, pk,
+                "frame {i} call {k}: pose differs within one frame ({p0:?} vs {pk:?}) — K-call desync"
+            );
+            assert_eq!(
+                h0, hk,
+                "frame {i} call {k}: history advanced within one frame ({h0:?} vs {hk:?})"
+            );
+        }
+    }
+}
+
+#[test]
+fn wander_derive_is_idempotent_within_a_frame() {
+    // Regression (companion to snap_back_derive_is_idempotent_within_a_frame),
+    // real A* router: a wander walk's origin is history-based, so it's the
+    // likeliest path to re-break per-frame idempotency. Drive a full coffee-run
+    // wander, deriving character_anchor 4x per frame, asserting the anchor is
+    // stable within each frame (its advance_wander step is guarded by
+    // last_advanced_at).
+    use crate::tui::pathfind::AStarRouter;
+    use crate::tui::pixel_painter::character_anchor;
+
+    let now0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let l = layout();
+    let trip_id = (0u64..1000)
+        .map(|i| AgentId::from_transcript_path(&format!("/idem/{i}.jsonl")))
+        .find(|id| takes_trip(*id, 0))
+        .expect("find a trip agent");
+    let old = now0 - Duration::from_secs(120);
+    let mut slot = entry_slot(old);
+    slot.agent_id = trip_id;
+    slot.last_event_at = old;
+
+    let mut router = AStarRouter::new();
+    router.set_preferred_zone(l.corridor);
+    let overlay = pixtuoid_core::walkable::OccupancyOverlay::new();
+    let mut history = PoseHistory::new();
+    let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+
+    for i in 0..200u64 {
+        let t = now0 + Duration::from_millis(i * 33);
+        let a0 = character_anchor(
+            &slot,
+            &l,
+            t,
+            &mut router,
+            &overlay,
+            &mut history,
+            &mut motion,
+        );
+        for k in 1..4 {
+            let ak = character_anchor(
+                &slot,
+                &l,
+                t,
+                &mut router,
+                &overlay,
+                &mut history,
+                &mut motion,
+            );
+            assert_eq!(
+                a0, ak,
+                "frame {i} call {k}: wander anchor differs within one frame ({a0:?} vs {ak:?}) — K-call desync"
+            );
+        }
+    }
+}
+
+#[test]
 fn snap_back_long_distance_completes_by_window_no_teleport() {
     // Regression: a snap-back over a distance whose physics duration exceeds
     // SNAP_BACK_MS (the common case — agents snap back from far waypoints)
