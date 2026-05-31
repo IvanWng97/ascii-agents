@@ -4,7 +4,7 @@
 //! clearance band around each obstacle so walkers don't scrape along
 //! edges.
 
-use super::{PodDecor, Point, WallDecor, Waypoint, WaypointKind, DESK_H, DESK_W, OBSTACLE_PAD_PX};
+use super::{PodDecor, Point, WallDecor, Waypoint, DESK_H, DESK_W, OBSTACLE_PAD_PX};
 use crate::walkable::WalkableMask;
 
 #[allow(clippy::too_many_arguments)]
@@ -126,21 +126,11 @@ pub(super) fn build_walkable_mask(
     }
 
     for wp in waypoints {
-        let (w, h) = match wp.kind {
-            // The couch is 3 seat-waypoints (dx ∈ {-6,0,+6}). An 8px-wide
-            // footprint per seat overlaps its neighbours (8 > 6 spacing) so the
-            // union is the exact 20px sofa ground footprint (couch_x-10..+10) —
-            // ground footprint only, never the visual width over-blocked.
-            WaypointKind::Couch => (8, 7),
-            WaypointKind::Pantry => pantry_counter_size,
-            WaypointKind::PhoneBooth => (6, 12),
-            WaypointKind::StandingDesk => (8, 8),
-            WaypointKind::VendingMachine => (4, 6),
-            WaypointKind::Printer => (5, 4),
-            // Meeting slots sit/stand on the sofa/table furniture, which is
-            // already stamped above by the meeting_sofas / meeting_tables
-            // loops. The slot adds no new obstacle.
-            WaypointKind::MeetingSofa | WaypointKind::MeetingStand => continue,
+        // Footprint sizes live in `approach::obstacle_footprint` (single source
+        // of truth shared with `stand_point`). `None` = meeting slots, which
+        // sit/stand on sofa/table furniture already stamped above — no obstacle.
+        let Some((w, h)) = super::approach::obstacle_footprint(wp.kind, pantry_counter_size) else {
+            continue;
         };
         // Pad=1 (not OBSTACLE_PAD_PX=2) — waypoint furniture paints in
         // Pass 1.5 (after characters) so a visitor's body is occluded

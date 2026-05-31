@@ -552,8 +552,25 @@ pub fn render_to_rgb_buffer(ctx: &mut PixelCtx<'_>) -> PixelPassResult {
         };
         if let Pose::AtWaypoint { wp, .. } = pose {
             if let Some(w) = ctx.layout.waypoints.get(wp) {
+                // Reserve the cell the agent actually stands on (the stand cell,
+                // off the furniture), NOT the blocked furniture center — else
+                // another agent's A* routes straight through the stander. Same
+                // `desk` origin as every other stand_point caller.
+                let origin = ctx
+                    .layout
+                    .home_desks
+                    .get(agent.desk_index)
+                    .copied()
+                    .unwrap_or(w.pos);
+                let stand = pixtuoid_core::layout::stand_point(
+                    w.kind,
+                    w.pos,
+                    ctx.layout.pantry_counter_size,
+                    &ctx.layout.walkable,
+                    origin,
+                );
                 ctx.overlay
-                    .add(w.pos.x.saturating_sub(4), w.pos.y.saturating_sub(6), 8, 12);
+                    .add(stand.x.saturating_sub(4), stand.y.saturating_sub(6), 8, 12);
             }
         }
     }

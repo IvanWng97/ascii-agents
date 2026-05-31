@@ -889,3 +889,63 @@ fn long_dwell_never_trips_stale_resume_on_screen() {
         "agent should still be AtWaypoint just before the dwell ends"
     );
 }
+
+// -----------------------------------------------------------------------
+// Dest mirror: the motion walk destination for a furniture waypoint must
+// equal core::layout::stand_point computed with the agent's HOME DESK as
+// origin — the same call core::pose::idle_pose and both render anchors make.
+// Guards the load-bearing core↔tui dest mirror against a future origin drift.
+// -----------------------------------------------------------------------
+#[test]
+fn wander_dest_for_pantry_is_the_home_desk_stand_point() {
+    let l = layout();
+    let pantry_idx = l
+        .waypoints
+        .iter()
+        .position(|w| w.kind == WaypointKind::Pantry)
+        .expect("standard floor has a pantry");
+    // Find an agent whose cycle-0 trip is a non-aimless pantry visit.
+    let (path, _id) = (0u64..8000)
+        .find_map(|i| {
+            let p = format!("/p/mirror_{i}.jsonl");
+            let id = AgentId::from_transcript_path(&p);
+            (takes_trip(id, 0)
+                && !is_aimless_cycle(id, 0)
+                && waypoint_index_for_cycle(id, 0, l.waypoints.len()) == pantry_idx)
+                .then_some((p, id))
+        })
+        .expect("an agent lands at the pantry on cycle 0");
+
+    let now = t0();
+    let slot = idle_slot(&path, now); // desk_index 0
+    let overlay = OccupancyOverlay::new();
+    let mut router = Straight;
+    let mut motion: HashMap<AgentId, MotionState> = HashMap::new();
+    advance_wander(&slot, now, &l, &mut router, &overlay, &mut motion);
+    let now = advance_until_leaves(
+        &slot,
+        &l,
+        &mut router,
+        &overlay,
+        &mut motion,
+        now,
+        WanderPhase::Seated,
+        120_000,
+    );
+    let _ = now;
+
+    let ms = motion.get(&slot.agent_id).expect("state");
+    assert_eq!(ms.wander_dest_kind, Some(WaypointKind::Pantry));
+    let desk = l.home_desks[0];
+    let expected = pixtuoid_core::layout::stand_point(
+        WaypointKind::Pantry,
+        l.waypoints[pantry_idx].pos,
+        l.pantry_counter_size,
+        &l.walkable,
+        desk,
+    );
+    assert_eq!(
+        ms.wander_dest, expected,
+        "motion dest must equal the home-desk stand_point (core↔tui mirror)"
+    );
+}

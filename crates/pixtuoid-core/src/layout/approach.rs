@@ -27,21 +27,41 @@ const STAND_CLEARANCE: u16 = 2;
 /// cell before giving up on a side.
 const STAND_SCAN: i32 = 4;
 
-/// Footprint half-extents `(hx, hy)` mirroring the `mask.rs` stamp sizes.
-/// `None` = seat furniture whose `pos` is already the walkable seat cell
-/// (couch / meeting slots) — no stand resolution needed.
-fn half_extents(kind: WaypointKind, pantry_counter_size: (u16, u16)) -> Option<(u16, u16)> {
-    let (w, h) = match kind {
+/// Ground-footprint `(w, h)` the walkable mask stamps for a waypoint, or
+/// `None` for slots that add no obstacle (meeting sofa/stand sit on the
+/// sofa/table furniture, already stamped elsewhere). **Single source of
+/// truth** — `mask::build_walkable_mask` and [`stand_point`] both read it,
+/// so the footprint can't drift between the two.
+pub(super) fn obstacle_footprint(
+    kind: WaypointKind,
+    pantry_counter_size: (u16, u16),
+) -> Option<(u16, u16)> {
+    Some(match kind {
+        // 3 seat-waypoints (dx ∈ {-6,0,+6}); 8px each overlaps to the exact
+        // 20px sofa ground footprint. Ground footprint only (top-down rule).
+        WaypointKind::Couch => (8, 7),
         WaypointKind::Pantry => pantry_counter_size,
         WaypointKind::PhoneBooth => (6, 12),
         WaypointKind::StandingDesk => (8, 8),
         WaypointKind::VendingMachine => (4, 6),
         WaypointKind::Printer => (5, 4),
-        WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand => {
-            return None
-        }
-    };
-    Some((w / 2, h / 2))
+        WaypointKind::MeetingSofa | WaypointKind::MeetingStand => return None,
+    })
+}
+
+/// Footprint half-extents `(hx, hy)` for stand-cell resolution, or `None` for
+/// seat furniture (couch and meeting slots) whose `pos` is the seat cell the
+/// sprite sits ON — those pass through `pos` unchanged, no stand resolution.
+/// This `None` set is a superset of `obstacle_footprint`'s: the couch HAS an
+/// obstacle footprint yet is still treated as a seat here.
+fn half_extents(kind: WaypointKind, pantry_counter_size: (u16, u16)) -> Option<(u16, u16)> {
+    if matches!(
+        kind,
+        WaypointKind::Couch | WaypointKind::MeetingSofa | WaypointKind::MeetingStand
+    ) {
+        return None;
+    }
+    obstacle_footprint(kind, pantry_counter_size).map(|(w, h)| (w / 2, h / 2))
 }
 
 /// The walkable cell where an agent should stand to use the furniture of
@@ -192,6 +212,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn real_pantry_stand_responds_to_desk_side() {
+        // On the real standard floor, a desk to the NORTH must not yield a
+        // stand cell *south* of one chosen for a desk to the SOUTH — the side
+        // tracks the origin (the whole point: a desk above the pantry → a
+        // top-down approach, not a detour below).
+        use crate::layout::SceneLayout;
+        let l = SceneLayout::compute(120, 96, 4).unwrap();
+        let p = l
+            .waypoints
+            .iter()
+            .find(|w| w.kind == WaypointKind::Pantry)
+            .expect("pantry")
+            .pos;
+        let cs = l.pantry_counter_size;
+        let north = stand_point(
+            WaypointKind::Pantry,
+            p,
+            cs,
+            &l.walkable,
+            Point { x: p.x, y: 0 },
+        );
+        let south = stand_point(
+            WaypointKind::Pantry,
+            p,
+            cs,
+            &l.walkable,
+            Point {
+                x: p.x,
+                y: l.buf_h - 1,
+            },
+        );
+        assert!(
+            north.y <= south.y,
+            "north-desk stand {north:?} should be no lower than south-desk stand {south:?}"
+        );
     }
 
     #[test]
