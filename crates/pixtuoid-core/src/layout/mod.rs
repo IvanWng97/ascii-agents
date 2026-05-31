@@ -179,6 +179,58 @@ mod tests {
         }
     }
 
+    // Ground-footprint rectangles (no clearance pad — the pad is routing
+    // slack, not the object's solid area). Mirror the stamps in `mask.rs`.
+    fn rects_overlap(a: (u16, u16, u16, u16), b: (u16, u16, u16, u16)) -> bool {
+        a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3
+    }
+    fn wall_rect(s: Point, e: Point) -> (u16, u16, u16, u16) {
+        if s.x == e.x {
+            (s.x, s.y.min(e.y), 1, s.y.abs_diff(e.y) + 1) // vertical: WALL_THICK_V=1
+        } else {
+            (s.x.min(e.x), s.y, s.x.abs_diff(e.x) + 1, WALL_THICK_H)
+        }
+    }
+
+    #[test]
+    fn freestanding_decor_does_not_overlap_room_walls() {
+        // Placement-overlap guard for FREE-STANDING decor only — items meant to
+        // sit in open floor (pantry bistro table, lounge side table). Burying
+        // one inside a wall (the reported pantry-table bug) is a placement
+        // error. NOT checked: wall-ADJACENT furniture (meeting sofa/table sit
+        // against the glass partitions by design) — that overlap is intended +
+        // physically correct, and the occlusion / z-sort system draws it right.
+        for &(w, h) in &[(96u16, 72u16), (120, 80), (160, 120), (192, 160)] {
+            for seed in 0..6u64 {
+                let Some(l) = SceneLayout::compute_with_seed(w, h, 8, seed) else {
+                    continue;
+                };
+                let mut items: Vec<(&str, (u16, u16, u16, u16))> = Vec::new();
+                if let Some(t) = l.pantry_table {
+                    items.push((
+                        "pantry_table",
+                        (t.x.saturating_sub(4), t.y.saturating_sub(2), 8, 5),
+                    ));
+                }
+                if let Some(t) = l.lounge_side_table {
+                    items.push((
+                        "lounge_side_table",
+                        (t.x.saturating_sub(3), t.y.saturating_sub(2), 7, 4),
+                    ));
+                }
+                for (item, rect) in &items {
+                    for &(s, e) in &l.room_walls {
+                        let wr = wall_rect(s, e);
+                        assert!(
+                            !rects_overlap(*rect, wr),
+                            "{w}x{h} seed {seed}: {item} {rect:?} overlaps wall {wr:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn compute_returns_none_at_exact_boundary() {
         let min_w = DESK_W + DESK_GAP_X * 2; // 34

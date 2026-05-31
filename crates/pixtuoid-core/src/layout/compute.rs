@@ -392,8 +392,19 @@ pub(super) fn compute_with_seed(
     }
 
     let (pantry_table, pantry_chairs) = if let Some(pr) = pantry_room {
-        let tx = pr.x + pct(pr.width, 25);
-        let ty = pr.y + pct(pr.height, 25);
+        // Inset the bistro table + stools clear of the room walls. A small
+        // pantry puts the raw 25% mark inside the meeting/pantry divider wall
+        // (caught by `furniture_does_not_overlap_room_walls`). Clearance = wall
+        // face + obstacle pad; the cluster half-extent is 5×4 (table 8×5 plus
+        // the ±4 / ±3 stool reach).
+        let clr = super::WALL_THICK_H + super::OBSTACLE_PAD_PX;
+        let (half_w, half_h) = (5u16, 4u16);
+        let min_x = pr.x + clr + half_w;
+        let max_x = (pr.x + pr.width).saturating_sub(clr + half_w);
+        let min_y = pr.y + clr + half_h;
+        let max_y = (pr.y + pr.height).saturating_sub(clr + half_h);
+        let tx = (pr.x + pct(pr.width, 25)).clamp(min_x, max_x.max(min_x));
+        let ty = (pr.y + pct(pr.height, 25)).clamp(min_y, max_y.max(min_y));
         (
             Some(Point { x: tx, y: ty }),
             vec![
