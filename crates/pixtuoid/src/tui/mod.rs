@@ -27,6 +27,108 @@ use tui_renderer::TuiRenderer;
 
 use crate::runtime::SceneRx;
 
+/// The modal + floor state the key dispatcher needs. Pulled out so the dispatch
+/// decision is a pure function of (key, state) and can be unit-tested without a
+/// TTY — the crossterm `read()` and all renderer/config side effects stay in the
+/// event loop. The modal priority is help > version-popup > theme-picker > normal.
+#[derive(Clone, Copy)]
+struct KeyCtx {
+    help_open: bool,
+    version_popup: bool,
+    theme_picker: Option<usize>,
+    n_themes: usize,
+    n_floors: usize,
+    current_floor: usize,
+    in_transition: bool,
+}
+
+/// The decision a key press resolves to. The event loop maps each variant to the
+/// concrete renderer/config side effect; keeping the decision data-only is what
+/// makes the modal precedence and the floor-nav / theme-picker guards testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyAction {
+    None,
+    Quit,
+    TogglePause,
+    ToggleHelp,
+    CloseHelp,
+    DismissVersionPopup,
+    OpenThemePicker,
+    /// Preview the theme at this index (picker navigation; index is pre-clamped).
+    ThemePreview(usize),
+    /// Enter in the picker: persist + close on this index.
+    ThemeCommit(usize),
+    /// Esc in the picker: revert to the saved theme + close.
+    ThemeCancel,
+    /// Navigate to this (already validated, in-range, no-transition) floor.
+    NavigateFloor(usize),
+}
+
+fn is_quit_chord(code: KeyCode, mods: KeyModifiers) -> bool {
+    matches!(
+        (code, mods),
+        (KeyCode::Char('q'), _) | (KeyCode::Char('c'), KeyModifiers::CONTROL)
+    )
+}
+
+/// Pure key-dispatch: resolve a key press to a `KeyAction` given the current
+/// modal + floor state. Modal precedence (highest first): help overlay,
+/// version popup, theme picker, then the normal scene.
+fn dispatch_key(code: KeyCode, mods: KeyModifiers, ctx: KeyCtx) -> KeyAction {
+    if ctx.help_open {
+        return match (code, mods) {
+            (KeyCode::Enter, _) | (KeyCode::Esc, _) | (KeyCode::Char('?'), _) => {
+                KeyAction::CloseHelp
+            }
+            _ if is_quit_chord(code, mods) => KeyAction::Quit,
+            _ => KeyAction::None,
+        };
+    }
+    if ctx.version_popup {
+        return match (code, mods) {
+            (KeyCode::Enter, _) => KeyAction::DismissVersionPopup,
+            (KeyCode::Esc, _) => KeyAction::Quit,
+            _ if is_quit_chord(code, mods) => KeyAction::Quit,
+            _ => KeyAction::None,
+        };
+    }
+    if let Some(idx) = ctx.theme_picker {
+        return match code {
+            KeyCode::Up | KeyCode::Char('k') => KeyAction::ThemePreview(idx.saturating_sub(1)),
+            KeyCode::Down | KeyCode::Char('j') => {
+                KeyAction::ThemePreview((idx + 1).min(ctx.n_themes.saturating_sub(1)))
+            }
+            KeyCode::Enter => KeyAction::ThemeCommit(idx),
+            KeyCode::Esc => KeyAction::ThemeCancel,
+            _ => KeyAction::None,
+        };
+    }
+    // Normal scene.
+    if is_quit_chord(code, mods) || code == KeyCode::Esc {
+        return KeyAction::Quit;
+    }
+    match code {
+        KeyCode::Char('p') => KeyAction::TogglePause,
+        KeyCode::Char('t') => KeyAction::OpenThemePicker,
+        KeyCode::Char('?') => KeyAction::ToggleHelp,
+        KeyCode::PageUp | KeyCode::Up | KeyCode::Char('k') => {
+            if ctx.current_floor + 1 < ctx.n_floors && !ctx.in_transition {
+                KeyAction::NavigateFloor(ctx.current_floor + 1)
+            } else {
+                KeyAction::None
+            }
+        }
+        KeyCode::PageDown | KeyCode::Down | KeyCode::Char('j') => {
+            if ctx.current_floor > 0 && !ctx.in_transition {
+                KeyAction::NavigateFloor(ctx.current_floor - 1)
+            } else {
+                KeyAction::None
+            }
+        }
+        _ => KeyAction::None,
+    }
+}
+
 pub async fn run_tui(
     mut scene_rx: SceneRx,
     pack_dir: Option<std::path::PathBuf>,
@@ -121,95 +223,44 @@ pub async fn run_tui(
             while polled {
                 match event::read()? {
                     Event::Key(k) => {
-                        if renderer.help_open() {
-                            match (k.code, k.modifiers) {
-                                (KeyCode::Enter, _)
-                                | (KeyCode::Esc, _)
-                                | (KeyCode::Char('?'), _) => {
-                                    renderer.set_help_open(false);
-                                }
-                                (KeyCode::Char('q'), _)
-                                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                                    quit = true;
-                                }
-                                _ => {}
+                        let ctx = KeyCtx {
+                            help_open: renderer.help_open(),
+                            version_popup,
+                            theme_picker,
+                            n_themes: theme::ALL_THEMES.len(),
+                            n_floors: crate::tui::floor::num_floors(&snapshot),
+                            current_floor: renderer.current_floor(),
+                            in_transition: renderer.transition().is_some(),
+                        };
+                        match dispatch_key(k.code, k.modifiers, ctx) {
+                            KeyAction::None => {}
+                            KeyAction::Quit => quit = true,
+                            KeyAction::TogglePause => paused = !paused,
+                            KeyAction::ToggleHelp => {
+                                let open = renderer.help_open();
+                                renderer.set_help_open(!open);
                             }
-                        } else if version_popup {
-                            match (k.code, k.modifiers) {
-                                (KeyCode::Enter, _) => {
-                                    version_popup = false;
-                                }
-                                (KeyCode::Char('q'), _)
-                                | (KeyCode::Esc, _)
-                                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                                    quit = true;
-                                }
-                                _ => {}
+                            KeyAction::CloseHelp => renderer.set_help_open(false),
+                            KeyAction::DismissVersionPopup => version_popup = false,
+                            KeyAction::OpenThemePicker => theme_picker = Some(saved_theme_idx),
+                            KeyAction::ThemePreview(i) => {
+                                theme_picker = Some(i);
+                                renderer.set_theme(theme::ALL_THEMES[i]);
                             }
-                        } else if let Some(idx) = theme_picker.as_mut() {
-                            match k.code {
-                                KeyCode::Up | KeyCode::Char('k') => {
-                                    if *idx > 0 {
-                                        *idx -= 1;
-                                    }
-                                    renderer.set_theme(theme::ALL_THEMES[*idx]);
+                            KeyAction::ThemeCommit(i) => {
+                                saved_theme_idx = i;
+                                theme_picker = None;
+                                let name = theme::ALL_THEMES[i].name;
+                                if let Err(e) = crate::config::save(&config_path, name) {
+                                    tracing::warn!("failed to persist theme: {e}");
                                 }
-                                KeyCode::Down | KeyCode::Char('j') => {
-                                    if *idx + 1 < theme::ALL_THEMES.len() {
-                                        *idx += 1;
-                                    }
-                                    renderer.set_theme(theme::ALL_THEMES[*idx]);
-                                }
-                                KeyCode::Enter => {
-                                    let chosen = *idx;
-                                    saved_theme_idx = chosen;
-                                    theme_picker = None;
-                                    let name = theme::ALL_THEMES[chosen].name;
-                                    if let Err(e) = crate::config::save(&config_path, name) {
-                                        tracing::warn!("failed to persist theme: {e}");
-                                    }
-                                }
-                                KeyCode::Esc => {
-                                    renderer.set_theme(theme::ALL_THEMES[saved_theme_idx]);
-                                    theme_picker = None;
-                                }
-                                _ => {}
                             }
-                        } else {
-                            match (k.code, k.modifiers) {
-                                (KeyCode::Char('q'), _)
-                                | (KeyCode::Esc, _)
-                                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                                    quit = true;
-                                }
-                                (KeyCode::Char('p'), _) => {
-                                    paused = !paused;
-                                }
-                                (KeyCode::Char('t'), _) => {
-                                    theme_picker = Some(saved_theme_idx);
-                                }
-                                (KeyCode::Char('?'), _) => {
-                                    let open = renderer.help_open();
-                                    renderer.set_help_open(!open);
-                                }
-                                (KeyCode::PageUp, _)
-                                | (KeyCode::Up, _)
-                                | (KeyCode::Char('k'), _) => {
-                                    let n_floors = crate::tui::floor::num_floors(&snapshot);
-                                    let cur = renderer.current_floor();
-                                    if cur + 1 < n_floors && renderer.transition().is_none() {
-                                        renderer.navigate_floor(cur + 1, now);
-                                    }
-                                }
-                                (KeyCode::PageDown, _)
-                                | (KeyCode::Down, _)
-                                | (KeyCode::Char('j'), _) => {
-                                    let cur = renderer.current_floor();
-                                    if cur > 0 && renderer.transition().is_none() {
-                                        renderer.navigate_floor(cur - 1, now);
-                                    }
-                                }
-                                _ => {}
+                            KeyAction::ThemeCancel => {
+                                renderer.set_theme(theme::ALL_THEMES[saved_theme_idx]);
+                                theme_picker = None;
+                            }
+                            KeyAction::NavigateFloor(target) => {
+                                renderer.navigate_floor(target, now);
                             }
                         }
                     }
@@ -332,4 +383,176 @@ pub async fn run_tui(
 
     teardown_terminal(&mut renderer.terminal)?;
     result
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::{dispatch_key, KeyAction, KeyCtx};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    const NONE: KeyModifiers = KeyModifiers::NONE;
+    const CTRL: KeyModifiers = KeyModifiers::CONTROL;
+
+    // Default: normal scene, mid-stack floor (1 of 3), no transition.
+    fn ctx() -> KeyCtx {
+        KeyCtx {
+            help_open: false,
+            version_popup: false,
+            theme_picker: None,
+            n_themes: 6,
+            n_floors: 3,
+            current_floor: 1,
+            in_transition: false,
+        }
+    }
+
+    #[test]
+    fn normal_quit_pause_picker_help() {
+        assert_eq!(
+            dispatch_key(KeyCode::Char('q'), NONE, ctx()),
+            KeyAction::Quit
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('c'), CTRL, ctx()),
+            KeyAction::Quit
+        );
+        assert_eq!(dispatch_key(KeyCode::Esc, NONE, ctx()), KeyAction::Quit);
+        assert_eq!(
+            dispatch_key(KeyCode::Char('p'), NONE, ctx()),
+            KeyAction::TogglePause
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('t'), NONE, ctx()),
+            KeyAction::OpenThemePicker
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('?'), NONE, ctx()),
+            KeyAction::ToggleHelp
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('x'), NONE, ctx()),
+            KeyAction::None
+        );
+    }
+
+    #[test]
+    fn floor_nav_guards() {
+        // Mid-stack: up and down both valid.
+        for code in [KeyCode::PageUp, KeyCode::Up, KeyCode::Char('k')] {
+            assert_eq!(dispatch_key(code, NONE, ctx()), KeyAction::NavigateFloor(2));
+        }
+        for code in [KeyCode::PageDown, KeyCode::Down, KeyCode::Char('j')] {
+            assert_eq!(dispatch_key(code, NONE, ctx()), KeyAction::NavigateFloor(0));
+        }
+        // Top floor: no up.
+        let top = KeyCtx {
+            current_floor: 2,
+            ..ctx()
+        };
+        assert_eq!(dispatch_key(KeyCode::Up, NONE, top), KeyAction::None);
+        // Bottom floor: no down.
+        let bottom = KeyCtx {
+            current_floor: 0,
+            ..ctx()
+        };
+        assert_eq!(dispatch_key(KeyCode::Down, NONE, bottom), KeyAction::None);
+        // A transition in flight blocks navigation in both directions.
+        let mid_trans = KeyCtx {
+            in_transition: true,
+            ..ctx()
+        };
+        assert_eq!(dispatch_key(KeyCode::Up, NONE, mid_trans), KeyAction::None);
+        assert_eq!(
+            dispatch_key(KeyCode::Down, NONE, mid_trans),
+            KeyAction::None
+        );
+    }
+
+    #[test]
+    fn help_overlay_has_priority_and_dismisses() {
+        // help wins even when the version popup is also flagged.
+        let c = KeyCtx {
+            help_open: true,
+            version_popup: true,
+            theme_picker: Some(2),
+            ..ctx()
+        };
+        assert_eq!(dispatch_key(KeyCode::Enter, NONE, c), KeyAction::CloseHelp);
+        assert_eq!(dispatch_key(KeyCode::Esc, NONE, c), KeyAction::CloseHelp);
+        assert_eq!(
+            dispatch_key(KeyCode::Char('?'), NONE, c),
+            KeyAction::CloseHelp
+        );
+        assert_eq!(dispatch_key(KeyCode::Char('q'), NONE, c), KeyAction::Quit);
+        assert_eq!(dispatch_key(KeyCode::Char('c'), CTRL, c), KeyAction::Quit);
+        // Up does not leak to the floor-nav / picker handlers while help is open.
+        assert_eq!(dispatch_key(KeyCode::Up, NONE, c), KeyAction::None);
+    }
+
+    #[test]
+    fn version_popup_enter_dismisses_esc_quits() {
+        let c = KeyCtx {
+            version_popup: true,
+            ..ctx()
+        };
+        assert_eq!(
+            dispatch_key(KeyCode::Enter, NONE, c),
+            KeyAction::DismissVersionPopup
+        );
+        assert_eq!(dispatch_key(KeyCode::Esc, NONE, c), KeyAction::Quit);
+        assert_eq!(dispatch_key(KeyCode::Char('q'), NONE, c), KeyAction::Quit);
+        assert_eq!(dispatch_key(KeyCode::Char('c'), CTRL, c), KeyAction::Quit);
+        // A floor key while the popup is up is swallowed, not navigated.
+        assert_eq!(dispatch_key(KeyCode::Up, NONE, c), KeyAction::None);
+    }
+
+    #[test]
+    fn theme_picker_preview_commit_cancel_and_clamps() {
+        let c = KeyCtx {
+            theme_picker: Some(2),
+            ..ctx()
+        };
+        assert_eq!(
+            dispatch_key(KeyCode::Up, NONE, c),
+            KeyAction::ThemePreview(1)
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('k'), NONE, c),
+            KeyAction::ThemePreview(1)
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Down, NONE, c),
+            KeyAction::ThemePreview(3)
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Char('j'), NONE, c),
+            KeyAction::ThemePreview(3)
+        );
+        assert_eq!(
+            dispatch_key(KeyCode::Enter, NONE, c),
+            KeyAction::ThemeCommit(2)
+        );
+        assert_eq!(dispatch_key(KeyCode::Esc, NONE, c), KeyAction::ThemeCancel);
+        // q does NOT quit while the picker is open (must Esc/Enter out first).
+        assert_eq!(dispatch_key(KeyCode::Char('q'), NONE, c), KeyAction::None);
+
+        // Clamp at the ends.
+        let lo = KeyCtx {
+            theme_picker: Some(0),
+            ..ctx()
+        };
+        assert_eq!(
+            dispatch_key(KeyCode::Up, NONE, lo),
+            KeyAction::ThemePreview(0)
+        );
+        let hi = KeyCtx {
+            theme_picker: Some(5),
+            n_themes: 6,
+            ..ctx()
+        };
+        assert_eq!(
+            dispatch_key(KeyCode::Down, NONE, hi),
+            KeyAction::ThemePreview(5)
+        );
+    }
 }

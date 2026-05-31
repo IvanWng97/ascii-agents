@@ -165,3 +165,37 @@ fn load_embedded_pack() -> Result<Pack> {
         ],
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // recolor_frame (pixel_painter/palette.rs) substitutes agent colors by RGB
+    // equality against the base pack's B/H/S/P entries. If any two share an RGB,
+    // the recolor pass swaps both and produces artifacts. No validate-pack check
+    // enforces it, so this guards the documented uniqueness invariant for the
+    // shipped embedded pack.
+    #[test]
+    fn embedded_pack_recolor_keys_are_distinct_rgbs() {
+        let pack = load_sprite_pack(None).expect("embedded pack loads");
+        let keys = ['B', 'H', 'S', 'P'];
+        let rgbs: Vec<_> = keys
+            .iter()
+            .map(|&k| {
+                pack.palette
+                    .get(k)
+                    .flatten()
+                    .unwrap_or_else(|| panic!("embedded pack missing recolor key {k:?}"))
+            })
+            .collect();
+        for i in 0..rgbs.len() {
+            for j in (i + 1)..rgbs.len() {
+                assert_ne!(
+                    rgbs[i], rgbs[j],
+                    "recolor keys {:?} and {:?} share an RGB — recolor_frame would swap both",
+                    keys[i], keys[j]
+                );
+            }
+        }
+    }
+}

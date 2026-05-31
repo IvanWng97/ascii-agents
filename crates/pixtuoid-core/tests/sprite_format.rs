@@ -150,3 +150,101 @@ fn validation_detects_unknown_animations() {
         "mini pack's 'idle' animation should be flagged as unknown"
     );
 }
+
+// ---- path-traversal guards (security-relevant; previously untested) -------
+
+fn write_pack_files(dir: &Path, pack_toml: &str, frames: &[(&str, &str)]) {
+    std::fs::write(dir.join("pack.toml"), pack_toml).unwrap();
+    for (name, content) in frames {
+        std::fs::write(dir.join(name), content).unwrap();
+    }
+}
+
+#[test]
+fn load_pack_rejects_parent_dir_frame_path() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_pack_files(
+        dir.path(),
+        "[pack]\nname=\"x\"\nversion=\"1\"\n[palette]\n\".\"=\"transparent\"\n\
+         [animations.idle]\nframes=[\"../escape.sprite\"]\nframe_ms=100\n",
+        &[],
+    );
+    let err = load_pack(dir.path()).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("not allowed"),
+        "a '..' frame path must be rejected; got: {err:#}"
+    );
+}
+
+#[test]
+fn load_pack_rejects_absolute_frame_path_escaping_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    // `dir.join("/etc/hosts")` resolves to `/etc/hosts` (Path::join replaces on a
+    // leading '/'), which the '..'-component check does NOT catch — the
+    // canonicalize + starts_with(canon_dir) guard is what must reject it.
+    write_pack_files(
+        dir.path(),
+        "[pack]\nname=\"x\"\nversion=\"1\"\n[palette]\n\".\"=\"transparent\"\n\
+         [animations.idle]\nframes=[\"/etc/hosts\"]\nframe_ms=100\n",
+        &[],
+    );
+    let err = load_pack(dir.path()).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("escapes the pack directory") || msg.contains("resolving"),
+        "an absolute path escaping the pack dir must be rejected; got: {msg}"
+    );
+}
+
+// ---- Pack::merge_from (load-bearing for every custom pack; was untested) --
+
+#[test]
+fn merge_from_inherits_furniture_only_and_never_clobbers_own() {
+    // base: a furniture anim custom lacks (plant), a furniture anim custom owns
+    // (desk, wider here), and a REQUIRED_CHARACTER anim (standing).
+    let base_dir = tempfile::TempDir::new().unwrap();
+    write_pack_files(
+        base_dir.path(),
+        "[pack]\nname=\"base\"\nversion=\"1\"\n[palette]\n\".\"=\"transparent\"\n\"A\"=\"#010203\"\n\
+         [animations.desk]\nframes=[\"d.sprite\"]\nframe_ms=100\n\
+         [animations.plant]\nframes=[\"p.sprite\"]\nframe_ms=100\n\
+         [animations.standing]\nframes=[\"s.sprite\"]\nframe_ms=100\n",
+        &[
+            ("d.sprite", "@frame 0\nA A"),
+            ("p.sprite", "@frame 0\nA"),
+            ("s.sprite", "@frame 0\nA"),
+        ],
+    );
+    // custom: owns a 1-wide desk; lacks plant (furniture) and standing (character).
+    let custom_dir = tempfile::TempDir::new().unwrap();
+    write_pack_files(
+        custom_dir.path(),
+        "[pack]\nname=\"custom\"\nversion=\"1\"\n[palette]\n\".\"=\"transparent\"\n\"A\"=\"#010203\"\n\
+         [animations.desk]\nframes=[\"d.sprite\"]\nframe_ms=100\n",
+        &[("d.sprite", "@frame 0\nA")],
+    );
+
+    let base = load_pack(base_dir.path()).unwrap();
+    let mut custom = load_pack(custom_dir.path()).unwrap();
+    assert_eq!(custom.animation("desk").unwrap().frames[0].width, 1);
+
+    custom.merge_from(&base);
+
+    // Own `desk` preserved (NOT clobbered by base's 2-wide desk).
+    assert_eq!(
+        custom.animation("desk").unwrap().frames[0].width,
+        1,
+        "merge_from must not overwrite an animation the custom pack already defines"
+    );
+    // Furniture anim absent from custom is inherited from base.
+    assert!(
+        custom.animation("plant").is_some(),
+        "missing OPTIONAL_FURNITURE anim should be inherited"
+    );
+    // REQUIRED_CHARACTER anim is NEVER inherited (a robot pack must not show
+    // human sprites for poses it lacks).
+    assert!(
+        custom.animation("standing").is_none(),
+        "REQUIRED_CHARACTER anim must never be inherited via merge_from"
+    );
+}
