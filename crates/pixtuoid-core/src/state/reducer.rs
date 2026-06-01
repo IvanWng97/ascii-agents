@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::source::{AgentEvent, Transport};
-use crate::state::{ActivityState, AgentSlot, SceneState};
+use crate::state::{scope, ActivityState, AgentSlot, SceneState};
 use crate::AgentId;
 
 /// Window in which a Hook event suppresses a later Jsonl event with the same tool_use_id.
@@ -125,7 +125,7 @@ impl Reducer {
                 | AgentEvent::ActivityEnd { .. }
                 | AgentEvent::Waiting { .. }
         ) {
-            Self::refresh_lineage(scene, id, now);
+            scope::refresh_lineage(scene, id, now);
         }
 
         // Subagent-leak suppression: if this AgentId currently has any Task
@@ -261,7 +261,7 @@ impl Reducer {
         // here; a source with a clean "subagent finished" signal (e.g. Codex)
         // would drive the same cascade through its own decoder.
         if let Some(parent) = completed_subtree_root {
-            Self::cascade_exit(scene, parent, now);
+            scope::cascade_exit(scene, parent, now);
         }
 
         match event {
@@ -429,7 +429,7 @@ impl Reducer {
                         slot.exiting_at = Some(now);
                     }
                 }
-                Self::cascade_exit(scene, agent_id, now);
+                scope::cascade_exit(scene, agent_id, now);
             }
         }
     }
@@ -506,7 +506,7 @@ impl Reducer {
             .values()
             .filter(|slot| slot.exiting_at.is_none())
             .filter_map(|slot| {
-                if Self::has_waiting_ancestor(agents, slot.agent_id) {
+                if scope::has_waiting_ancestor(agents, slot.agent_id) {
                     return None;
                 }
                 let age = now
@@ -546,82 +546,7 @@ impl Reducer {
                 );
                 slot.exiting_at = Some(now);
             }
-            Self::cascade_exit(scene, id, now);
-        }
-    }
-
-    /// True if any ancestor of `id` (walking `parent_id`) is in `Waiting` state.
-    /// A subagent's permission Notification is attributed to the PARENT (hook
-    /// `transcript_path` points at the parent), so the parent goes `Waiting`
-    /// while the blocked subagent stays `Active`. Such a subagent is paused on a
-    /// human gate the ancestor holds — "not ready", not dead — so `sweep_stale`
-    /// exempts it from the aggressive Active timer (liveness vs readiness).
-    /// Cycle-guarded; the chain is shallow in practice.
-    fn has_waiting_ancestor(agents: &BTreeMap<AgentId, AgentSlot>, id: AgentId) -> bool {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        let mut cur = agents.get(&id).and_then(|s| s.parent_id);
-        while let Some(pid) = cur {
-            if !visited.insert(pid) {
-                break;
-            }
-            match agents.get(&pid) {
-                Some(p) if matches!(p.state, ActivityState::Waiting { .. }) => return true,
-                Some(p) => cur = p.parent_id,
-                None => break,
-            }
-        }
-        false
-    }
-
-    /// Liveness flows up: refresh `last_event_at` for `id` and every ancestor,
-    /// so a parent (and grandparent) isn't stale-swept while a descendant is
-    /// still emitting events — even if the parent's own hooks dropped or a
-    /// subagent's hook was misattributed to it. The mirror of `cascade_exit`,
-    /// which pushes EXIT down the tree; this pushes LIVENESS up. Cycle-guarded.
-    /// `last_event_at` only gates the stale-sweep, so this never alters an
-    /// ancestor's visible state/pose.
-    fn refresh_lineage(scene: &mut SceneState, id: AgentId, now: SystemTime) {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        let mut cur = Some(id);
-        while let Some(aid) = cur {
-            if !visited.insert(aid) {
-                break;
-            }
-            match scene.agents.get_mut(&aid) {
-                Some(slot) => {
-                    slot.last_event_at = now;
-                    cur = slot.parent_id;
-                }
-                None => break,
-            }
-        }
-    }
-
-    /// Mark every not-yet-exiting descendant of `root` exiting, BFS over
-    /// `parent_id` links. The caller marks `root` itself first — `root` is only
-    /// the BFS seed here and is never re-stamped. Idempotent: slots already
-    /// exiting are filtered out, so a leaf or a partly-exiting subtree is a
-    /// safe no-op. Shared by the `SessionEnd` arm and `sweep_stale` so a parent
-    /// leaving by EITHER path takes its subagents with it.
-    fn cascade_exit(scene: &mut SceneState, root: AgentId, now: SystemTime) {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        visited.insert(root);
-        let mut frontier = vec![root];
-        while let Some(parent) = frontier.pop() {
-            let children: Vec<AgentId> = scene
-                .agents
-                .values()
-                .filter(|s| s.parent_id == Some(parent) && s.exiting_at.is_none())
-                .map(|s| s.agent_id)
-                .collect();
-            for cid in children {
-                if visited.insert(cid) {
-                    if let Some(slot) = scene.agents.get_mut(&cid) {
-                        slot.exiting_at = Some(now);
-                    }
-                    frontier.push(cid);
-                }
-            }
+            scope::cascade_exit(scene, id, now);
         }
     }
 
