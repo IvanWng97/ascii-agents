@@ -7,6 +7,7 @@ use crate::id::AgentId;
 use crate::source::Activity;
 
 pub mod reducer;
+mod scope;
 
 pub const MAX_FLOORS: usize = 5;
 

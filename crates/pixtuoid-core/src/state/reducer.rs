@@ -1,9 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use crate::source::{AgentEvent, Transport};
-use crate::state::{ActivityState, AgentSlot, SceneState};
+use crate::state::{scope, ActivityState, AgentSlot, SceneState};
 use crate::AgentId;
 
 /// Window in which a Hook event suppresses a later Jsonl event with the same tool_use_id.
@@ -125,7 +125,7 @@ impl Reducer {
                 | AgentEvent::ActivityEnd { .. }
                 | AgentEvent::Waiting { .. }
         ) {
-            Self::refresh_lineage(scene, id, now);
+            scope::refresh_lineage(scene, id, now);
         }
 
         // Subagent-leak suppression: if this AgentId currently has any Task
@@ -149,9 +149,33 @@ impl Reducer {
             if suppress {
                 // The misattributed subagent event already refreshed the
                 // parent's lineage above (liveness flows up), keeping the
-                // delegating parent from being wrongly stale-swept. Drop the
-                // spurious display update; the subagent's own JSONL is the
-                // authoritative source for its slot.
+                // delegating parent from being wrongly stale-swept.
+                //
+                // One state change still belongs to the parent: if it is
+                // `Waiting` while delegating, that Waiting is the SUBAGENT's
+                // permission gate (the `Notification` was misattributed to the
+                // parent) — a parent blocked on a Task isn't running its own
+                // tools. A suppressed child event means the subagent resumed
+                // work, so the gate resolved: restore Active(Delegating) instead
+                // of leaving a stale "permission?" Waiting until the 60-min
+                // stale-sweep. Then drop the spurious display update.
+                let task_tuid = self
+                    .active_tasks
+                    .get(&id)
+                    .and_then(|s| s.iter().next())
+                    .map(|t| Arc::<str>::from(t.as_str()));
+                if let Some(slot) = scene.agents.get_mut(&id) {
+                    if matches!(slot.state, ActivityState::Waiting { .. }) {
+                        slot.state = ActivityState::Active {
+                            activity: crate::source::Activity::Typing,
+                            tool_use_id: task_tuid,
+                            detail: Some(Arc::<str>::from("Delegating")),
+                        };
+                        slot.state_started_at = now;
+                        slot.pending_idle_at = None;
+                        self.gated_before_waiting.remove(&id);
+                    }
+                }
                 return;
             }
         }
@@ -189,6 +213,10 @@ impl Reducer {
         // pending_idle_at or arm it while tasks are still in flight.
         let mut handled_by_task_tracking = false;
         let mut handled_by_task_start = false;
+        // b1 subagent-completion inference (CC writes no completion marker): set
+        // when the parent's LAST Task drains on this event, so the delegated
+        // subtree can be marked exiting below.
+        let mut completed_subtree_root: Option<AgentId> = None;
         match &event {
             AgentEvent::ActivityStart {
                 agent_id,
@@ -234,15 +262,30 @@ impl Reducer {
                             // (its own permission prompt fired during delegation)
                             // a Task drain must NOT arm the idle-resolve, or the
                             // expiry would false-clear a still-pending permission.
-                            if set.is_empty() && matches!(slot.state, ActivityState::Active { .. })
-                            {
-                                slot.pending_idle_at = Some(now);
+                            if set.is_empty() {
+                                // Parent's last Task returned → the delegated
+                                // subtree is done; mark it exiting after this
+                                // match (b1).
+                                completed_subtree_root = Some(*agent_id);
+                                if matches!(slot.state, ActivityState::Active { .. }) {
+                                    slot.pending_idle_at = Some(now);
+                                }
                             }
                         }
                     }
                 }
             }
             _ => {}
+        }
+
+        // b1: a drained parent Task means the delegated subtree returned —
+        // cascade EXIT to the parent's descendants (not the parent, which keeps
+        // running) so completed subagents leave promptly instead of lingering to
+        // the 30-min idle stale-sweep. CC infers completion from the Task drain
+        // here; a source with a clean "subagent finished" signal (e.g. Codex)
+        // would drive the same cascade through its own decoder.
+        if let Some(parent) = completed_subtree_root {
+            scope::cascade_exit(scene, parent, now);
         }
 
         match event {
@@ -410,7 +453,7 @@ impl Reducer {
                         slot.exiting_at = Some(now);
                     }
                 }
-                Self::cascade_exit(scene, agent_id, now);
+                scope::cascade_exit(scene, agent_id, now);
             }
         }
     }
@@ -487,7 +530,7 @@ impl Reducer {
             .values()
             .filter(|slot| slot.exiting_at.is_none())
             .filter_map(|slot| {
-                if Self::has_waiting_ancestor(agents, slot.agent_id) {
+                if scope::has_waiting_ancestor(agents, slot.agent_id) {
                     return None;
                 }
                 let age = now
@@ -527,82 +570,7 @@ impl Reducer {
                 );
                 slot.exiting_at = Some(now);
             }
-            Self::cascade_exit(scene, id, now);
-        }
-    }
-
-    /// True if any ancestor of `id` (walking `parent_id`) is in `Waiting` state.
-    /// A subagent's permission Notification is attributed to the PARENT (hook
-    /// `transcript_path` points at the parent), so the parent goes `Waiting`
-    /// while the blocked subagent stays `Active`. Such a subagent is paused on a
-    /// human gate the ancestor holds — "not ready", not dead — so `sweep_stale`
-    /// exempts it from the aggressive Active timer (liveness vs readiness).
-    /// Cycle-guarded; the chain is shallow in practice.
-    fn has_waiting_ancestor(agents: &BTreeMap<AgentId, AgentSlot>, id: AgentId) -> bool {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        let mut cur = agents.get(&id).and_then(|s| s.parent_id);
-        while let Some(pid) = cur {
-            if !visited.insert(pid) {
-                break;
-            }
-            match agents.get(&pid) {
-                Some(p) if matches!(p.state, ActivityState::Waiting { .. }) => return true,
-                Some(p) => cur = p.parent_id,
-                None => break,
-            }
-        }
-        false
-    }
-
-    /// Liveness flows up: refresh `last_event_at` for `id` and every ancestor,
-    /// so a parent (and grandparent) isn't stale-swept while a descendant is
-    /// still emitting events — even if the parent's own hooks dropped or a
-    /// subagent's hook was misattributed to it. The mirror of `cascade_exit`,
-    /// which pushes EXIT down the tree; this pushes LIVENESS up. Cycle-guarded.
-    /// `last_event_at` only gates the stale-sweep, so this never alters an
-    /// ancestor's visible state/pose.
-    fn refresh_lineage(scene: &mut SceneState, id: AgentId, now: SystemTime) {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        let mut cur = Some(id);
-        while let Some(aid) = cur {
-            if !visited.insert(aid) {
-                break;
-            }
-            match scene.agents.get_mut(&aid) {
-                Some(slot) => {
-                    slot.last_event_at = now;
-                    cur = slot.parent_id;
-                }
-                None => break,
-            }
-        }
-    }
-
-    /// Mark every not-yet-exiting descendant of `root` exiting, BFS over
-    /// `parent_id` links. The caller marks `root` itself first — `root` is only
-    /// the BFS seed here and is never re-stamped. Idempotent: slots already
-    /// exiting are filtered out, so a leaf or a partly-exiting subtree is a
-    /// safe no-op. Shared by the `SessionEnd` arm and `sweep_stale` so a parent
-    /// leaving by EITHER path takes its subagents with it.
-    fn cascade_exit(scene: &mut SceneState, root: AgentId, now: SystemTime) {
-        let mut visited: HashSet<AgentId> = HashSet::new();
-        visited.insert(root);
-        let mut frontier = vec![root];
-        while let Some(parent) = frontier.pop() {
-            let children: Vec<AgentId> = scene
-                .agents
-                .values()
-                .filter(|s| s.parent_id == Some(parent) && s.exiting_at.is_none())
-                .map(|s| s.agent_id)
-                .collect();
-            for cid in children {
-                if visited.insert(cid) {
-                    if let Some(slot) = scene.agents.get_mut(&cid) {
-                        slot.exiting_at = Some(now);
-                    }
-                    frontier.push(cid);
-                }
-            }
+            scope::cascade_exit(scene, id, now);
         }
     }
 
