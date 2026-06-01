@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -114,6 +114,20 @@ impl Reducer {
         self.expire_pending_idles(scene, now);
         let id = event.agent_id();
 
+        // Liveness flows UP the tree: any activity by a descendant keeps its
+        // ancestors alive, so a parent isn't stale-swept (and its subtree
+        // cascaded out) while a subagent is still working — even if the parent's
+        // own hooks dropped or a subagent's hook was misattributed to it. The
+        // mirror of `cascade_exit` (which pushes EXIT down): liveness flows UP.
+        if matches!(
+            &event,
+            AgentEvent::ActivityStart { .. }
+                | AgentEvent::ActivityEnd { .. }
+                | AgentEvent::Waiting { .. }
+        ) {
+            Self::refresh_lineage(scene, id, now);
+        }
+
         // Subagent-leak suppression: if this AgentId currently has any Task
         // tool in flight, hook ActivityStart/End events for it are almost
         // certainly subagent work misattributed to the parent. Drop them and
@@ -133,17 +147,11 @@ impl Reducer {
                 _ => false,
             };
             if suppress {
-                // A suppressed event is a real subagent hook misattributed to
-                // the parent (CC points transcript_path at the parent), so it is
-                // positive evidence the delegated subtree is alive. Refresh the
-                // parent's liveness before dropping it — otherwise a single Task
-                // running past STALE_ACTIVE_TIMEOUT makes the still-working
-                // parent look stale, and sweep_stale's cascade drags the live
-                // subagent out with it. (Liveness from a real event, not the
-                // silence-based reaping the stale-sweep deliberately avoids.)
-                if let Some(slot) = scene.agents.get_mut(&id) {
-                    slot.last_event_at = now;
-                }
+                // The misattributed subagent event already refreshed the
+                // parent's lineage above (liveness flows up), keeping the
+                // delegating parent from being wrongly stale-swept. Drop the
+                // spurious display update; the subagent's own JSONL is the
+                // authoritative source for its slot.
                 return;
             }
         }
@@ -470,11 +478,18 @@ impl Reducer {
         // Immutable borrow: we can't cascade (which re-borrows `scene` mutably)
         // while it's held, so gather ids first, mutate in pass 2. Mirrors
         // `sweep_exited`'s collect-then-mutate shape.
-        let stale: Vec<(AgentId, Duration, Duration)> = scene
-            .agents
+        // Readiness exemption: a node blocked under a `Waiting` ancestor (e.g. a
+        // subagent whose permission Notification was attributed to the parent) is
+        // paused on a human gate, not dead — skip it on the aggressive timer.
+        // Liveness vs readiness (k8s): a "not ready" pod isn't killed.
+        let agents = &scene.agents;
+        let stale: Vec<(AgentId, Duration, Duration)> = agents
             .values()
             .filter(|slot| slot.exiting_at.is_none())
             .filter_map(|slot| {
+                if Self::has_waiting_ancestor(agents, slot.agent_id) {
+                    return None;
+                }
                 let age = now
                     .duration_since(slot.last_event_at)
                     .unwrap_or(Duration::ZERO);
@@ -513,6 +528,53 @@ impl Reducer {
                 slot.exiting_at = Some(now);
             }
             Self::cascade_exit(scene, id, now);
+        }
+    }
+
+    /// True if any ancestor of `id` (walking `parent_id`) is in `Waiting` state.
+    /// A subagent's permission Notification is attributed to the PARENT (hook
+    /// `transcript_path` points at the parent), so the parent goes `Waiting`
+    /// while the blocked subagent stays `Active`. Such a subagent is paused on a
+    /// human gate the ancestor holds — "not ready", not dead — so `sweep_stale`
+    /// exempts it from the aggressive Active timer (liveness vs readiness).
+    /// Cycle-guarded; the chain is shallow in practice.
+    fn has_waiting_ancestor(agents: &BTreeMap<AgentId, AgentSlot>, id: AgentId) -> bool {
+        let mut visited: HashSet<AgentId> = HashSet::new();
+        let mut cur = agents.get(&id).and_then(|s| s.parent_id);
+        while let Some(pid) = cur {
+            if !visited.insert(pid) {
+                break;
+            }
+            match agents.get(&pid) {
+                Some(p) if matches!(p.state, ActivityState::Waiting { .. }) => return true,
+                Some(p) => cur = p.parent_id,
+                None => break,
+            }
+        }
+        false
+    }
+
+    /// Liveness flows up: refresh `last_event_at` for `id` and every ancestor,
+    /// so a parent (and grandparent) isn't stale-swept while a descendant is
+    /// still emitting events — even if the parent's own hooks dropped or a
+    /// subagent's hook was misattributed to it. The mirror of `cascade_exit`,
+    /// which pushes EXIT down the tree; this pushes LIVENESS up. Cycle-guarded.
+    /// `last_event_at` only gates the stale-sweep, so this never alters an
+    /// ancestor's visible state/pose.
+    fn refresh_lineage(scene: &mut SceneState, id: AgentId, now: SystemTime) {
+        let mut visited: HashSet<AgentId> = HashSet::new();
+        let mut cur = Some(id);
+        while let Some(aid) = cur {
+            if !visited.insert(aid) {
+                break;
+            }
+            match scene.agents.get_mut(&aid) {
+                Some(slot) => {
+                    slot.last_event_at = now;
+                    cur = slot.parent_id;
+                }
+                None => break,
+            }
         }
     }
 
