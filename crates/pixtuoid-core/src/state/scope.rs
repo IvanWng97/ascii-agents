@@ -28,11 +28,12 @@ use crate::state::{ActivityState, AgentSlot, SceneState};
 use crate::AgentId;
 
 /// Mark every not-yet-exiting descendant of `root` exiting, BFS over `parent_id`
-/// links (exit flows DOWN). The caller marks `root` itself first — `root` is only
-/// the BFS seed and is never re-stamped. Idempotent: slots already exiting are
-/// filtered out, so a leaf or a partly-exiting subtree is a safe no-op. Shared by
-/// the `SessionEnd` arm, `sweep_stale`, and subagent-completion, so a parent
-/// leaving by ANY path takes its subagents with it.
+/// links (exit flows DOWN). `root` is only the BFS seed and is never re-stamped
+/// *by this function* — whether the caller marks `root` itself is caller-specific:
+/// the `SessionEnd` arm and `sweep_stale` stamp it first (the whole subtree
+/// leaves together), while subagent-completion does NOT (the parent keeps
+/// running; only its subtree leaves). Idempotent: slots already exiting are
+/// filtered out, so a leaf or a partly-exiting subtree is a safe no-op.
 pub(crate) fn cascade_exit(scene: &mut SceneState, root: AgentId, now: SystemTime) {
     let mut visited: HashSet<AgentId> = HashSet::new();
     visited.insert(root);
@@ -84,7 +85,10 @@ pub(crate) fn refresh_lineage(scene: &mut SceneState, id: AgentId, now: SystemTi
 /// blocked subagent stays `Active`. Such a subagent is paused on a human gate the
 /// ancestor holds — "not ready", not dead — so `sweep_stale` exempts it from the
 /// aggressive Active timer (liveness vs readiness). Cycle-guarded; the chain is
-/// shallow in practice.
+/// shallow in practice. Takes `&BTreeMap` rather than `&SceneState` (unlike its
+/// siblings) so it can be called inside `sweep_stale`'s pass-1 closure while
+/// `&scene.agents` is already borrowed immutably — `&SceneState` would conflict
+/// with that live borrow.
 pub(crate) fn has_waiting_ancestor(agents: &BTreeMap<AgentId, AgentSlot>, id: AgentId) -> bool {
     let mut visited: HashSet<AgentId> = HashSet::new();
     let mut cur = agents.get(&id).and_then(|s| s.parent_id);
