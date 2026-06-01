@@ -189,6 +189,10 @@ impl Reducer {
         // pending_idle_at or arm it while tasks are still in flight.
         let mut handled_by_task_tracking = false;
         let mut handled_by_task_start = false;
+        // b1 subagent-completion inference (CC writes no completion marker): set
+        // when the parent's LAST Task drains on this event, so the delegated
+        // subtree can be marked exiting below.
+        let mut completed_subtree_root: Option<AgentId> = None;
         match &event {
             AgentEvent::ActivityStart {
                 agent_id,
@@ -234,15 +238,30 @@ impl Reducer {
                             // (its own permission prompt fired during delegation)
                             // a Task drain must NOT arm the idle-resolve, or the
                             // expiry would false-clear a still-pending permission.
-                            if set.is_empty() && matches!(slot.state, ActivityState::Active { .. })
-                            {
-                                slot.pending_idle_at = Some(now);
+                            if set.is_empty() {
+                                // Parent's last Task returned → the delegated
+                                // subtree is done; mark it exiting after this
+                                // match (b1).
+                                completed_subtree_root = Some(*agent_id);
+                                if matches!(slot.state, ActivityState::Active { .. }) {
+                                    slot.pending_idle_at = Some(now);
+                                }
                             }
                         }
                     }
                 }
             }
             _ => {}
+        }
+
+        // b1: a drained parent Task means the delegated subtree returned —
+        // cascade EXIT to the parent's descendants (not the parent, which keeps
+        // running) so completed subagents leave promptly instead of lingering to
+        // the 30-min idle stale-sweep. CC infers completion from the Task drain
+        // here; a source with a clean "subagent finished" signal (e.g. Codex)
+        // would drive the same cascade through its own decoder.
+        if let Some(parent) = completed_subtree_root {
+            Self::cascade_exit(scene, parent, now);
         }
 
         match event {
