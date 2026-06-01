@@ -1721,7 +1721,10 @@ fn stale_sweep_spares_subagent_blocked_under_a_waiting_parent() {
     );
 
     // User ignores the prompt for >10 min. No further events.
-    r.tick(&mut scene, t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(60));
+    r.tick(
+        &mut scene,
+        t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(60),
+    );
 
     assert!(
         scene.agents.get(&parent).unwrap().exiting_at.is_none(),
@@ -1805,7 +1808,10 @@ fn stale_sweep_spares_grandchild_under_a_waiting_ancestor() {
         Transport::Hook,
     );
 
-    r.tick(&mut scene, t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(60));
+    r.tick(
+        &mut scene,
+        t0 + STALE_ACTIVE_TIMEOUT + Duration::from_secs(60),
+    );
 
     assert!(
         scene.agents.get(&child).unwrap().exiting_at.is_none(),
@@ -1883,7 +1889,10 @@ fn active_subagent_keeps_parent_alive_via_jsonl_events() {
     }
     // Tick shortly after the last child event — but ~12 min past the parent's
     // OWN last event (the Task start at t0+1s).
-    r.tick(&mut scene, t0 + Duration::from_secs(12 * 60) + Duration::from_secs(30));
+    r.tick(
+        &mut scene,
+        t0 + Duration::from_secs(12 * 60) + Duration::from_secs(30),
+    );
 
     assert!(
         scene.agents.get(&parent).unwrap().exiting_at.is_none(),
