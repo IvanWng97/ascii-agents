@@ -149,9 +149,33 @@ impl Reducer {
             if suppress {
                 // The misattributed subagent event already refreshed the
                 // parent's lineage above (liveness flows up), keeping the
-                // delegating parent from being wrongly stale-swept. Drop the
-                // spurious display update; the subagent's own JSONL is the
-                // authoritative source for its slot.
+                // delegating parent from being wrongly stale-swept.
+                //
+                // One state change still belongs to the parent: if it is
+                // `Waiting` while delegating, that Waiting is the SUBAGENT's
+                // permission gate (the `Notification` was misattributed to the
+                // parent) — a parent blocked on a Task isn't running its own
+                // tools. A suppressed child event means the subagent resumed
+                // work, so the gate resolved: restore Active(Delegating) instead
+                // of leaving a stale "permission?" Waiting until the 60-min
+                // stale-sweep. Then drop the spurious display update.
+                let task_tuid = self
+                    .active_tasks
+                    .get(&id)
+                    .and_then(|s| s.iter().next())
+                    .map(|t| Arc::<str>::from(t.as_str()));
+                if let Some(slot) = scene.agents.get_mut(&id) {
+                    if matches!(slot.state, ActivityState::Waiting { .. }) {
+                        slot.state = ActivityState::Active {
+                            activity: crate::source::Activity::Typing,
+                            tool_use_id: task_tuid,
+                            detail: Some(Arc::<str>::from("Delegating")),
+                        };
+                        slot.state_started_at = now;
+                        slot.pending_idle_at = None;
+                        self.gated_before_waiting.remove(&id);
+                    }
+                }
                 return;
             }
         }

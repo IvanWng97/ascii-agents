@@ -1986,6 +1986,97 @@ fn subagent_is_removed_promptly_when_its_parent_task_completes() {
     );
 }
 
+#[test]
+fn parent_waiting_on_subagent_permission_resolves_when_the_subagent_resumes() {
+    // During delegation a subagent's permission Notification is misattributed to
+    // the parent → the parent goes Waiting. When the subagent resumes work (a
+    // suppressed child hook event arrives while the parent is still delegating),
+    // the gate has resolved — the parent must return to Active(Delegating), not
+    // sit on a stale "permission?" Waiting until the 60-min stale-sweep.
+    let mut scene = SceneState::uniform(8);
+    let mut r = Reducer::new();
+    let parent = AgentId::from_transcript_path("/p/orch.jsonl");
+    let child = AgentId::from_parts("claude-code", "/p/orch/subagents/agent-1.jsonl");
+    let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: parent,
+            source: "claude-code".into(),
+            session_id: "p".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: None,
+        },
+        t0,
+        Transport::Hook,
+    );
+    r.apply(
+        &mut scene,
+        AgentEvent::SessionStart {
+            agent_id: child,
+            source: "claude-code".into(),
+            session_id: "c".into(),
+            cwd: PathBuf::from("/repo"),
+            parent_id: Some(parent),
+        },
+        t0 + Duration::from_millis(100),
+        Transport::Jsonl,
+    );
+    // Parent delegates → Active{Delegating}, active_tasks[parent]={task-T}.
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: parent,
+            activity: Activity::Typing,
+            tool_use_id: Some("task-T".into()),
+            detail: Some("Task".into()),
+        },
+        t0 + Duration::from_secs(1),
+        Transport::Hook,
+    );
+    // Subagent's permission prompt → Notification misattributed to the parent.
+    r.apply(
+        &mut scene,
+        AgentEvent::Waiting {
+            agent_id: parent,
+            reason: "permission?".into(),
+        },
+        t0 + Duration::from_secs(2),
+        Transport::Hook,
+    );
+    assert!(
+        matches!(
+            scene.agents.get(&parent).unwrap().state,
+            ActivityState::Waiting { .. }
+        ),
+        "parent goes Waiting on the subagent's permission"
+    );
+
+    // User grants; the subagent resumes a tool → a misattributed child hook,
+    // suppressed because the parent is in-Task.
+    r.apply(
+        &mut scene,
+        AgentEvent::ActivityStart {
+            agent_id: parent,
+            activity: Activity::Typing,
+            tool_use_id: Some("sub-bash".into()),
+            detail: Some("Bash: ls".into()),
+        },
+        t0 + Duration::from_secs(3),
+        Transport::Hook,
+    );
+
+    assert!(
+        matches!(
+            scene.agents.get(&parent).unwrap().state,
+            ActivityState::Active { .. }
+        ),
+        "parent resumes Active(Delegating) once the subagent works again — no stale Waiting"
+    );
+    assert!(scene.agents.get(&child).unwrap().exiting_at.is_none());
+}
+
 /// With heterogeneous per-floor capacities, the third session should
 /// overflow from floor 0 (cap=2) to floor 1's first desk (global index 2).
 #[test]
